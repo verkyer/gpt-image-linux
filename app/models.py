@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Literal, Optional
 from datetime import datetime
 
@@ -53,11 +53,22 @@ class GenerateRequest(BaseModel):
     size: str = "1024x1024"
     model: str = "gpt-image-2"
     n: int = Field(default=1, ge=1, le=10)
+    quality: Literal["auto", "low", "medium", "high"] = "auto"
+    output_format: Literal["png", "jpeg", "webp"] = "png"
+    output_compression: Optional[int] = Field(default=None, ge=0, le=100)
 
     @field_validator("size")
     @classmethod
     def validate_size(cls, value: str) -> str:
         return validate_image_size(value)
+
+    @model_validator(mode="after")
+    def validate_output_options(self) -> "GenerateRequest":
+        if self.output_format == "png":
+            self.output_compression = None
+        elif self.output_compression is None:
+            self.output_compression = 100
+        return self
 
 
 class GalleryEntry(BaseModel):

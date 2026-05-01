@@ -227,6 +227,36 @@
           </div>
         </div>
 
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-zinc-300 mb-2">Quality</label>
+            <select id="qualitySelect" class="w-full bg-zinc-800/80 border border-zinc-700 rounded-xl px-4 py-3 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 transition-colors cursor-pointer appearance-none">
+              <option value="auto">Auto</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-zinc-300 mb-2">Format</label>
+            <select id="formatSelect" onchange="handleOutputFormatChange()" class="w-full bg-zinc-800/80 border border-zinc-700 rounded-xl px-4 py-3 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 transition-colors cursor-pointer appearance-none">
+              <option value="png">PNG</option>
+              <option value="jpeg">JPEG</option>
+              <option value="webp">WebP</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-zinc-300 mb-2">Compression</label>
+            <input id="compressionInput" type="number" min="0" max="100" step="1" value="" placeholder="Disabled for PNG" disabled
+              class="w-full bg-zinc-800/80 border border-zinc-700 rounded-xl px-4 py-3 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-zinc-300 mb-2">Quantity</label>
+            <input id="quantityInput" type="number" min="1" max="10" step="1" value="1"
+              class="w-full bg-zinc-800/80 border border-zinc-700 rounded-xl px-4 py-3 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 transition-colors">
+          </div>
+        </div>
+
         <button id="generateBtn" onclick="generateImage()"
           class="w-full sm:w-auto px-6 py-3 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -446,6 +476,9 @@
     // Init
     (async function() {
       document.getElementById('promptInput').addEventListener('input', updatePromptLen);
+      document.getElementById('compressionInput').addEventListener('input', clampCompressionInput);
+      document.getElementById('quantityInput').addEventListener('input', clampQuantityInput);
+      handleOutputFormatChange();
       renderSizeButton();
       await checkAccess();
     })();
@@ -556,6 +589,42 @@
       const el = document.getElementById('promptLen');
       el.textContent = `${len} / 4000`;
       el.className = len > 4000 ? 'text-xs text-red-500' : len > 3000 ? 'text-xs text-yellow-600' : 'text-xs text-zinc-600';
+    }
+
+    function clampIntegerInput(input, min, max, fallback) {
+      const raw = String(input.value).trim();
+      if (!raw) return null;
+
+      let value = Number.parseInt(raw, 10);
+      if (!Number.isFinite(value)) value = fallback;
+      value = Math.min(Math.max(value, min), max);
+      input.value = String(value);
+      return value;
+    }
+
+    function clampCompressionInput() {
+      return clampIntegerInput(document.getElementById('compressionInput'), 0, 100, 100);
+    }
+
+    function clampQuantityInput() {
+      return clampIntegerInput(document.getElementById('quantityInput'), 1, 10, 1);
+    }
+
+    function handleOutputFormatChange() {
+      const format = document.getElementById('formatSelect').value;
+      const compressionInput = document.getElementById('compressionInput');
+      const isPng = format === 'png';
+
+      compressionInput.disabled = isPng;
+      compressionInput.placeholder = isPng ? 'Disabled for PNG' : '0-100';
+
+      if (isPng) {
+        compressionInput.value = '';
+      } else if (!compressionInput.value) {
+        compressionInput.value = '100';
+      } else {
+        clampCompressionInput();
+      }
     }
 
     function cloneSizeState(state) {
@@ -772,13 +841,14 @@
       const previewLoading = document.getElementById('previewLoading');
       const previewImg = document.getElementById('previewImage');
       const previewLoadingText = document.getElementById('previewLoadingText');
-      const inputs = ['promptInput', 'modelSelect'];
+      const inputs = ['promptInput', 'modelSelect', 'qualitySelect', 'formatSelect', 'compressionInput', 'quantityInput'];
       const spinnerHTML = '<span class="spinner"></span> Generating...';
 
       btn.disabled = loading;
       btn.innerHTML = loading ? spinnerHTML : '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg> Generate';
       inputs.forEach(id => { document.getElementById(id).disabled = loading; });
       document.getElementById('sizeSelect').disabled = loading;
+      if (!loading) handleOutputFormatChange();
 
       if (loading) {
         preview.classList.remove('hidden');
@@ -887,12 +957,20 @@
       const prompt = document.getElementById('promptInput').value.trim();
       if (!prompt) { showError('Please enter a prompt'); return; }
 
+      const outputFormat = document.getElementById('formatSelect').value;
+      const quantity = clampQuantityInput() || 1;
       const requestBody = {
         prompt,
         size: document.getElementById('sizeSelect').value,
         model: document.getElementById('modelSelect').value,
-        n: 1,
+        n: quantity,
+        quality: document.getElementById('qualitySelect').value,
+        output_format: outputFormat,
       };
+
+      if (outputFormat !== 'png') {
+        requestBody.output_compression = clampCompressionInput() ?? 100;
+      }
       lastRequestBody = requestBody;
 
       setLoading(true);

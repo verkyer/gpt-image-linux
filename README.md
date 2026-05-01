@@ -23,7 +23,7 @@ cp .env.example .env
 docker-compose up -d --build --force-recreate
 ```
 
-If image generation fails with `Permission denied: 'images/<id>.png'`, the container
+If image generation fails with `Permission denied: 'images/<id>.<ext>'`, the container
 is still running an old image or an overridden non-root user. Rebuild and recreate
 the container with the command above.
 
@@ -45,7 +45,7 @@ backend access by client IP before any image generation flow can start.
 1. Click the **Settings** gear icon in the top right
 2. Enter your **API Base URL** (e.g., `https://api.221.qzz.io`) and **API Key**
 3. Click **Save**
-4. Enter a **prompt**, choose an **image size**, and click **Generate**
+4. Enter a **prompt**, choose generation options, and click **Generate**
 5. View the preview, download the image, or browse the **Gallery**
 
 Generation runs as a background job. The UI starts the job immediately and polls its status, so long image requests do not sit behind a single HTTP response and hit reverse-proxy timeouts.
@@ -55,6 +55,13 @@ Image size supports:
 - `auto`: pass `auto` and let the model choose the output size
 - Ratio presets: choose 1K, 2K, or 4K with ratios `1:1`, `4:3`, `3:4`, `16:9`, `9:16`, or `21:9`
 - Custom width and height: values are normalized to multiples of 16, max side `3840px`, aspect ratio up to `3:1`, and total pixels between `655360` and `8294400`
+
+Generation options include:
+
+- Quality: `auto`, `low`, `medium`, or `high`
+- Format: `PNG`, `JPEG`, or `WebP`
+- Compression: disabled for `PNG`; `0-100` for `JPEG` and `WebP`
+- Quantity: integer from `1` to `10`
 
 ## Environment Variables
 

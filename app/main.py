@@ -4,6 +4,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from contextlib import asynccontextmanager
 import asyncio
 import hmac
+import mimetypes
 import uuid
 from pathlib import Path
 from datetime import datetime, timezone
@@ -166,7 +167,7 @@ async def run_generate_job(job_id: str, api_url: str, api_key: str, req: Generat
     }
 
     try:
-        entry = await proxy.call_images_api(api_url, api_key, req)
+        entries = await proxy.call_images_api(api_url, api_key, req)
     except Exception as e:
         jobs[job_id] = {
             "job_id": job_id,
@@ -177,14 +178,15 @@ async def run_generate_job(job_id: str, api_url: str, api_key: str, req: Generat
         trim_generate_jobs()
         return
 
+    first_entry = entries[0]
     jobs[job_id] = {
         "job_id": job_id,
         "status": "success",
-        "id": entry.id,
-        "image_url": f"/api/image/{entry.filename}",
-        "prompt": entry.prompt,
-        "size": entry.size,
-        "created_at": entry.created_at,
+        "id": first_entry.id,
+        "image_url": f"/api/image/{first_entry.filename}",
+        "prompt": first_entry.prompt,
+        "size": first_entry.size,
+        "created_at": first_entry.created_at,
     }
     trim_generate_jobs()
 
@@ -237,9 +239,10 @@ async def serve_image(filename: str):
     path = storage.get_image_path(filename)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Image not found")
+    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
     return StreamingResponse(
         open(path, "rb"),
-        media_type="image/png",
+        media_type=media_type,
         headers={"Cache-Control": "public, max-age=31536000"},
     )
 
@@ -250,11 +253,13 @@ async def download_image(filename: str):
     if not path.exists():
         raise HTTPException(status_code=404, detail="Image not found")
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    extension = path.suffix.lstrip(".") or "png"
     return StreamingResponse(
         open(path, "rb"),
-        media_type="image/png",
+        media_type=media_type,
         headers={
-            "Content-Disposition": f'attachment; filename="gpt-image-{timestamp}.png"',
+            "Content-Disposition": f'attachment; filename="gpt-image-{timestamp}.{extension}"',
         },
     )
 
