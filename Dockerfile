@@ -7,10 +7,10 @@ FROM python:3.11-slim AS runtime
 
 RUN groupadd -g 1001 appgroup && \
     useradd -u 1001 -g appgroup -s /bin/bash -m appuser
-RUN mkdir /app/images /app/data && \
-    chown -R appuser:appgroup /app/images /app/data
 
 WORKDIR /app
+RUN mkdir images data && \
+    chown -R appuser:appgroup images data
 COPY --from=builder --chown=appuser:appgroup /install /usr/local
 COPY --chown=appuser:appgroup app/ ./app/
 COPY --chown=appuser:appgroup static/ ./static/
