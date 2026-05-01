@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  gpt-image-panel:
+    build: .
+    container_name: gpt-image-panel
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./images:/app/images
+      - ./data:/app/data
+    environment:
+      - DEFAULT_API_URL=${DEFAULT_API_URL:-}
+      - DEFAULT_API_KEY=${DEFAULT_API_KEY:-}
+      - MAX_FILE_SIZE_MB=50
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9090/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

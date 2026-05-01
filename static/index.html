@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GPT Image Panel</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+        },
+      },
+    }
+  </script>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    .spinner {
+      width: 20px; height: 20px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: inline-block;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .fade-in { animation: fadeIn 0.4s ease-out both; }
+    .lightbox-img {
+      max-width: 90vw; max-height: 90vh;
+      object-fit: contain;
+      border-radius: 8px;
+    }
+    textarea::placeholder { color: #52525b; }
+    input::placeholder { color: #52525b; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #18181b; }
+    ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #52525b; }
+    .gallery-card { transition: transform 0.2s, box-shadow 0.2s; }
+    .gallery-card:hover { transform: translateY(-2px); box-shadow: 0 8px 30px rgba(0,0,0,0.5); }
+    .drawer-backdrop { background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); }
+    .progress-bar { animation: indeterminate 1.5s ease-in-out infinite; }
+    @keyframes indeterminate {
+      0%   { transform: translateX(-100%) scaleX(0.5); }
+      50%  { transform: translateX(0%)   scaleX(0.5); width: 50%; }
+      100% { transform: translateX(200%) scaleX(0.5); }
+    }
+  </style>
+</head>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen">
+
+  <!-- Header -->
+  <header class="border-b border-zinc-800 sticky top-0 z-40 bg-zinc-950/80 backdrop-blur-md">
+    <div class="max-w-5xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-400 to-cyan-500 flex items-center justify-center">
+          <svg class="w-4 h-4 text-zinc-950" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="text-base font-semibold text-zinc-100">GPT Image Panel</h1>
+          <p class="text-xs text-zinc-500 hidden sm:block">Image Generation Interface</p>
+        </div>
+      </div>
+      <button id="settingsBtn" onclick="toggleSettings()" class="p-2 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors" title="Settings">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+            d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Settings Drawer -->
+  <div id="settingsDrawer" class="fixed inset-0 z-50 hidden">
+    <div class="drawer-backdrop absolute inset-0" onclick="toggleSettings()"></div>
+    <div class="absolute right-0 top-0 h-full w-full max-w-md bg-zinc-900 border-l border-zinc-800 shadow-2xl flex flex-col fade-in">
+      <div class="p-5 border-b border-zinc-800 flex items-center justify-between">
+        <h2 class="text-lg font-semibold text-zinc-100">Settings</h2>
+        <button onclick="toggleSettings()" class="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="p-5 space-y-5 flex-1 overflow-y-auto">
+        <div>
+          <label class="block text-sm font-medium text-zinc-300 mb-2">API Base URL</label>
+          <input type="url" id="settingsApiUrl" placeholder="https://api.221.qzz.io"
+            class="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 transition-colors font-mono">
+          <p class="mt-1.5 text-xs text-zinc-500">The base URL without the /v1/images/generations path</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-zinc-300 mb-2">API Key</label>
+          <input type="password" id="settingsApiKey" placeholder="sk-..."
+            class="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 transition-colors font-mono">
+        </div>
+      </div>
+      <div class="p-5 border-t border-zinc-800 flex gap-3">
+        <button onclick="toggleSettings()" class="flex-1 px-4 py-2.5 rounded-lg border border-zinc-700 text-zinc-300 text-sm font-medium hover:bg-zinc-800 transition-colors">Cancel</button>
+        <button onclick="saveSettings()" class="flex-1 px-4 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-500 transition-colors">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="fixed top-20 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-lg text-sm font-medium shadow-xl transition-all duration-300 opacity-0 translate-y-2 pointer-events-none">
+  </div>
+
+  <!-- Error Banner -->
+  <div id="errorBanner" class="hidden max-w-5xl mx-auto px-4 sm:px-6 mt-4">
+    <div class="bg-red-900/30 border border-red-800/60 rounded-lg px-4 py-3 flex items-start gap-3">
+      <svg class="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+      </svg>
+      <div class="flex-1 min-w-0">
+        <p id="errorText" class="text-sm text-red-300"></p>
+      </div>
+      <button onclick="hideError()" class="p-0.5 text-red-400 hover:text-red-300">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <main class="max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-8">
+
+    <!-- Generation Panel -->
+    <section class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-5 sm:p-6">
+      <h2 class="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-5">Generate Image</h2>
+
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-zinc-300 mb-2">Prompt</label>
+          <textarea id="promptInput" rows="4" placeholder="A cyberpunk fox standing on a neon-lit rainy street at night, cinematic, highly detailed..."
+            class="w-full bg-zinc-800/80 border border-zinc-700 rounded-xl px-4 py-3 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 transition-colors resize-none leading-relaxed"></textarea>
+          <div class="flex justify-end mt-1.5">
+            <span id="promptLen" class="text-xs text-zinc-600">0 / 4000</span>
+          </div>
+        </div>
+
+        <div class="flex flex-col sm:flex-row gap-4">
+          <div class="flex-1">
+            <label class="block text-sm font-medium text-zinc-300 mb-2">Image Size</label>
+            <select id="sizeSelect" class="w-full bg-zinc-800/80 border border-zinc-700 rounded-xl px-4 py-3 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 transition-colors cursor-pointer appearance-none">
+              <option value="1024x1024">1024 x 1024 (Square)</option>
+              <option value="1024x1792">1024 x 1792 (Portrait)</option>
+              <option value="1792x1024">1792 x 1024 (Landscape)</option>
+              <option value="1536x1024">1536 x 1024 (3:2)</option>
+              <option value="1024x1536">1024 x 1536 (2:3)</option>
+              <option value="2048x2048">2048 x 2048 (High Res)</option>
+            </select>
+          </div>
+          <div class="flex-1">
+            <label class="block text-sm font-medium text-zinc-300 mb-2">Model</label>
+            <select id="modelSelect" class="w-full bg-zinc-800/80 border border-zinc-700 rounded-xl px-4 py-3 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 transition-colors cursor-pointer appearance-none">
+              <option value="gpt-image-2">gpt-image-2</option>
+            </select>
+          </div>
+        </div>
+
+        <button id="generateBtn" onclick="generateImage()"
+          class="w-full sm:w-auto px-6 py-3 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+          </svg>
+          Generate
+        </button>
+      </div>
+    </section>
+
+    <!-- Preview Panel -->
+    <section id="previewSection" class="hidden bg-zinc-900/60 border border-zinc-800 rounded-2xl p-5 sm:p-6">
+      <div class="flex items-center justify-between mb-5">
+        <h2 class="text-sm font-semibold text-zinc-400 uppercase tracking-wider">Preview</h2>
+        <div class="flex gap-2">
+          <button id="downloadBtn" onclick="downloadCurrent()"
+            class="px-4 py-2 rounded-lg bg-zinc-800 text-zinc-300 text-xs font-medium hover:bg-zinc-700 transition-colors flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+            </svg>
+            Download
+          </button>
+          <button id="regenerateBtn" onclick="regenerate()"
+            class="px-4 py-2 rounded-lg bg-emerald-600/20 text-emerald-400 text-xs font-medium hover:bg-emerald-600/30 transition-colors flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+            </svg>
+            Regenerate
+          </button>
+        </div>
+      </div>
+
+      <div id="previewImageWrapper" class="relative rounded-xl overflow-hidden bg-zinc-800/50 flex items-center justify-center min-h-48 max-h-[500px]">
+        <img id="previewImage" src="" alt="Generated image" class="max-w-full max-h-[500px] object-contain fade-in">
+        <div id="previewLoading" class="absolute inset-0 flex items-center justify-center bg-zinc-800/80 hidden">
+          <div class="text-center">
+            <div class="spinner mx-auto mb-3" style="width:32px;height:32px;border-width:3px;"></div>
+            <p class="text-sm text-zinc-400">Generating...</p>
+            <div class="w-48 h-1 bg-zinc-700 rounded-full mt-3 overflow-hidden">
+              <div class="h-full bg-emerald-500 rounded-full progress-bar"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p id="previewPrompt" class="mt-3 text-sm text-zinc-500 truncate"></p>
+    </section>
+
+    <!-- Gallery Section -->
+    <section>
+      <div class="flex items-center justify-between mb-5">
+        <h2 class="text-sm font-semibold text-zinc-400 uppercase tracking-wider">Gallery</h2>
+        <span id="galleryCount" class="text-xs text-zinc-600"></span>
+      </div>
+
+      <div id="galleryGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <!-- Cards injected here -->
+      </div>
+
+      <div id="galleryEmpty" class="hidden text-center py-16">
+        <div class="w-12 h-12 rounded-xl bg-zinc-800/80 flex items-center justify-center mx-auto mb-4">
+          <svg class="w-6 h-6 text-zinc-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+          </svg>
+        </div>
+        <p class="text-zinc-500 text-sm">No images yet</p>
+        <p class="text-zinc-600 text-xs mt-1">Generate your first image above</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- Lightbox -->
+  <div id="lightbox" class="fixed inset-0 z-50 hidden">
+    <div class="drawer-backdrop absolute inset-0" onclick="closeLightbox()"></div>
+    <div class="relative flex items-center justify-center h-full p-4">
+      <img id="lightboxImg" src="" class="lightbox-img">
+      <button onclick="closeLightbox()" class="absolute top-4 right-4 p-2 rounded-lg bg-zinc-800/80 text-zinc-300 hover:bg-zinc-700 transition-colors">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <script>
+    // State
+    let currentImageUrl = null;
+    let currentFilename = null;
+    let lastRequestBody = null;
+
+    // Init
+    (async function() {
+      await loadGallery();
+      await loadSettings();
+      document.getElementById('promptInput').addEventListener('input', updatePromptLen);
+    })();
+
+    async function loadSettings() {
+      try {
+        const res = await fetch('/api/settings');
+        const data = await res.json();
+        if (data.api_url) document.getElementById('settingsApiUrl').value = data.api_url;
+        if (data.api_key_masked && data.api_key_masked !== '***') {
+          document.getElementById('settingsApiKey').value = '••••••••';
+        }
+      } catch (e) { /* ignore */ }
+    }
+
+    async function saveSettings() {
+      const apiUrl = document.getElementById('settingsApiUrl').value.trim();
+      const apiKey = document.getElementById('settingsApiKey').value.trim();
+
+      if (!apiUrl) { showToast('Please enter an API URL', 'error'); return; }
+      if (!apiKey || apiKey === '••••••••') { showToast('Please enter an API Key', 'error'); return; }
+
+      try {
+        const res = await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_url: apiUrl, api_key: apiKey }),
+        });
+        if (!res.ok) throw new Error('Failed to save settings');
+        showToast('Settings saved', 'success');
+        toggleSettings();
+      } catch (e) {
+        showToast('Failed to save settings: ' + e.message, 'error');
+      }
+    }
+
+    function toggleSettings() {
+      const drawer = document.getElementById('settingsDrawer');
+      drawer.classList.toggle('hidden');
+      if (!drawer.classList.contains('hidden')) {
+        document.getElementById('settingsApiUrl').focus();
+      }
+    }
+
+    function updatePromptLen() {
+      const len = document.getElementById('promptInput').value.length;
+      const el = document.getElementById('promptLen');
+      el.textContent = `${len} / 4000`;
+      el.className = len > 4000 ? 'text-xs text-red-500' : len > 3000 ? 'text-xs text-yellow-600' : 'text-xs text-zinc-600';
+    }
+
+    function setLoading(loading) {
+      const btn = document.getElementById('generateBtn');
+      const preview = document.getElementById('previewSection');
+      const previewLoading = document.getElementById('previewLoading');
+      const previewImg = document.getElementById('previewImage');
+      const inputs = ['promptInput', 'sizeSelect', 'modelSelect'];
+      const spinnerHTML = '<span class="spinner"></span> Generating...';
+
+      btn.disabled = loading;
+      btn.innerHTML = loading ? spinnerHTML : '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg> Generate';
+      inputs.forEach(id => { document.getElementById(id).disabled = loading; });
+
+      if (loading) {
+        preview.classList.remove('hidden');
+        previewLoading.classList.remove('hidden');
+        previewImg.style.opacity = '0';
+      } else {
+        previewLoading.classList.add('hidden');
+        previewImg.style.opacity = '1';
+      }
+    }
+
+    function showError(msg) {
+      const banner = document.getElementById('errorBanner');
+      document.getElementById('errorText').textContent = msg;
+      banner.classList.remove('hidden');
+    }
+
+    function hideError() {
+      document.getElementById('errorBanner').classList.add('hidden');
+    }
+
+    function showToast(msg, type = 'success') {
+      const toast = document.getElementById('toast');
+      toast.textContent = msg;
+      toast.className = 'fixed top-20 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-lg text-sm font-medium shadow-xl transition-all duration-300 ' +
+        (type === 'success' ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white');
+      toast.style.opacity = '1';
+      toast.style.transform = 'translate(-50%, 0)';
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translate(-50%, 8px)';
+      }, 2500);
+    }
+
+    async function generateImage() {
+      hideError();
+      const prompt = document.getElementById('promptInput').value.trim();
+      if (!prompt) { showError('Please enter a prompt'); return; }
+
+      const requestBody = {
+        prompt,
+        size: document.getElementById('sizeSelect').value,
+        model: document.getElementById('modelSelect').value,
+        n: 1,
+      };
+      lastRequestBody = requestBody;
+
+      setLoading(true);
+      try {
+        const res = await fetch('/api/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.detail || 'Generation failed');
+        }
+        setLoading(false);
+        currentImageUrl = data.image_url;
+        currentFilename = data.image_url.replace('/api/image/', '');
+
+        const previewImg = document.getElementById('previewImage');
+        previewImg.src = data.image_url + '?t=' + Date.now();
+        previewImg.className = 'max-w-full max-h-[500px] object-contain fade-in';
+        document.getElementById('previewPrompt').textContent = data.prompt;
+        document.getElementById('previewSection').classList.remove('hidden');
+        document.getElementById('previewLoading').classList.add('hidden');
+        previewImg.style.opacity = '1';
+
+        await loadGallery();
+      } catch (e) {
+        setLoading(false);
+        showError(e.message || 'Failed to generate image');
+      }
+    }
+
+    function regenerate() {
+      if (lastRequestBody) generateImage();
+    }
+
+    function downloadCurrent() {
+      if (!currentFilename) return;
+      const a = document.createElement('a');
+      a.href = '/api/download/' + currentFilename;
+      a.download = '';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+
+    async function loadGallery() {
+      try {
+        const res = await fetch('/api/gallery');
+        const data = await res.json();
+        const grid = document.getElementById('galleryGrid');
+        const empty = document.getElementById('galleryEmpty');
+        const count = document.getElementById('galleryCount');
+
+        count.textContent = data.total > 0 ? `${data.total} image${data.total !== 1 ? 's' : ''}` : '';
+
+        if (!data.images || data.images.length === 0) {
+          grid.innerHTML = '';
+          empty.classList.remove('hidden');
+          return;
+        }
+
+        empty.classList.add('hidden');
+        grid.innerHTML = data.images.map(img => {
+          const date = new Date(img.created_at);
+          const timeStr = date.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+          const shortPrompt = img.prompt.length > 80 ? img.prompt.substring(0, 80) + '...' : img.prompt;
+          return `
+            <div class="gallery-card bg-zinc-900/60 border border-zinc-800 rounded-xl overflow-hidden">
+              <div class="relative cursor-pointer group" onclick="openLightbox('/api/image/${img.filename}')">
+                <img src="/api/image/${img.filename}" alt="${escapeHtml(img.prompt)}"
+                  class="w-full aspect-square object-cover bg-zinc-800" loading="lazy">
+                <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-3">
+                  <span class="text-xs text-white truncate">${escapeHtml(shortPrompt)}</span>
+                </div>
+              </div>
+              <div class="p-3">
+                <p class="text-xs text-zinc-500 truncate" title="${escapeHtml(img.prompt)}">${escapeHtml(shortPrompt)}</p>
+                <div class="flex items-center justify-between mt-2">
+                  <span class="text-xs text-zinc-600">${timeStr}</span>
+                  <div class="flex gap-1">
+                    <a href="/api/download/${img.filename}" download
+                      class="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"
+                      onclick="event.stopPropagation()">
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                      </svg>
+                    </a>
+                    <button onclick="event.stopPropagation(); deleteImage('${img.id}')"
+                      class="p-1.5 rounded-lg text-zinc-500 hover:text-red-400 hover:bg-red-900/20 transition-colors">
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>`;
+        }).join('');
+      } catch (e) {
+        console.error('Failed to load gallery:', e);
+      }
+    }
+
+    async function deleteImage(id) {
+      if (!confirm('Delete this image from gallery?')) return;
+      try {
+        const res = await fetch('/api/gallery/' + id, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Delete failed');
+        await loadGallery();
+        showToast('Image deleted', 'success');
+      } catch (e) {
+        showToast('Failed to delete: ' + e.message, 'error');
+      }
+    }
+
+    function openLightbox(src) {
+      document.getElementById('lightboxImg').src = src;
+      document.getElementById('lightbox').classList.remove('hidden');
+      document.body.style.overflow = 'hidden';
+    }
+
+    function closeLightbox() {
+      document.getElementById('lightbox').classList.add('hidden');
+      document.body.style.overflow = '';
+    }
+
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        if (!document.getElementById('lightbox').classList.contains('hidden')) {
+          closeLightbox();
+        } else if (!document.getElementById('settingsDrawer').classList.contains('hidden')) {
+          toggleSettings();
+        }
+      }
+    });
+  </script>
+</body>
+</html>
