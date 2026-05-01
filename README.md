@@ -19,7 +19,7 @@ Or with docker-compose:
 
 ```bash
 cp .env.example .env
-# Edit .env with your API URL and key
+# Edit .env with your API URL, API key, access key, and IP allowlist
 docker-compose up -d --build --force-recreate
 ```
 
@@ -35,6 +35,10 @@ uvicorn app.main:app --host 0.0.0.0 --port 9090 --reload
 ```
 
 Then open `http://localhost:9090`.
+
+Set `ACCESS_KEY` in `.env` to require an access key before any site/API access.
+Successful access sessions last 60 minutes. Set `IP_ALLOWLIST` to restrict
+backend access by client IP before any image generation flow can start.
 
 ## Usage
 
@@ -58,6 +62,9 @@ Image size supports:
 |----------|---------|-------------|
 | `DEFAULT_API_URL` | (empty) | Pre-fill API base URL |
 | `DEFAULT_API_KEY` | (empty) | Pre-fill API key |
+| `ACCESS_KEY` | (empty) | Site access key. When set, every non-health route requires unlock |
+| `IP_ALLOWLIST` | (empty) | Comma-separated allowed IPs/CIDRs, e.g. `127.0.0.1,192.168.1.0/24` |
+| `TRUST_PROXY_HEADERS` | `false` | Read `X-Forwarded-For`/`X-Real-IP` from a trusted reverse proxy |
 | `MAX_FILE_SIZE_MB` | `50` | Max image size in MB |
 | `IMAGES_DIR` | `./images` | Directory for saved images |
 | `DATA_DIR` | `./data` | Directory for gallery metadata |
@@ -68,6 +75,8 @@ Image size supports:
 |--------|------|-------------|
 | `GET` | `/` | Frontend UI |
 | `GET` | `/health` | Health check |
+| `GET` | `/api/access/status` | Check access-key session status |
+| `POST` | `/api/access` | Unlock access for 60 minutes |
 | `POST` | `/api/settings` | Save API URL and Key |
 | `GET` | `/api/settings` | Get current settings (key masked) |
 | `POST` | `/api/generate` | Start an image generation job |

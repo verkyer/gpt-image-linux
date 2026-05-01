@@ -13,6 +13,15 @@ class SettingsResponse(BaseModel):
     api_key_masked: str
 
 
+class AccessRequest(BaseModel):
+    access_key: str = Field(..., min_length=1, description="Access key for site access")
+
+
+class AccessStatusResponse(BaseModel):
+    authenticated: bool
+    expires_at: Optional[str] = None
+
+
 def validate_image_size(size: str) -> str:
     if size == "auto":
         return size

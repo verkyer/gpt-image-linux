@@ -88,6 +88,26 @@
   </style>
 </head>
 <body class="bg-zinc-950 text-zinc-100 min-h-screen">
+  <!-- Access Gate -->
+  <div id="accessGate" class="fixed inset-0 z-[100] hidden bg-zinc-950 flex items-center justify-center px-4">
+    <div class="w-full max-w-sm border border-zinc-800 rounded-2xl bg-zinc-900/80 p-6 shadow-2xl fade-in">
+      <div class="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center mb-5">
+        <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H3v-4l6.257-6.257A6 6 0 1121 9z"/>
+        </svg>
+      </div>
+      <h2 class="text-lg font-semibold text-zinc-100">Access Key</h2>
+      <form class="mt-5 space-y-4" onsubmit="unlockAccess(event)">
+        <input type="password" id="accessKeyInput" autocomplete="current-password" placeholder="Enter access key"
+          class="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 transition-colors font-mono">
+        <button id="accessKeyBtn" type="submit"
+          class="w-full px-4 py-3 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+          Unlock
+        </button>
+      </form>
+      <p id="accessKeyError" class="hidden mt-3 text-sm text-red-400"></p>
+    </div>
+  </div>
 
   <!-- Header -->
   <header class="border-b border-zinc-800 sticky top-0 z-40 bg-zinc-950/80 backdrop-blur-md">
@@ -425,15 +445,74 @@
 
     // Init
     (async function() {
-      await loadGallery();
-      await loadSettings();
       document.getElementById('promptInput').addEventListener('input', updatePromptLen);
       renderSizeButton();
+      await checkAccess();
     })();
+
+    async function checkAccess() {
+      try {
+        const res = await fetch('/api/access/status', { credentials: 'same-origin' });
+        const data = await readApiResponse(res);
+
+        if (data.authenticated) {
+          document.getElementById('accessGate').classList.add('hidden');
+          await loadGallery();
+          await loadSettings();
+          return;
+        }
+      } catch (e) {
+        document.getElementById('accessKeyError').textContent = e.message || 'Access check failed';
+        document.getElementById('accessKeyError').classList.remove('hidden');
+      }
+
+      document.getElementById('accessGate').classList.remove('hidden');
+      document.getElementById('accessKeyInput').focus();
+    }
+
+    async function unlockAccess(event) {
+      event.preventDefault();
+      const input = document.getElementById('accessKeyInput');
+      const button = document.getElementById('accessKeyBtn');
+      const error = document.getElementById('accessKeyError');
+      const accessKey = input.value.trim();
+
+      if (!accessKey) {
+        error.textContent = 'Please enter the access key';
+        error.classList.remove('hidden');
+        return;
+      }
+
+      button.disabled = true;
+      button.textContent = 'Unlocking...';
+      error.classList.add('hidden');
+
+      try {
+        const res = await fetch('/api/access', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ access_key: accessKey }),
+        });
+        const data = await readApiResponse(res);
+        if (!data.authenticated) throw new Error('Invalid access key');
+
+        input.value = '';
+        document.getElementById('accessGate').classList.add('hidden');
+        await loadGallery();
+        await loadSettings();
+      } catch (e) {
+        error.textContent = e.message || 'Invalid access key';
+        error.classList.remove('hidden');
+      } finally {
+        button.disabled = false;
+        button.textContent = 'Unlock';
+      }
+    }
 
     async function loadSettings() {
       try {
-        const res = await fetch('/api/settings');
+        const res = await fetch('/api/settings', { credentials: 'same-origin' });
         const data = await res.json();
         if (data.api_url) document.getElementById('settingsApiUrl').value = data.api_url;
         if (data.api_key_masked && data.api_key_masked !== '***') {
@@ -452,6 +531,7 @@
       try {
         const res = await fetch('/api/settings', {
           method: 'POST',
+          credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ api_url: apiUrl, api_key: apiKey }),
         });
@@ -771,6 +851,7 @@
       while (Date.now() - startedAt < timeoutMs) {
         await sleep(2000);
         const res = await fetch('/api/generate/' + encodeURIComponent(jobId), {
+          credentials: 'same-origin',
           headers: { 'Accept': 'application/json' },
         });
         const data = await readApiResponse(res);
@@ -818,6 +899,7 @@
       try {
         const res = await fetch('/api/generate', {
           method: 'POST',
+          credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(requestBody),
         });
@@ -847,7 +929,7 @@
 
     async function loadGallery() {
       try {
-        const res = await fetch('/api/gallery');
+        const res = await fetch('/api/gallery', { credentials: 'same-origin' });
         const data = await res.json();
         const grid = document.getElementById('galleryGrid');
         const empty = document.getElementById('galleryEmpty');
@@ -906,7 +988,10 @@
     async function deleteImage(id) {
       if (!confirm('Delete this image from gallery?')) return;
       try {
-        const res = await fetch('/api/gallery/' + id, { method: 'DELETE' });
+        const res = await fetch('/api/gallery/' + id, {
+          method: 'DELETE',
+          credentials: 'same-origin',
+        });
         if (!res.ok) throw new Error('Delete failed');
         await loadGallery();
         showToast('Image deleted', 'success');

@@ -1,14 +1,17 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from contextlib import asynccontextmanager
 import asyncio
+import hmac
 import uuid
 from pathlib import Path
 from datetime import datetime, timezone
 
 from . import config
 from .models import (
+    AccessRequest,
+    AccessStatusResponse,
     SettingsRequest,
     SettingsResponse,
     GenerateRequest,
@@ -19,6 +22,7 @@ from .models import (
 )
 from . import storage
 from . import proxy
+from . import auth
 
 
 @asynccontextmanager
@@ -35,6 +39,28 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="GPT Image Panel", lifespan=lifespan)
 
 MAX_GENERATE_JOBS = 100
+AUTH_EXEMPT_PATHS = {"/", "/api/access", "/api/access/status", "/health"}
+
+
+@app.middleware("http")
+async def access_control_middleware(request: Request, call_next):
+    if request.url.path != "/health":
+        client_ip = auth.get_client_ip(request)
+        if not auth.is_ip_allowed(client_ip):
+            return JSONResponse(
+                status_code=403,
+                content={"status": "error", "detail": "IP address is not allowed"},
+            )
+
+    if config.ACCESS_KEY and request.url.path not in AUTH_EXEMPT_PATHS:
+        token = request.cookies.get(config.ACCESS_KEY_COOKIE_NAME)
+        if not auth.verify_access_token(token):
+            return JSONResponse(
+                status_code=401,
+                content={"status": "error", "detail": "Access key required"},
+            )
+
+    return await call_next(request)
 
 
 @app.exception_handler(Exception)
@@ -75,6 +101,44 @@ async def index():
 @app.get("/health")
 async def health():
     return {"status": "ok", "time": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/api/access/status", response_model=AccessStatusResponse)
+async def get_access_status(request: Request):
+    if not config.ACCESS_KEY:
+        return AccessStatusResponse(authenticated=True)
+
+    expires_at = auth.verify_access_token(
+        request.cookies.get(config.ACCESS_KEY_COOKIE_NAME)
+    )
+    return AccessStatusResponse(
+        authenticated=bool(expires_at),
+        expires_at=expires_at.isoformat() if expires_at else None,
+    )
+
+
+@app.post("/api/access", response_model=AccessStatusResponse)
+async def unlock_access(req: AccessRequest, response: Response):
+    if not config.ACCESS_KEY:
+        return AccessStatusResponse(authenticated=True)
+
+    if not hmac.compare_digest(req.access_key, config.ACCESS_KEY):
+        raise HTTPException(status_code=401, detail="Invalid access key")
+
+    token, expires_at = auth.create_access_token()
+    response.set_cookie(
+        key=config.ACCESS_KEY_COOKIE_NAME,
+        value=token,
+        max_age=config.ACCESS_KEY_SESSION_MINUTES * 60,
+        expires=config.ACCESS_KEY_SESSION_MINUTES * 60,
+        httponly=True,
+        samesite="lax",
+        secure=False,
+    )
+    return AccessStatusResponse(
+        authenticated=True,
+        expires_at=expires_at.isoformat(),
+    )
 
 
 @app.post("/api/settings", response_model=MessageResponse)
