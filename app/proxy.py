@@ -42,7 +42,7 @@ async def call_images_api(
             if status >= 400:
                 if is_json_response:
                     try:
-                        error_body = await resp.json()
+                        error_body = json.loads(response_text)
                         error_msg = error_body.get("error", {}).get(
                             "message", response_text
                         )

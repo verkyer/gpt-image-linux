@@ -1,6 +1,6 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from contextlib import asynccontextmanager
 import os
 from pathlib import Path
@@ -33,6 +33,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="GPT Image Panel", lifespan=lifespan)
 
 
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"status": "error", "detail": "Internal Server Error"},
+    )
+
+
 def mask_key(key: str) -> str:
     if not key or len(key) <= 8:
         return "***"
@@ -59,15 +67,15 @@ async def update_settings(req: SettingsRequest):
 @app.get("/api/settings", response_model=SettingsResponse)
 async def get_settings():
     return SettingsResponse(
-        api_url=app.state.get("api_url", ""),
-        api_key_masked=mask_key(app.state.get("api_key", "")),
+        api_url=getattr(app.state, "api_url", ""),
+        api_key_masked=mask_key(getattr(app.state, "api_key", "")),
     )
 
 
 @app.post("/api/generate", response_model=GenerateResponse)
 async def generate(req: GenerateRequest):
-    api_url: str = app.state.get("api_url", "")
-    api_key: str = app.state.get("api_key", "")
+    api_url: str = getattr(app.state, "api_url", "")
+    api_key: str = getattr(app.state, "api_key", "")
 
     if not api_url:
         raise HTTPException(status_code=400, detail="API URL not configured. Please set it in Settings.")

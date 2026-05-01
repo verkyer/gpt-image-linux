@@ -362,6 +362,31 @@
       }, 2500);
     }
 
+    async function readApiResponse(res) {
+      const contentType = res.headers.get('content-type') || '';
+      const bodyText = await res.text();
+      let data = null;
+
+      if (bodyText && contentType.includes('application/json')) {
+        try {
+          data = JSON.parse(bodyText);
+        } catch {
+          data = null;
+        }
+      }
+
+      if (!res.ok) {
+        const message = data?.detail || data?.error || data?.message || bodyText || `Request failed (${res.status})`;
+        throw new Error(message);
+      }
+
+      if (!data) {
+        throw new Error(bodyText || 'Server returned an empty response');
+      }
+
+      return data;
+    }
+
     async function generateImage() {
       hideError();
       const prompt = document.getElementById('promptInput').value.trim();
@@ -382,10 +407,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(requestBody),
         });
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.detail || 'Generation failed');
-        }
+        const data = await readApiResponse(res);
         setLoading(false);
         currentImageUrl = data.image_url;
         currentFilename = data.image_url.replace('/api/image/', '');
