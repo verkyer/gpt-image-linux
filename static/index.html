@@ -316,7 +316,10 @@
           </div>
         </div>
       </div>
-      <p id="previewPrompt" class="mt-3 text-sm text-zinc-500 truncate"></p>
+      <div class="mt-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+        <p id="previewPrompt" class="text-sm text-zinc-500 truncate"></p>
+        <p id="previewTime" class="hidden text-xs text-zinc-600 sm:flex-shrink-0"></p>
+      </div>
     </section>
 
     <!-- Gallery Section -->
@@ -949,6 +952,25 @@
       return new Promise(resolve => setTimeout(resolve, ms));
     }
 
+    function formatPreviewTime(value = new Date()) {
+      const date = value instanceof Date ? value : new Date(value);
+      const safeDate = Number.isNaN(date.getTime()) ? new Date() : date;
+      return safeDate.toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      });
+    }
+
+    function updatePreviewTime(label, value = new Date()) {
+      const previewTime = document.getElementById('previewTime');
+      previewTime.textContent = `${label}: ${formatPreviewTime(value)}`;
+      previewTime.classList.remove('hidden');
+    }
+
     async function pollGenerateJob(jobId) {
       const loadingText = document.getElementById('previewLoadingText');
       const startedAt = Date.now();
@@ -982,6 +1004,7 @@
       const imageUrl = data.image_url + '?t=' + Date.now();
 
       document.getElementById('previewPrompt').textContent = data.prompt;
+      updatePreviewTime('Generated at', data.created_at);
       document.getElementById('previewSection').classList.remove('hidden');
 
       await new Promise((resolve, reject) => {
@@ -1022,6 +1045,8 @@
       lastRequestBody = requestBody;
 
       setLoading(true);
+      document.getElementById('previewPrompt').textContent = prompt;
+      updatePreviewTime('Started at');
       try {
         const res = await fetch('/api/generate', {
           method: 'POST',
@@ -1035,6 +1060,7 @@
         setLoading(false);
       } catch (e) {
         setLoading(false);
+        updatePreviewTime('Failed at');
         showError(e.message || 'Failed to generate image');
       }
     }
