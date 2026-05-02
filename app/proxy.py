@@ -2,11 +2,14 @@ import aiohttp
 import base64
 import json
 import copy
+from collections.abc import Callable
 from typing import Any
 
 from . import config
 from .models import EditRequest, GenerateRequest
 from . import storage
+
+ProgressCallback = Callable[[str, str], None]
 
 
 OUTPUT_FORMATS = {
@@ -51,6 +54,14 @@ def extract_response_image_results(result: dict[str, Any]) -> list[dict[str, str
             image_results.append({"b64_json": image})
 
     return image_results
+
+
+def get_image_transfer_stage(image_data: dict) -> tuple[str, str]:
+    if image_data.get("b64_json"):
+        return ("decoding_b64_json", "Decoding b64_json image")
+    if image_data.get("url"):
+        return ("downloading_image_url", "Downloading image URL")
+    return ("extracting_image_bytes", "Extracting image bytes")
 
 
 async def extract_image_bytes(
@@ -174,6 +185,7 @@ async def call_image_generation_api(
     api_key: str,
     api_path: str,
     payload: GenerateRequest,
+    progress: ProgressCallback | None = None,
 ) -> list[storage.GalleryEntry]:
     api_path = normalize_api_path(api_path)
     upstream_url = f"{api_url.rstrip('/')}{api_path}"
@@ -185,9 +197,13 @@ async def call_image_generation_api(
     }
 
     if api_path == "/v1/responses":
+        if progress:
+            progress("building_responses_payload", "Building Responses API payload")
         request_data = build_responses_request_data(payload)
         request_count = payload.n
     else:
+        if progress:
+            progress("building_generation_payload", "Building image generation payload")
         request_data = build_images_request_data(payload)
         request_count = 1
 
@@ -204,13 +220,20 @@ async def call_image_generation_api(
     }
 
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        for _ in range(request_count):
+        for request_index in range(request_count):
+            if progress:
+                progress(
+                    "waiting_for_api",
+                    f"Waiting for upstream API response ({request_index + 1}/{request_count})",
+                )
             request_body = copy.deepcopy(request_data)
             async with session.post(
                 upstream_url, json=request_body, headers=headers
             ) as resp:
                 status = resp.status
                 response_text = await resp.text()
+                if progress:
+                    progress("received_api_response", "Received upstream API response")
 
                 content_type = resp.headers.get("Content-Type", "")
                 is_json_response = "application/json" in content_type
@@ -219,6 +242,8 @@ async def call_image_generation_api(
                     raise_upstream_error(status, response_text, is_json_response, api_path)
 
                 if is_json_response:
+                    if progress:
+                        progress("parsing_json_response", "Parsing JSON response")
                     try:
                         result = json.loads(response_text)
                     except json.JSONDecodeError:
@@ -227,8 +252,15 @@ async def call_image_generation_api(
                     raise Exception(f"Upstream returned non-JSON content-type ({status}): {response_text[:200]}")
 
                 if api_path == "/v1/responses":
+                    if progress:
+                        progress(
+                            "extracting_response_image_output",
+                            "Extracting image_generation_call output",
+                        )
                     data = extract_response_image_results(result)
                 else:
+                    if progress:
+                        progress("extracting_generation_data", "Extracting image data array")
                     data = result.get("data", [])
                 if not data:
                     text_preview = response_text[:200] if isinstance(response_text, str) else str(response_text)[:200]
@@ -236,8 +268,19 @@ async def call_image_generation_api(
 
                 if api_path == "/v1/responses" and len(data) > 1:
                     entries_data: list[tuple] = []
-                    for image_data in data:
+                    for image_index, image_data in enumerate(data):
+                        transfer_stage, transfer_message = get_image_transfer_stage(image_data)
+                        if progress:
+                            progress(
+                                transfer_stage,
+                                f"{transfer_message} ({image_index + 1}/{len(data)})",
+                            )
                         image_bytes = await extract_image_bytes(session, image_data, response_text)
+                        if progress:
+                            progress(
+                                "validating_image_bytes",
+                                f"Validating decoded image ({image_index + 1}/{len(data)})",
+                            )
                         max_bytes = 50 * 1024 * 1024
                         if len(image_bytes) > max_bytes:
                             raise Exception(
@@ -248,12 +291,25 @@ async def call_image_generation_api(
                         entries_data.append(
                             (image_bytes, image_id, payload.prompt, payload.size, filename, gallery_metadata)
                         )
+                    if progress:
+                        progress("saving_images", "Saving generated images")
                     batch_entries = await storage.batch_save_and_update_gallery(entries_data)
                     entries.extend(batch_entries)
                 else:
-                    for image_data in data:
+                    for image_index, image_data in enumerate(data):
+                        transfer_stage, transfer_message = get_image_transfer_stage(image_data)
+                        if progress:
+                            progress(
+                                transfer_stage,
+                                f"{transfer_message} ({image_index + 1}/{len(data)})",
+                            )
                         image_bytes = await extract_image_bytes(session, image_data, response_text)
 
+                        if progress:
+                            progress(
+                                "validating_image_bytes",
+                                f"Validating decoded image ({image_index + 1}/{len(data)})",
+                            )
                         max_bytes = 50 * 1024 * 1024
                         if len(image_bytes) > max_bytes:
                             raise Exception(
@@ -262,7 +318,17 @@ async def call_image_generation_api(
 
                         image_id = storage.generate_image_id()
                         filename = f"{image_id}.{format_info['extension']}"
+                        if progress:
+                            progress(
+                                "saving_image_file",
+                                f"Saving image file ({image_index + 1}/{len(data)})",
+                            )
                         await storage.save_image_async(image_bytes, filename)
+                        if progress:
+                            progress(
+                                "updating_gallery",
+                                f"Updating gallery metadata ({image_index + 1}/{len(data)})",
+                            )
                         entry = storage.add_to_gallery_sync(
                             image_id=image_id,
                             prompt=payload.prompt,
@@ -295,6 +361,7 @@ async def call_image_edit_api(
     image_bytes: bytes,
     image_filename: str,
     image_content_type: str,
+    progress: ProgressCallback | None = None,
 ) -> list[storage.GalleryEntry]:
     api_path = "/v1/images/edits"
     upstream_url = f"{api_url.rstrip('/')}{api_path}"
@@ -314,6 +381,8 @@ async def call_image_edit_api(
         "api_path": api_path,
     }
 
+    if progress:
+        progress("building_edit_form", "Building multipart edit request")
     form = aiohttp.FormData()
     form.add_field(
         "image",
@@ -325,9 +394,13 @@ async def call_image_edit_api(
         form.add_field(key, str(value))
 
     async with aiohttp.ClientSession(timeout=timeout) as session:
+        if progress:
+            progress("uploading_edit_image", "Uploading source image and edit parameters")
         async with session.post(upstream_url, data=form, headers=headers) as resp:
             status = resp.status
             response_text = await resp.text()
+            if progress:
+                progress("received_api_response", "Received upstream API response")
 
             content_type = resp.headers.get("Content-Type", "")
             is_json_response = "application/json" in content_type
@@ -336,6 +409,8 @@ async def call_image_edit_api(
                 raise_upstream_error(status, response_text, is_json_response, api_path)
 
             if is_json_response:
+                if progress:
+                    progress("parsing_json_response", "Parsing JSON response")
                 try:
                     result = json.loads(response_text)
                 except json.JSONDecodeError:
@@ -347,18 +422,31 @@ async def call_image_edit_api(
                     f"Upstream returned non-JSON content-type ({status}): {response_text[:200]}"
                 )
 
+            if progress:
+                progress("extracting_edit_data", "Extracting edited image data array")
             data = result.get("data", [])
             if not data:
                 raise Exception(f"No image data in upstream response: {response_text[:200]}")
 
             entries_data: list[tuple] = []
             max_bytes = config.MAX_FILE_SIZE_MB * 1024 * 1024
-            for image_data in data:
+            for image_index, image_data in enumerate(data):
+                transfer_stage, transfer_message = get_image_transfer_stage(image_data)
+                if progress:
+                    progress(
+                        transfer_stage,
+                        f"{transfer_message} ({image_index + 1}/{len(data)})",
+                    )
                 edited_image_bytes = await extract_image_bytes(
                     session,
                     image_data,
                     response_text,
                 )
+                if progress:
+                    progress(
+                        "validating_image_bytes",
+                        f"Validating decoded image ({image_index + 1}/{len(data)})",
+                    )
                 if len(edited_image_bytes) > max_bytes:
                     raise Exception(
                         f"Image too large: {len(edited_image_bytes)} bytes (max {max_bytes})"
@@ -377,4 +465,6 @@ async def call_image_edit_api(
                     )
                 )
 
+            if progress:
+                progress("saving_images", "Saving edited images")
             return await storage.batch_save_and_update_gallery(entries_data)

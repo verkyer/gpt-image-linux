@@ -25,7 +25,7 @@ Key characteristics:
 - generation and edit options for size, quality, format, compression, and quantity
 - image-to-image edits via OpenAI-compatible `/v1/images/edits`
 - auto, ratio-based, and custom image sizes
-- preview UI with prompt, parameters, and elapsed generation time
+- preview UI with prompt, parameters, elapsed time, and detailed English generation/edit stages
 - job polling UI with 2-second interval and 10-minute timeout
 - gallery with pagination, lightbox, download, delete, and copy prompt
 - optional site access key with session unlock
@@ -70,10 +70,10 @@ Runtime persistent storage is minimal:
 1. the frontend sends a request to `/api/generate`
 2. the backend validates settings and creates an in-memory job
 3. the backend starts `run_generate_job(...)` with `asyncio.create_task`
-4. the backend calls the selected upstream API path
+4. the backend reports detailed stages while building the payload, waiting for the upstream API, parsing JSON, extracting image data, decoding `b64_json`, validating bytes, saving files, and updating gallery metadata
 5. image data is decoded from base64 or downloaded from URL
 6. the backend saves the file and appends the gallery metadata entry
-7. the frontend polls `/api/generate/{job_id}` until success or error
+7. the frontend polls `/api/generate/{job_id}` until success or error and renders the current stage in Preview
 
 ### Edit flow
 
@@ -82,9 +82,10 @@ Runtime persistent storage is minimal:
 3. the backend creates an in-memory job and calls upstream `/v1/images/edits`
 4. the uploaded image is forwarded as multipart `image`
 5. supported parameters are forwarded as multipart fields: `prompt`, `model`, `n`, `size`, `quality`, `output_format`, and `output_compression` when applicable
-6. returned image data is decoded from base64 or downloaded from URL
-7. the backend saves the edited image and appends the gallery metadata entry
-8. the frontend polls `/api/generate/{job_id}` and renders preview/gallery like normal generation
+6. the backend reports detailed stages while building multipart form data, uploading the source image, waiting for the upstream API, parsing JSON, extracting edited image data, decoding `b64_json`, validating bytes, and saving files
+7. returned image data is decoded from base64 or downloaded from URL
+8. the backend saves the edited image and appends the gallery metadata entry
+9. the frontend polls `/api/generate/{job_id}` and renders preview/gallery like normal generation
 
 ## Tech stack
 
@@ -307,7 +308,7 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 - 生成/编辑选项：尺寸、质量、格式、压缩比、数量
 - 通过 OpenAI 兼容 `/v1/images/edits` 支持图生图编辑
 - 支持自动、比例和自定义图像尺寸
-- 预览界面：显示提示词、参数和生成耗时
+- 预览界面：显示提示词、参数、生成耗时，以及英文 generation/edit 细分阶段
 - 任务轮询界面：2 秒轮询一次，最长 10 分钟
 - Gallery：分页、Lightbox、下载、删除、复制提示词
 - 可选站点访问密钥
@@ -352,10 +353,10 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 1. 前端请求 `/api/generate`
 2. 后端校验配置并创建内存任务
 3. 后端通过 `asyncio.create_task` 启动 `run_generate_job(...)`
-4. 后端调用所选的上游 API Path
+4. 后端在构建 payload、等待上游 API、解析 JSON、提取图片数据、解码 `b64_json`、校验字节、保存文件和更新 Gallery 元数据时持续上报细分阶段
 5. 图片数据从 base64 解码或从 URL 下载
 6. 后端保存文件并写入 Gallery 元数据
-7. 前端轮询 `/api/generate/{job_id}` 直到成功或失败
+7. 前端轮询 `/api/generate/{job_id}` 直到成功或失败，并在 Preview 中渲染当前阶段
 
 ### 编辑流程
 
@@ -364,9 +365,10 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 3. 后端创建内存任务并调用上游 `/v1/images/edits`
 4. 上传图片以 multipart `image` 字段转发
 5. 支持的参数以 multipart 字段转发：`prompt`、`model`、`n`、`size`、`quality`、`output_format`，以及适用时的 `output_compression`
-6. 返回图片数据从 base64 解码或从 URL 下载
-7. 后端保存编辑后的图片并写入 Gallery 元数据
-8. 前端轮询 `/api/generate/{job_id}`，并像普通生成一样渲染预览和 Gallery
+6. 后端在构建 multipart 表单、上传源图片、等待上游 API、解析 JSON、提取编辑图片数据、解码 `b64_json`、校验字节和保存文件时持续上报细分阶段
+7. 返回图片数据从 base64 解码或从 URL 下载
+8. 后端保存编辑后的图片并写入 Gallery 元数据
+9. 前端轮询 `/api/generate/{job_id}`，并像普通生成一样渲染预览和 Gallery
 
 ## 技术栈
 

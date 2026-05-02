@@ -98,6 +98,53 @@
         linear-gradient(135deg, transparent 75%, rgba(63, 63, 70, 0.14) 75%) 0 0 / 28px 28px,
         rgba(39, 39, 42, 0.72);
     }
+    .preview-stage-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.35rem 0.75rem;
+    }
+    .preview-stage-item {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      gap: 0.45rem;
+      color: #71717a;
+      font-size: 0.6875rem;
+      line-height: 1rem;
+      text-align: left;
+    }
+    .preview-stage-dot {
+      width: 0.4rem;
+      height: 0.4rem;
+      flex: 0 0 auto;
+      border-radius: 9999px;
+      background: #3f3f46;
+    }
+    .preview-stage-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .preview-stage-item.is-done {
+      color: #a1a1aa;
+    }
+    .preview-stage-item.is-done .preview-stage-dot {
+      background: #10b981;
+    }
+    .preview-stage-item.is-active {
+      color: #e4e4e7;
+      font-weight: 600;
+    }
+    .preview-stage-item.is-active .preview-stage-dot {
+      background: #34d399;
+      box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.16);
+    }
+    @media (max-width: 520px) {
+      .preview-stage-list {
+        grid-template-columns: 1fr;
+      }
+    }
     .size-dialog-backdrop {
       background: rgba(9, 9, 11, 0.72);
       backdrop-filter: blur(8px);
@@ -365,12 +412,13 @@
       <div id="previewImageWrapper" class="preview-empty relative rounded-xl overflow-hidden flex items-center justify-center min-h-48 max-h-[500px]">
         <img id="previewImage" alt="" class="hidden max-w-full max-h-[500px] object-contain fade-in">
         <div id="previewLoading" class="absolute inset-0 flex items-center justify-center bg-zinc-900/70 backdrop-blur-sm hidden">
-          <div class="text-center">
+          <div class="w-full max-w-md px-6 text-center">
             <div class="spinner mx-auto mb-4" style="width:32px;height:32px;border-width:3px;"></div>
             <p id="previewLoadingText" class="text-sm font-medium text-zinc-200">Generating...</p>
             <div class="w-48 h-1 bg-zinc-700/80 rounded-full mt-4 overflow-hidden">
               <div class="h-full bg-emerald-500 rounded-full progress-bar"></div>
             </div>
+            <div id="previewStageList" class="preview-stage-list mt-5"></div>
           </div>
         </div>
       </div>
@@ -990,6 +1038,99 @@
       closeSizeDialog();
     }
 
+    const PREVIEW_STAGES = {
+      generationImages: [
+        { key: 'queued', label: 'Queued' },
+        { key: 'starting_generation', label: 'Starting generation' },
+        { key: 'building_generation_payload', label: 'Building generation payload' },
+        { key: 'waiting_for_api', label: 'Waiting for API response' },
+        { key: 'received_api_response', label: 'Received API response' },
+        { key: 'parsing_json_response', label: 'Parsing JSON response' },
+        { key: 'extracting_generation_data', label: 'Extracting image data' },
+        { key: 'decoding_b64_json', label: 'Decoding b64_json' },
+        { key: 'downloading_image_url', label: 'Downloading image URL' },
+        { key: 'extracting_image_bytes', label: 'Extracting image bytes' },
+        { key: 'validating_image_bytes', label: 'Validating image bytes' },
+        { key: 'saving_image_file', label: 'Saving image file' },
+        { key: 'updating_gallery', label: 'Updating gallery metadata' },
+        { key: 'finalizing_preview', label: 'Finalizing preview' },
+        { key: 'completed', label: 'Completed' },
+      ],
+      generationResponses: [
+        { key: 'queued', label: 'Queued' },
+        { key: 'starting_generation', label: 'Starting generation' },
+        { key: 'building_responses_payload', label: 'Building Responses payload' },
+        { key: 'waiting_for_api', label: 'Waiting for API response' },
+        { key: 'received_api_response', label: 'Received API response' },
+        { key: 'parsing_json_response', label: 'Parsing JSON response' },
+        { key: 'extracting_response_image_output', label: 'Extracting image_generation output' },
+        { key: 'decoding_b64_json', label: 'Decoding b64_json' },
+        { key: 'downloading_image_url', label: 'Downloading image URL' },
+        { key: 'extracting_image_bytes', label: 'Extracting image bytes' },
+        { key: 'validating_image_bytes', label: 'Validating image bytes' },
+        { key: 'saving_images', label: 'Saving images' },
+        { key: 'finalizing_preview', label: 'Finalizing preview' },
+        { key: 'completed', label: 'Completed' },
+      ],
+      edit: [
+        { key: 'queued', label: 'Queued' },
+        { key: 'starting_edit', label: 'Starting edit' },
+        { key: 'building_edit_form', label: 'Building multipart edit request' },
+        { key: 'uploading_edit_image', label: 'Uploading source image' },
+        { key: 'received_api_response', label: 'Received API response' },
+        { key: 'parsing_json_response', label: 'Parsing JSON response' },
+        { key: 'extracting_edit_data', label: 'Extracting edited image data' },
+        { key: 'decoding_b64_json', label: 'Decoding b64_json' },
+        { key: 'downloading_image_url', label: 'Downloading image URL' },
+        { key: 'extracting_image_bytes', label: 'Extracting image bytes' },
+        { key: 'validating_image_bytes', label: 'Validating image bytes' },
+        { key: 'saving_images', label: 'Saving edited images' },
+        { key: 'finalizing_preview', label: 'Finalizing preview' },
+        { key: 'completed', label: 'Completed' },
+      ],
+    };
+
+    function getPreviewStages(mode) {
+      if (mode === 'edit') return PREVIEW_STAGES.edit;
+      const apiPath = document.getElementById('settingsApiPath')?.value || '/v1/images/generations';
+      return apiPath === '/v1/responses' ? PREVIEW_STAGES.generationResponses : PREVIEW_STAGES.generationImages;
+    }
+
+    function getStageIndex(stages, mode, stage) {
+      const index = stages.findIndex(item => item.key === stage);
+      return index >= 0 ? index : 0;
+    }
+
+    function formatStageMessage(stage, mode, fallback = '') {
+      if (fallback) return fallback;
+      const stages = getPreviewStages(mode);
+      const index = getStageIndex(stages, mode, stage);
+      return stages[index]?.label || (mode === 'edit' ? 'Editing image' : 'Generating image');
+    }
+
+    function renderPreviewStages(mode = 'generate', stage = 'queued') {
+      const operation = mode === 'edit' ? 'edit' : 'generation';
+      const stages = getPreviewStages(operation);
+      const activeIndex = getStageIndex(stages, operation, stage);
+      const stageList = document.getElementById('previewStageList');
+      stageList.innerHTML = stages.map((item, index) => {
+        const stateClass = index < activeIndex ? 'is-done' : index === activeIndex ? 'is-active' : '';
+        return `
+          <div class="preview-stage-item ${stateClass}">
+            <span class="preview-stage-dot"></span>
+            <span class="preview-stage-label" title="${item.label}">${item.label}</span>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function updatePreviewStage(stage = 'queued', mode = 'generate', message = '') {
+      const operation = mode === 'edit' ? 'edit' : 'generation';
+      const previewLoadingText = document.getElementById('previewLoadingText');
+      previewLoadingText.textContent = formatStageMessage(stage, operation, message);
+      renderPreviewStages(operation, stage);
+    }
+
     function setLoading(loading, mode = 'generate') {
       const btn = document.getElementById('generateBtn');
       const uploadBtn = document.getElementById('uploadBtn');
@@ -1015,7 +1156,7 @@
       if (loading) {
         preview.classList.remove('hidden');
         previewLoading.classList.remove('hidden');
-        previewLoadingText.textContent = 'Queued...';
+        updatePreviewStage('queued', mode);
         previewImg.removeAttribute('src');
         previewImg.classList.add('hidden');
         previewImg.style.opacity = '0';
@@ -1171,7 +1312,6 @@
 
     async function pollGenerateJob(jobId, mode = 'generate') {
       const loadingText = document.getElementById('previewLoadingText');
-      const runningText = mode === 'edit' ? 'Editing...' : 'Generating...';
       const failedText = mode === 'edit' ? 'Image edit failed' : 'Image generation failed';
       const startedAt = Date.now();
       const timeoutMs = 10 * 60 * 1000;
@@ -1206,7 +1346,7 @@
           throw new Error(data.message || failedText);
         }
 
-        loadingText.textContent = data.status === 'queued' ? 'Queued...' : runningText;
+        updatePreviewStage(data.stage || data.status, data.operation || mode, data.message);
       }
 
       if (lastNetworkError) {

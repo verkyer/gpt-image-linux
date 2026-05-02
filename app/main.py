@@ -127,6 +127,26 @@ def trim_generate_jobs():
         jobs.pop(job_id, None)
 
 
+def set_generate_job_progress(
+    job_id: str,
+    stage: str,
+    message: str,
+    operation: str,
+):
+    job = app.state.generate_jobs.get(job_id)
+    if not job:
+        return
+
+    job.update(
+        {
+            "status": "running",
+            "stage": stage,
+            "message": message,
+            "operation": operation,
+        }
+    )
+
+
 def normalize_api_path(api_path: str) -> str:
     if api_path in {"/v1/images/generations", "/v1/responses"}:
         return api_path
@@ -242,26 +262,50 @@ async def run_generate_job(
     jobs[job_id] = {
         "job_id": job_id,
         "status": "running",
-        "message": "Generating image",
+        "stage": "starting_generation",
+        "message": "Starting image generation",
+        "operation": "generation",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
 
     try:
-        entries = await proxy.call_image_generation_api(api_url, api_key, api_path, req)
+        entries = await proxy.call_image_generation_api(
+            api_url,
+            api_key,
+            api_path,
+            req,
+            lambda stage, message: set_generate_job_progress(
+                job_id,
+                stage,
+                message,
+                "generation",
+            ),
+        )
     except Exception as e:
         jobs[job_id] = {
             "job_id": job_id,
             "status": "error",
+            "stage": "generation_failed",
             "message": str(e),
+            "operation": "generation",
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         trim_generate_jobs()
         return
 
+    set_generate_job_progress(
+        job_id,
+        "finalizing_preview",
+        "Finalizing preview image",
+        "generation",
+    )
     first_entry = entries[0]
     jobs[job_id] = {
         "job_id": job_id,
         "status": "success",
+        "stage": "completed",
+        "message": "Image generation completed",
+        "operation": "generation",
         "id": first_entry.id,
         "image_url": f"/api/image/{first_entry.filename}",
         "prompt": first_entry.prompt,
@@ -290,7 +334,9 @@ async def run_edit_job(
     jobs[job_id] = {
         "job_id": job_id,
         "status": "running",
-        "message": "Editing image",
+        "stage": "starting_edit",
+        "message": "Starting image edit",
+        "operation": "edit",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -302,21 +348,38 @@ async def run_edit_job(
             image_bytes,
             image_filename,
             image_content_type,
+            lambda stage, message: set_generate_job_progress(
+                job_id,
+                stage,
+                message,
+                "edit",
+            ),
         )
     except Exception as e:
         jobs[job_id] = {
             "job_id": job_id,
             "status": "error",
+            "stage": "edit_failed",
             "message": str(e),
+            "operation": "edit",
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         trim_generate_jobs()
         return
 
+    set_generate_job_progress(
+        job_id,
+        "finalizing_preview",
+        "Finalizing preview image",
+        "edit",
+    )
     first_entry = entries[0]
     jobs[job_id] = {
         "job_id": job_id,
         "status": "success",
+        "stage": "completed",
+        "message": "Image edit completed",
+        "operation": "edit",
         "id": first_entry.id,
         "image_url": f"/api/image/{first_entry.filename}",
         "prompt": first_entry.prompt,
@@ -347,7 +410,9 @@ async def generate(req: GenerateRequest):
     app.state.generate_jobs[job_id] = {
         "job_id": job_id,
         "status": "queued",
+        "stage": "queued",
         "message": "Queued image generation",
+        "operation": "generation",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     asyncio.create_task(run_generate_job(job_id, api_url, api_key, api_path, req))
@@ -355,7 +420,9 @@ async def generate(req: GenerateRequest):
     return GenerateJobResponse(
         job_id=job_id,
         status="queued",
+        stage="queued",
         message="Queued image generation",
+        operation="generation",
     )
 
 
@@ -406,7 +473,9 @@ async def edit_image(
     app.state.generate_jobs[job_id] = {
         "job_id": job_id,
         "status": "queued",
+        "stage": "queued",
         "message": "Queued image edit",
+        "operation": "edit",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     asyncio.create_task(
@@ -424,7 +493,9 @@ async def edit_image(
     return GenerateJobResponse(
         job_id=job_id,
         status="queued",
+        stage="queued",
         message="Queued image edit",
+        operation="edit",
     )
 
 
