@@ -450,8 +450,11 @@
                     Copy
                   </button>
                   <button type="button" onclick="copyLightboxImageUrl(event)"
-                    class="px-2.5 py-1.5 rounded-lg bg-zinc-800 text-xs font-medium text-zinc-300 hover:bg-zinc-700 transition-colors">
-                    链接
+                    class="p-1.5 rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
+                    title="Copy image URL" aria-label="Copy image URL">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 010 5.656l-2 2a4 4 0 01-5.656-5.656l1-1m8.656 2.656l1-1a4 4 0 00-5.656-5.656l-2 2a4 4 0 000 5.656"/>
+                    </svg>
                   </button>
                 </div>
               </div>
@@ -1292,9 +1295,11 @@
                     </button>
                     <button onclick="copyImageUrl(event, this)"
                       data-filename="${escapeAttribute(img.filename)}"
-                      class="px-2 py-1.5 rounded-lg text-[11px] font-semibold text-zinc-500 hover:text-sky-300 hover:bg-sky-900/20 transition-colors"
-                      title="Copy image URL">
-                      链接
+                      class="p-1.5 rounded-lg text-zinc-500 hover:text-sky-300 hover:bg-sky-900/20 transition-colors"
+                      title="Copy image URL" aria-label="Copy image URL">
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 010 5.656l-2 2a4 4 0 01-5.656-5.656l1-1m8.656 2.656l1-1a4 4 0 00-5.656-5.656l-2 2a4 4 0 000 5.656"/>
+                      </svg>
                     </button>
                   </div>
                 </div>
