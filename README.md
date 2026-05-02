@@ -43,7 +43,7 @@ backend access by client IP before any image generation flow can start.
 ## Usage
 
 1. Click the **Settings** gear icon in the top right
-2. Enter your **API Base URL** (e.g., `https://api.221.qzz.io`) and **API Key**
+2. Enter your **API Base URL** (e.g., `https://api.221.qzz.io`), choose an **API Path**, and enter your **API Key**
 3. Click **Save**
 4. Enter a **prompt**, choose generation options, and click **Generate**
 5. View the preview, download the image, or browse the **Gallery**
@@ -64,12 +64,21 @@ Generation options include:
 - Compression: disabled for `PNG`; `0-100` for `JPEG` and `WebP`
 - Quantity: integer from `1` to `10`
 
+API path supports:
+
+- `/v1/images/generations`: sends generation requests to the Images API and reads image data from `data[]`
+- `/v1/responses`: sends generation requests to the Responses API with an `image_generation` tool and reads base64 image data from `output[]` items of type `image_generation_call`
+
+For `/v1/responses`, the image model selected in the UI is passed to the `image_generation` tool. The top-level Responses model defaults to `gpt-5.4` and can be changed with `DEFAULT_RESPONSES_MODEL`.
+
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DEFAULT_API_URL` | (empty) | Pre-fill API base URL |
 | `DEFAULT_API_KEY` | (empty) | Pre-fill API key |
+| `DEFAULT_API_PATH` | `/v1/images/generations` | Default upstream path: `/v1/images/generations` or `/v1/responses` |
+| `DEFAULT_RESPONSES_MODEL` | `gpt-5.4` | Top-level model used when calling `/v1/responses` |
 | `ACCESS_KEY` | (empty) | Site access key. When set, every non-health route requires unlock |
 | `IP_ALLOWLIST` | (empty) | Comma-separated allowed IPs/CIDRs, e.g. `127.0.0.1,192.168.1.0/24` |
 | `TRUST_PROXY_HEADERS` | `false` | Read `X-Forwarded-For`/`X-Real-IP` from a trusted reverse proxy |

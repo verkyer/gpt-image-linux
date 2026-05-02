@@ -33,6 +33,7 @@ async def lifespan(app: FastAPI):
     storage.verify_storage_writable()
     app.state.api_url = config.DEFAULT_API_URL
     app.state.api_key = config.DEFAULT_API_KEY
+    app.state.api_path = config.DEFAULT_API_PATH
     app.state.generate_jobs = {}
     yield
 
@@ -94,6 +95,12 @@ def trim_generate_jobs():
         jobs.pop(job_id, None)
 
 
+def normalize_api_path(api_path: str) -> str:
+    if api_path in {"/v1/images/generations", "/v1/responses"}:
+        return api_path
+    return "/v1/images/generations"
+
+
 @app.get("/favicon.ico")
 async def favicon():
     return FileResponse("static/favicon.ico")
@@ -150,7 +157,9 @@ async def unlock_access(req: AccessRequest, response: Response):
 @app.post("/api/settings", response_model=MessageResponse)
 async def update_settings(req: SettingsRequest):
     app.state.api_url = req.api_url.rstrip("/")
-    app.state.api_key = req.api_key
+    if req.api_key is not None:
+        app.state.api_key = req.api_key
+    app.state.api_path = normalize_api_path(req.api_path)
     return MessageResponse(status="ok", message="Settings updated")
 
 
@@ -159,10 +168,19 @@ async def get_settings():
     return SettingsResponse(
         api_url=getattr(app.state, "api_url", ""),
         api_key_masked=mask_key(getattr(app.state, "api_key", "")),
+        api_path=normalize_api_path(
+            getattr(app.state, "api_path", "/v1/images/generations")
+        ),
     )
 
 
-async def run_generate_job(job_id: str, api_url: str, api_key: str, req: GenerateRequest):
+async def run_generate_job(
+    job_id: str,
+    api_url: str,
+    api_key: str,
+    api_path: str,
+    req: GenerateRequest,
+):
     jobs = app.state.generate_jobs
     jobs[job_id] = {
         "job_id": job_id,
@@ -172,7 +190,7 @@ async def run_generate_job(job_id: str, api_url: str, api_key: str, req: Generat
     }
 
     try:
-        entries = await proxy.call_images_api(api_url, api_key, req)
+        entries = await proxy.call_image_generation_api(api_url, api_key, api_path, req)
     except Exception as e:
         jobs[job_id] = {
             "job_id": job_id,
@@ -200,6 +218,7 @@ async def run_generate_job(job_id: str, api_url: str, api_key: str, req: Generat
 async def generate(req: GenerateRequest):
     api_url: str = getattr(app.state, "api_url", "")
     api_key: str = getattr(app.state, "api_key", "")
+    api_path: str = getattr(app.state, "api_path", "/v1/images/generations")
 
     if not api_url:
         raise HTTPException(status_code=400, detail="API URL not configured. Please set it in Settings.")
@@ -213,7 +232,7 @@ async def generate(req: GenerateRequest):
         "message": "Queued image generation",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    asyncio.create_task(run_generate_job(job_id, api_url, api_key, req))
+    asyncio.create_task(run_generate_job(job_id, api_url, api_key, api_path, req))
 
     return GenerateJobResponse(
         job_id=job_id,

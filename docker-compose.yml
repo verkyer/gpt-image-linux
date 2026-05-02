@@ -12,6 +12,8 @@ services:
     environment:
       - DEFAULT_API_URL=${DEFAULT_API_URL:-}
       - DEFAULT_API_KEY=${DEFAULT_API_KEY:-}
+      - DEFAULT_API_PATH=${DEFAULT_API_PATH:-/v1/images/generations}
+      - DEFAULT_RESPONSES_MODEL=${DEFAULT_RESPONSES_MODEL:-gpt-5.4}
       - ACCESS_KEY=${ACCESS_KEY:-}
       - IP_ALLOWLIST=${IP_ALLOWLIST:-}
       - TRUST_PROXY_HEADERS=${TRUST_PROXY_HEADERS:-false}

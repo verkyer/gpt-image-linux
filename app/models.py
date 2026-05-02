@@ -5,12 +5,19 @@ from datetime import datetime
 
 class SettingsRequest(BaseModel):
     api_url: str = Field(..., description="Base API URL, e.g. https://api.221.qzz.io")
-    api_key: str = Field(..., description="API key for authentication")
+    api_key: Optional[str] = Field(
+        default=None,
+        description="API key for authentication. Omit/null to keep the current key.",
+    )
+    api_path: Literal["/v1/images/generations", "/v1/responses"] = (
+        "/v1/images/generations"
+    )
 
 
 class SettingsResponse(BaseModel):
     api_url: str
     api_key_masked: str
+    api_path: Literal["/v1/images/generations", "/v1/responses"]
 
 
 class AccessRequest(BaseModel):

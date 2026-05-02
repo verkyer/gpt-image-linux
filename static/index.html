@@ -157,7 +157,15 @@
           <label class="block text-sm font-medium text-zinc-300 mb-2">API Base URL</label>
           <input type="url" id="settingsApiUrl" placeholder="https://api.221.qzz.io"
             class="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 transition-colors font-mono">
-          <p class="mt-1.5 text-xs text-zinc-500">The base URL without the /v1/images/generations path</p>
+          <p class="mt-1.5 text-xs text-zinc-500">The base URL without the API path</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-zinc-300 mb-2">API Path</label>
+          <select id="settingsApiPath"
+            class="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 transition-colors cursor-pointer appearance-none font-mono">
+            <option value="/v1/images/generations">/v1/images/generations</option>
+            <option value="/v1/responses">/v1/responses</option>
+          </select>
         </div>
         <div>
           <label class="block text-sm font-medium text-zinc-300 mb-2">API Key</label>
@@ -571,6 +579,7 @@
         const res = await fetch('/api/settings', { credentials: 'same-origin' });
         const data = await res.json();
         if (data.api_url) document.getElementById('settingsApiUrl').value = data.api_url;
+        document.getElementById('settingsApiPath').value = data.api_path || '/v1/images/generations';
         if (data.api_key_masked && data.api_key_masked !== '***') {
           document.getElementById('settingsApiKey').value = '••••••••';
         }
@@ -580,16 +589,19 @@
     async function saveSettings() {
       const apiUrl = document.getElementById('settingsApiUrl').value.trim();
       const apiKey = document.getElementById('settingsApiKey').value.trim();
+      const apiPath = document.getElementById('settingsApiPath').value;
+      const requestBody = { api_url: apiUrl, api_key: apiKey, api_path: apiPath };
 
       if (!apiUrl) { showToast('Please enter an API URL', 'error'); return; }
-      if (!apiKey || apiKey === '••••••••') { showToast('Please enter an API Key', 'error'); return; }
+      if (!apiKey) { showToast('Please enter an API Key', 'error'); return; }
+      if (apiKey === '••••••••') requestBody.api_key = null;
 
       try {
         const res = await fetch('/api/settings', {
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ api_url: apiUrl, api_key: apiKey }),
+          body: JSON.stringify(requestBody),
         });
         if (!res.ok) throw new Error('Failed to save settings');
         showToast('Settings saved', 'success');

@@ -2,6 +2,8 @@ import os
 
 DEFAULT_API_URL = os.getenv("DEFAULT_API_URL", "")
 DEFAULT_API_KEY = os.getenv("DEFAULT_API_KEY", "")
+DEFAULT_API_PATH = os.getenv("DEFAULT_API_PATH", "/v1/images/generations")
+DEFAULT_RESPONSES_MODEL = os.getenv("DEFAULT_RESPONSES_MODEL", "gpt-5.4")
 ACCESS_KEY = os.getenv("ACCESS_KEY", "")
 ACCESS_KEY_SESSION_MINUTES = 60
 ACCESS_KEY_COOKIE_NAME = os.getenv("ACCESS_KEY_COOKIE_NAME", "gpt_image_access")
