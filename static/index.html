@@ -422,7 +422,17 @@
     <section>
       <div class="flex items-center justify-between mb-5">
         <h2 class="text-sm font-semibold text-zinc-400 uppercase tracking-wider">Gallery</h2>
-        <span id="galleryCount" class="text-xs text-zinc-600"></span>
+        <div class="flex items-center gap-3">
+          <span id="galleryCount" class="text-xs text-zinc-600"></span>
+          <button id="downloadAllBtn" onclick="downloadAll()"
+            class="px-3 py-2 rounded-lg bg-zinc-800 text-zinc-300 text-xs font-medium hover:bg-zinc-700 transition-colors flex items-center gap-1.5"
+            title="Download all images as ZIP">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+            </svg>
+            Download All
+          </button>
+        </div>
       </div>
 
       <div id="galleryGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1463,6 +1473,25 @@
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
+    }
+
+    function downloadAll() {
+      const btn = document.getElementById('downloadAllBtn');
+      const original = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;"></span> Packing...';
+
+      const a = document.createElement('a');
+      a.href = '/api/download-all';
+      a.download = '';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.innerHTML = original;
+      }, 3000);
     }
 
     async function loadGallery(page = galleryPage, options = {}) {

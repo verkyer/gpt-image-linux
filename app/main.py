@@ -4,8 +4,10 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from contextlib import asynccontextmanager
 import asyncio
 import hmac
+import io
 import mimetypes
 import uuid
+import zipfile
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -556,6 +558,43 @@ async def download_image(filename: str):
         media_type=media_type,
         headers={
             "Content-Disposition": f'attachment; filename="gpt-image-{timestamp}.{extension}"',
+        },
+    )
+
+
+@app.get("/api/download-all")
+async def download_all_images():
+    entries = storage.get_gallery()
+    if not entries:
+        raise HTTPException(status_code=404, detail="No images in gallery")
+
+    buf = io.BytesIO()
+    used_names: set[str] = set()
+
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for entry in entries:
+            path = storage.get_image_path(entry.filename)
+            if not path.exists():
+                continue
+
+            name = path.name
+            base = path.stem
+            ext = path.suffix
+            counter = 1
+            while name in used_names:
+                name = f"{base}_{counter}{ext}"
+                counter += 1
+            used_names.add(name)
+
+            zf.write(path, name)
+
+    buf.seek(0)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="gpt-images-{timestamp}.zip"',
         },
     )
 
