@@ -37,7 +37,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 9090 --reload
 Then open `http://localhost:9090`.
 
 Set `ACCESS_KEY` in `.env` to require an access key before any site/API access.
-Successful access sessions last 60 minutes. Set `IP_ALLOWLIST` to restrict
+Successful access sessions last 3 hours. Set `IP_ALLOWLIST` to restrict
 backend access by client IP before any image generation flow can start.
 
 ## Usage
@@ -94,7 +94,7 @@ For `/v1/responses`, the image model selected in the UI is passed to the `image_
 | `GET` | `/` | Frontend UI |
 | `GET` | `/health` | Health check |
 | `GET` | `/api/access/status` | Check access-key session status |
-| `POST` | `/api/access` | Unlock access for 60 minutes |
+| `POST` | `/api/access` | Unlock access for 3 hours |
 | `POST` | `/api/settings` | Save API URL and Key |
 | `GET` | `/api/settings` | Get current settings (key masked) |
 | `POST` | `/api/generate` | Start an image generation job |

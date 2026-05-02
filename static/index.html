@@ -613,8 +613,7 @@
 
     async function checkAccess() {
       try {
-        const res = await fetch('/api/access/status', { credentials: 'same-origin' });
-        const data = await readApiResponse(res);
+        const data = await apiFetch('/api/access/status', {}, 'checking access');
 
         if (data.authenticated) {
           document.getElementById('accessGate').classList.add('hidden');
@@ -649,13 +648,11 @@
       error.classList.add('hidden');
 
       try {
-        const res = await fetch('/api/access', {
+        const data = await apiFetch('/api/access', {
           method: 'POST',
-          credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ access_key: accessKey }),
-        });
-        const data = await readApiResponse(res);
+        }, 'unlocking access');
         if (!data.authenticated) throw new Error('Invalid access key');
 
         input.value = '';
@@ -673,8 +670,7 @@
 
     async function loadSettings() {
       try {
-        const res = await fetch('/api/settings', { credentials: 'same-origin' });
-        const data = await res.json();
+        const data = await apiFetch('/api/settings', {}, 'loading settings');
         if (data.api_url) document.getElementById('settingsApiUrl').value = data.api_url;
         document.getElementById('settingsApiPath').value = data.api_path || '/v1/images/generations';
         if (data.api_key_masked && data.api_key_masked !== '***') {
@@ -694,13 +690,11 @@
       if (apiKey === '••••••••') requestBody.api_key = null;
 
       try {
-        const res = await fetch('/api/settings', {
+        await apiFetch('/api/settings', {
           method: 'POST',
-          credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(requestBody),
-        });
-        if (!res.ok) throw new Error('Failed to save settings');
+        }, 'saving settings');
         showToast('Settings saved', 'success');
         toggleSettings();
       } catch (e) {
@@ -1017,7 +1011,29 @@
       }, 2500);
     }
 
-    async function readApiResponse(res) {
+    async function apiFetch(url, options = {}, action = 'request') {
+      let res;
+      try {
+        res = await fetch(url, {
+          credentials: 'same-origin',
+          ...options,
+          headers: {
+            'Accept': 'application/json',
+            ...(options.headers || {}),
+          },
+        });
+      } catch (error) {
+        throw new Error(`Network error while ${action}: ${error.message || 'Failed to fetch'}`);
+      }
+
+      return readApiResponse(res, action);
+    }
+
+    function isNetworkFetchError(error) {
+      return error instanceof TypeError || /Failed to fetch|Network error/i.test(error?.message || '');
+    }
+
+    async function readApiResponse(res, action = 'request') {
       const contentType = res.headers.get('content-type') || '';
       const bodyText = await res.text();
       let data = null;
@@ -1031,12 +1047,13 @@
       }
 
       if (!res.ok) {
-        const message = data?.detail || data?.error || data?.message || bodyText || `Request failed (${res.status})`;
-        throw new Error(message);
+        const message = data?.detail || data?.error || data?.message || bodyText || `${action} failed`;
+        const status = res.status ? ` (${res.status})` : '';
+        throw new Error(`${message}${status}`);
       }
 
       if (!data) {
-        throw new Error(bodyText || 'Server returned an empty response');
+        throw new Error(bodyText || `Server returned an empty response while ${action}`);
       }
 
       return data;
@@ -1061,14 +1078,31 @@
       const loadingText = document.getElementById('previewLoadingText');
       const startedAt = Date.now();
       const timeoutMs = 10 * 60 * 1000;
+      let networkFailures = 0;
+      let lastNetworkError = null;
 
       while (Date.now() - startedAt < timeoutMs) {
         await sleep(2000);
-        const res = await fetch('/api/generate/' + encodeURIComponent(jobId), {
-          credentials: 'same-origin',
-          headers: { 'Accept': 'application/json' },
-        });
-        const data = await readApiResponse(res);
+        let data;
+        try {
+          data = await apiFetch(
+            '/api/generate/' + encodeURIComponent(jobId),
+            {},
+            'checking generation status',
+          );
+          networkFailures = 0;
+          lastNetworkError = null;
+        } catch (error) {
+          if (!isNetworkFetchError(error)) throw error;
+
+          networkFailures += 1;
+          lastNetworkError = error;
+          loadingText.textContent = 'Reconnecting...';
+          if (networkFailures >= 8) {
+            throw new Error(`${error.message}. The image may still finish; refresh the gallery to check.`);
+          }
+          continue;
+        }
 
         if (data.status === 'success') return data;
         if (data.status === 'error') {
@@ -1078,6 +1112,9 @@
         loadingText.textContent = data.status === 'queued' ? 'Queued...' : 'Generating...';
       }
 
+      if (lastNetworkError) {
+        throw new Error(`${lastNetworkError.message}. The image may still finish; refresh the gallery to check.`);
+      }
       throw new Error('Image generation is still running. Check the gallery in a bit, or try again.');
     }
 
@@ -1110,7 +1147,12 @@
       previewImg.style.opacity = '1';
       previewLoading.classList.add('hidden');
 
-      await loadGallery(1);
+      try {
+        await loadGallery(1, { throwOnError: true });
+      } catch (error) {
+        console.error('Generated image loaded, but gallery refresh failed:', error);
+        showToast('Image generated, but gallery refresh failed', 'error');
+      }
     }
 
     async function generateImage() {
@@ -1139,13 +1181,11 @@
       document.getElementById('previewPrompt').textContent = prompt;
       updatePreviewTime('Elapsed');
       try {
-        const res = await fetch('/api/generate', {
+        const job = await apiFetch('/api/generate', {
           method: 'POST',
-          credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(requestBody),
-        });
-        const job = await readApiResponse(res);
+        }, 'starting image generation');
         const data = job.image_url ? job : await pollGenerateJob(job.job_id);
         await showGeneratedImage(data);
         setLoading(false);
@@ -1170,14 +1210,14 @@
       document.body.removeChild(a);
     }
 
-    async function loadGallery(page = galleryPage) {
+    async function loadGallery(page = galleryPage, options = {}) {
+      const { throwOnError = false } = options;
       try {
         const params = new URLSearchParams({
           page: String(page),
           page_size: String(GALLERY_PAGE_SIZE),
         });
-        const res = await fetch('/api/gallery?' + params.toString(), { credentials: 'same-origin' });
-        const data = await res.json();
+        const data = await apiFetch('/api/gallery?' + params.toString(), {}, 'loading gallery');
         const grid = document.getElementById('galleryGrid');
         const empty = document.getElementById('galleryEmpty');
         const count = document.getElementById('galleryCount');
@@ -1251,6 +1291,7 @@
         }).join('');
       } catch (e) {
         console.error('Failed to load gallery:', e);
+        if (throwOnError) throw e;
       }
     }
 
@@ -1277,11 +1318,9 @@
     async function deleteImage(id) {
       if (!confirm('Delete this image from gallery?')) return;
       try {
-        const res = await fetch('/api/gallery/' + id, {
+        await apiFetch('/api/gallery/' + id, {
           method: 'DELETE',
-          credentials: 'same-origin',
-        });
-        if (!res.ok) throw new Error('Delete failed');
+        }, 'deleting image');
         await loadGallery(galleryPage);
         showToast('Image deleted', 'success');
       } catch (e) {
