@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from contextlib import asynccontextmanager
@@ -13,6 +13,7 @@ from . import config
 from .models import (
     AccessRequest,
     AccessStatusResponse,
+    EditRequest,
     SettingsRequest,
     SettingsResponse,
     GenerateRequest,
@@ -41,6 +42,37 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="GPT Image Panel", lifespan=lifespan)
 
 MAX_GENERATE_JOBS = 100
+MAX_UPLOAD_BYTES = config.MAX_FILE_SIZE_MB * 1024 * 1024
+IMAGE_UPLOAD_EXTENSIONS = {
+    ".avif",
+    ".bmp",
+    ".gif",
+    ".heic",
+    ".heif",
+    ".ico",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".svg",
+    ".tif",
+    ".tiff",
+    ".webp",
+}
+IMAGE_UPLOAD_CONTENT_TYPES = {
+    ".avif": "image/avif",
+    ".bmp": "image/bmp",
+    ".gif": "image/gif",
+    ".heic": "image/heic",
+    ".heif": "image/heif",
+    ".ico": "image/x-icon",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".svg": "image/svg+xml",
+    ".tif": "image/tiff",
+    ".tiff": "image/tiff",
+    ".webp": "image/webp",
+}
 AUTH_EXEMPT_PATHS = {"/", "/api/access", "/api/access/status", "/health"}
 
 
@@ -99,6 +131,31 @@ def normalize_api_path(api_path: str) -> str:
     if api_path in {"/v1/images/generations", "/v1/responses"}:
         return api_path
     return "/v1/images/generations"
+
+
+def is_image_upload(upload: UploadFile) -> bool:
+    if upload.content_type and upload.content_type.startswith("image/"):
+        return True
+
+    guessed_type = mimetypes.guess_type(upload.filename or "")[0]
+    if guessed_type and guessed_type.startswith("image/"):
+        return True
+
+    return Path(upload.filename or "").suffix.lower() in IMAGE_UPLOAD_EXTENSIONS
+
+
+def get_upload_image_content_type(upload: UploadFile) -> str:
+    if upload.content_type and upload.content_type.startswith("image/"):
+        return upload.content_type
+
+    guessed_type = mimetypes.guess_type(upload.filename or "")[0]
+    if guessed_type and guessed_type.startswith("image/"):
+        return guessed_type
+
+    return IMAGE_UPLOAD_CONTENT_TYPES.get(
+        Path(upload.filename or "").suffix.lower(),
+        "application/octet-stream",
+    )
 
 
 @app.get("/favicon.ico")
@@ -220,6 +277,61 @@ async def run_generate_job(
     trim_generate_jobs()
 
 
+async def run_edit_job(
+    job_id: str,
+    api_url: str,
+    api_key: str,
+    req: EditRequest,
+    image_bytes: bytes,
+    image_filename: str,
+    image_content_type: str,
+):
+    jobs = app.state.generate_jobs
+    jobs[job_id] = {
+        "job_id": job_id,
+        "status": "running",
+        "message": "Editing image",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    try:
+        entries = await proxy.call_image_edit_api(
+            api_url,
+            api_key,
+            req,
+            image_bytes,
+            image_filename,
+            image_content_type,
+        )
+    except Exception as e:
+        jobs[job_id] = {
+            "job_id": job_id,
+            "status": "error",
+            "message": str(e),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        trim_generate_jobs()
+        return
+
+    first_entry = entries[0]
+    jobs[job_id] = {
+        "job_id": job_id,
+        "status": "success",
+        "id": first_entry.id,
+        "image_url": f"/api/image/{first_entry.filename}",
+        "prompt": first_entry.prompt,
+        "size": first_entry.size,
+        "created_at": first_entry.created_at,
+        "model": first_entry.model,
+        "quality": first_entry.quality,
+        "output_format": first_entry.output_format,
+        "output_compression": first_entry.output_compression,
+        "n": first_entry.n,
+        "api_path": first_entry.api_path,
+    }
+    trim_generate_jobs()
+
+
 @app.post("/api/generate", response_model=GenerateJobResponse, status_code=202)
 async def generate(req: GenerateRequest):
     api_url: str = getattr(app.state, "api_url", "")
@@ -244,6 +356,75 @@ async def generate(req: GenerateRequest):
         job_id=job_id,
         status="queued",
         message="Queued image generation",
+    )
+
+
+@app.post("/api/edits", response_model=GenerateJobResponse, status_code=202)
+async def edit_image(
+    image: UploadFile = File(...),
+    prompt: str = Form(...),
+    size: str = Form("1024x1024"),
+    model: str = Form("gpt-image-2"),
+    n: int = Form(1),
+    quality: str = Form("auto"),
+    output_format: str = Form("png"),
+    output_compression: int | None = Form(None),
+):
+    api_url: str = getattr(app.state, "api_url", "")
+    api_key: str = getattr(app.state, "api_key", "")
+
+    if not api_url:
+        raise HTTPException(status_code=400, detail="API URL not configured. Please set it in Settings.")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="API Key not configured. Please set it in Settings.")
+    if not is_image_upload(image):
+        raise HTTPException(status_code=400, detail="Upload must be an image file.")
+
+    image_bytes = await image.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded image is empty.")
+    if len(image_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Uploaded image is too large. Max size is {config.MAX_FILE_SIZE_MB} MB.",
+        )
+
+    try:
+        req = EditRequest(
+            prompt=prompt,
+            size=size,
+            model=model,
+            n=n,
+            quality=quality,
+            output_format=output_format,
+            output_compression=output_compression,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+    job_id = str(uuid.uuid4())
+    app.state.generate_jobs[job_id] = {
+        "job_id": job_id,
+        "status": "queued",
+        "message": "Queued image edit",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    asyncio.create_task(
+        run_edit_job(
+            job_id,
+            api_url,
+            api_key,
+            req,
+            image_bytes,
+            image.filename or "image.png",
+            get_upload_image_content_type(image),
+        )
+    )
+
+    return GenerateJobResponse(
+        job_id=job_id,
+        status="queued",
+        message="Queued image edit",
     )
 
 

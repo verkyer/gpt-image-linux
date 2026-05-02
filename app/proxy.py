@@ -5,7 +5,7 @@ import copy
 from typing import Any
 
 from . import config
-from .models import GenerateRequest
+from .models import EditRequest, GenerateRequest
 from . import storage
 
 
@@ -91,6 +91,20 @@ def build_images_request_data(payload: GenerateRequest) -> dict[str, Any]:
     return request_data
 
 
+def build_images_edit_form_data(payload: EditRequest) -> dict[str, Any]:
+    form_data: dict[str, Any] = {
+        "model": payload.model,
+        "prompt": payload.prompt,
+        "size": payload.size,
+        "n": payload.n,
+        "quality": payload.quality,
+        "output_format": payload.output_format,
+    }
+    if payload.output_format != "png" and payload.output_compression is not None:
+        form_data["output_compression"] = payload.output_compression
+    return form_data
+
+
 def build_responses_request_data(payload: GenerateRequest) -> dict[str, Any]:
     image_generation_tool: dict[str, Any] = {
         "type": "image_generation",
@@ -114,6 +128,45 @@ def normalize_api_path(api_path: str) -> str:
     if api_path in {"/v1/images/generations", "/v1/responses"}:
         return api_path
     return "/v1/images/generations"
+
+
+def get_upstream_error_message(
+    status: int,
+    response_text: str,
+    is_json_response: bool,
+) -> str:
+    if is_json_response:
+        try:
+            error_body = json.loads(response_text)
+            return error_body.get("error", {}).get("message", response_text)
+        except Exception:
+            return response_text
+    return f"HTTP {status}: {response_text[:200]}"
+
+
+def raise_upstream_error(
+    status: int,
+    response_text: str,
+    is_json_response: bool,
+    api_path: str,
+):
+    error_msg = get_upstream_error_message(status, response_text, is_json_response)
+    unsupported_markers = (
+        "not support",
+        "not_supported",
+        "unsupported",
+        "not found",
+        "unknown endpoint",
+        "no route",
+    )
+    if api_path == "/v1/images/edits" and (
+        status in {404, 405, 501}
+        or any(marker in error_msg.lower() for marker in unsupported_markers)
+    ):
+        raise Exception(
+            f"Upstream API does not support /v1/images/edits ({status}): {error_msg}"
+        )
+    raise Exception(f"Upstream API error ({status}): {error_msg}")
 
 
 async def call_image_generation_api(
@@ -163,17 +216,7 @@ async def call_image_generation_api(
                 is_json_response = "application/json" in content_type
 
                 if status >= 400:
-                    if is_json_response:
-                        try:
-                            error_body = json.loads(response_text)
-                            error_msg = error_body.get("error", {}).get(
-                                "message", response_text
-                            )
-                        except Exception:
-                            error_msg = response_text
-                    else:
-                        error_msg = f"HTTP {status}: {response_text[:200]}"
-                    raise Exception(f"Upstream API error ({status}): {error_msg}")
+                    raise_upstream_error(status, response_text, is_json_response, api_path)
 
                 if is_json_response:
                     try:
@@ -243,3 +286,95 @@ async def call_images_api(
         "/v1/images/generations",
         payload,
     )
+
+
+async def call_image_edit_api(
+    api_url: str,
+    api_key: str,
+    payload: EditRequest,
+    image_bytes: bytes,
+    image_filename: str,
+    image_content_type: str,
+) -> list[storage.GalleryEntry]:
+    api_path = "/v1/images/edits"
+    upstream_url = f"{api_url.rstrip('/')}{api_path}"
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "User-Agent": "opencode",
+    }
+    timeout = aiohttp.ClientTimeout(total=300)
+    format_info = get_output_format_info(payload.output_format)
+    gallery_metadata = {
+        "model": payload.model,
+        "quality": payload.quality,
+        "output_format": payload.output_format,
+        "output_compression": payload.output_compression,
+        "n": payload.n,
+        "api_path": api_path,
+    }
+
+    form = aiohttp.FormData()
+    form.add_field(
+        "image",
+        image_bytes,
+        filename=image_filename or "image.png",
+        content_type=image_content_type or "application/octet-stream",
+    )
+    for key, value in build_images_edit_form_data(payload).items():
+        form.add_field(key, str(value))
+
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.post(upstream_url, data=form, headers=headers) as resp:
+            status = resp.status
+            response_text = await resp.text()
+
+            content_type = resp.headers.get("Content-Type", "")
+            is_json_response = "application/json" in content_type
+
+            if status >= 400:
+                raise_upstream_error(status, response_text, is_json_response, api_path)
+
+            if is_json_response:
+                try:
+                    result = json.loads(response_text)
+                except json.JSONDecodeError:
+                    raise Exception(
+                        f"Upstream returned non-JSON ({status}): {response_text[:200]}"
+                    )
+            else:
+                raise Exception(
+                    f"Upstream returned non-JSON content-type ({status}): {response_text[:200]}"
+                )
+
+            data = result.get("data", [])
+            if not data:
+                raise Exception(f"No image data in upstream response: {response_text[:200]}")
+
+            entries_data: list[tuple] = []
+            max_bytes = config.MAX_FILE_SIZE_MB * 1024 * 1024
+            for image_data in data:
+                edited_image_bytes = await extract_image_bytes(
+                    session,
+                    image_data,
+                    response_text,
+                )
+                if len(edited_image_bytes) > max_bytes:
+                    raise Exception(
+                        f"Image too large: {len(edited_image_bytes)} bytes (max {max_bytes})"
+                    )
+
+                image_id = storage.generate_image_id()
+                filename = f"{image_id}.{format_info['extension']}"
+                entries_data.append(
+                    (
+                        edited_image_bytes,
+                        image_id,
+                        payload.prompt,
+                        payload.size,
+                        filename,
+                        gallery_metadata,
+                    )
+                )
+
+            return await storage.batch_save_and_update_gallery(entries_data)

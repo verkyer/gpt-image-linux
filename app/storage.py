@@ -143,7 +143,7 @@ async def batch_save_and_update_gallery(
 
     gallery_task = _load_gallery_async()
     save_tasks = [
-        save_image_async(item[0], item[3]) for item in entries_data
+        save_image_async(item[0], item[4]) for item in entries_data
     ]
     entries, _ = await asyncio.gather(gallery_task, asyncio.gather(*save_tasks))
 

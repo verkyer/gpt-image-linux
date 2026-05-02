@@ -312,13 +312,31 @@
           </div>
         </div>
 
-        <button id="generateBtn" onclick="generateImage()"
-          class="w-full sm:w-auto px-6 py-3 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
-          </svg>
-          Generate
-        </button>
+        <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+          <button id="generateBtn" onclick="generateImage()"
+            class="w-full sm:w-auto px-6 py-3 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+            </svg>
+            Generate
+          </button>
+          <input id="editImageInput" type="file" accept="image/*" class="hidden" onchange="handleEditImageSelected(event)">
+          <button id="uploadBtn" type="button" onclick="openEditImagePicker()"
+            class="w-full sm:w-auto px-5 py-3 rounded-xl border border-zinc-700 bg-zinc-800/80 text-zinc-200 text-sm font-semibold hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1M12 12V4m0 0L8 8m4-4l4 4"/>
+            </svg>
+            Upload
+          </button>
+          <button id="editBtn" type="button" onclick="editImage()" disabled
+            class="w-full sm:w-auto px-5 py-3 rounded-xl bg-sky-600 text-white text-sm font-semibold hover:bg-sky-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L12 14l-4 1 1-4 8.586-8.586z"/>
+            </svg>
+            Edits
+          </button>
+          <span id="editImageName" class="hidden min-w-0 text-xs text-zinc-500 sm:max-w-xs truncate"></span>
+        </div>
       </div>
     </section>
 
@@ -579,6 +597,8 @@
     let currentImageUrl = null;
     let currentFilename = null;
     let lastRequestBody = null;
+    let lastAction = 'generate';
+    let selectedEditImage = null;
     let generationStartedAt = null;
     let galleryById = new Map();
     const GALLERY_PAGE_SIZE = 9;
@@ -970,17 +990,24 @@
       closeSizeDialog();
     }
 
-    function setLoading(loading) {
+    function setLoading(loading, mode = 'generate') {
       const btn = document.getElementById('generateBtn');
+      const uploadBtn = document.getElementById('uploadBtn');
+      const editBtn = document.getElementById('editBtn');
       const preview = document.getElementById('previewSection');
       const previewLoading = document.getElementById('previewLoading');
       const previewImg = document.getElementById('previewImage');
       const previewLoadingText = document.getElementById('previewLoadingText');
       const inputs = ['promptInput', 'modelSelect', 'qualitySelect', 'formatSelect', 'compressionInput', 'quantityInput'];
-      const spinnerHTML = '<span class="spinner"></span> Generating...';
+      const isEditing = mode === 'edit';
+      const generateSpinnerHTML = '<span class="spinner"></span> Generating...';
+      const editSpinnerHTML = '<span class="spinner"></span> Editing...';
 
       btn.disabled = loading;
-      btn.innerHTML = loading ? spinnerHTML : '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg> Generate';
+      btn.innerHTML = loading && !isEditing ? generateSpinnerHTML : '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg> Generate';
+      uploadBtn.disabled = loading;
+      editBtn.disabled = loading || !selectedEditImage;
+      editBtn.innerHTML = loading && isEditing ? editSpinnerHTML : '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L12 14l-4 1 1-4 8.586-8.586z"/></svg> Edits';
       inputs.forEach(id => { document.getElementById(id).disabled = loading; });
       document.getElementById('sizeSelect').disabled = loading;
       if (!loading) handleOutputFormatChange();
@@ -1083,8 +1110,69 @@
       previewTime.classList.remove('hidden');
     }
 
-    async function pollGenerateJob(jobId) {
+    function getImageRequestBody() {
+      const outputFormat = document.getElementById('formatSelect').value;
+      const requestBody = {
+        prompt: document.getElementById('promptInput').value.trim(),
+        size: document.getElementById('sizeSelect').value,
+        model: document.getElementById('modelSelect').value,
+        n: clampQuantityInput() || 1,
+        quality: document.getElementById('qualitySelect').value,
+        output_format: outputFormat,
+      };
+
+      if (outputFormat !== 'png') {
+        requestBody.output_compression = clampCompressionInput() ?? 100;
+      }
+
+      return requestBody;
+    }
+
+    function openEditImagePicker() {
+      document.getElementById('editImageInput').click();
+    }
+
+    function isImageFile(file) {
+      if (file.type && file.type.startsWith('image/')) return true;
+      return /\.(avif|bmp|gif|heic|heif|ico|jpe?g|png|svg|tiff?|webp)$/i.test(file.name || '');
+    }
+
+    function handleEditImageSelected(event) {
+      const file = event.target.files?.[0] || null;
+      const editBtn = document.getElementById('editBtn');
+      const imageName = document.getElementById('editImageName');
+
+      if (!file) {
+        selectedEditImage = null;
+        editBtn.disabled = true;
+        imageName.classList.add('hidden');
+        imageName.textContent = '';
+        return;
+      }
+
+      if (!isImageFile(file)) {
+        selectedEditImage = null;
+        editBtn.disabled = true;
+        imageName.classList.add('hidden');
+        imageName.textContent = '';
+        event.target.value = '';
+        showError('Please upload an image file');
+        return;
+      }
+
+      selectedEditImage = file;
+      editBtn.disabled = false;
+      imageName.textContent = file.name;
+      imageName.title = file.name;
+      imageName.classList.remove('hidden');
+      hideError();
+      showToast('Image ready for edits', 'success');
+    }
+
+    async function pollGenerateJob(jobId, mode = 'generate') {
       const loadingText = document.getElementById('previewLoadingText');
+      const runningText = mode === 'edit' ? 'Editing...' : 'Generating...';
+      const failedText = mode === 'edit' ? 'Image edit failed' : 'Image generation failed';
       const startedAt = Date.now();
       const timeoutMs = 10 * 60 * 1000;
       let networkFailures = 0;
@@ -1115,10 +1203,10 @@
 
         if (data.status === 'success') return data;
         if (data.status === 'error') {
-          throw new Error(data.message || 'Image generation failed');
+          throw new Error(data.message || failedText);
         }
 
-        loadingText.textContent = data.status === 'queued' ? 'Queued...' : 'Generating...';
+        loadingText.textContent = data.status === 'queued' ? 'Queued...' : runningText;
       }
 
       if (lastNetworkError) {
@@ -1166,27 +1254,15 @@
 
     async function generateImage() {
       hideError();
-      const prompt = document.getElementById('promptInput').value.trim();
+      const requestBody = getImageRequestBody();
+      const prompt = requestBody.prompt;
       if (!prompt) { showError('Please enter a prompt'); return; }
 
-      const outputFormat = document.getElementById('formatSelect').value;
-      const quantity = clampQuantityInput() || 1;
-      const requestBody = {
-        prompt,
-        size: document.getElementById('sizeSelect').value,
-        model: document.getElementById('modelSelect').value,
-        n: quantity,
-        quality: document.getElementById('qualitySelect').value,
-        output_format: outputFormat,
-      };
-
-      if (outputFormat !== 'png') {
-        requestBody.output_compression = clampCompressionInput() ?? 100;
-      }
       lastRequestBody = requestBody;
+      lastAction = 'generate';
 
       generationStartedAt = performance.now();
-      setLoading(true);
+      setLoading(true, 'generate');
       document.getElementById('previewPrompt').textContent = prompt;
       updatePreviewTime('Elapsed');
       try {
@@ -1195,7 +1271,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(requestBody),
         }, 'starting image generation');
-        const data = job.image_url ? job : await pollGenerateJob(job.job_id);
+        const data = job.image_url ? job : await pollGenerateJob(job.job_id, 'generate');
         await showGeneratedImage(data);
         setLoading(false);
       } catch (e) {
@@ -1205,8 +1281,51 @@
       }
     }
 
+    async function editImage() {
+      hideError();
+      if (!selectedEditImage) { showError('Please upload an image first'); return; }
+
+      const requestBody = getImageRequestBody();
+      const prompt = requestBody.prompt;
+      if (!prompt) { showError('Please enter a prompt'); return; }
+
+      const formData = new FormData();
+      formData.append('image', selectedEditImage, selectedEditImage.name);
+      Object.entries(requestBody).forEach(([key, value]) => {
+        if (value !== null && value !== undefined && value !== '') {
+          formData.append(key, String(value));
+        }
+      });
+
+      lastRequestBody = requestBody;
+      lastAction = 'edit';
+      generationStartedAt = performance.now();
+      setLoading(true, 'edit');
+      document.getElementById('previewPrompt').textContent = prompt;
+      updatePreviewTime('Elapsed');
+
+      try {
+        const job = await apiFetch('/api/edits', {
+          method: 'POST',
+          body: formData,
+        }, 'starting image edit');
+        const data = job.image_url ? job : await pollGenerateJob(job.job_id, 'edit');
+        await showGeneratedImage(data);
+        setLoading(false);
+      } catch (e) {
+        setLoading(false);
+        updatePreviewTime('Elapsed');
+        showError(e.message || 'Failed to edit image');
+      }
+    }
+
     function regenerate() {
-      if (lastRequestBody) generateImage();
+      if (!lastRequestBody) return;
+      if (lastAction === 'edit' && selectedEditImage) {
+        editImage();
+      } else {
+        generateImage();
+      }
     }
 
     function downloadCurrent() {

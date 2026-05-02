@@ -78,6 +78,10 @@ class GenerateRequest(BaseModel):
         return self
 
 
+class EditRequest(GenerateRequest):
+    pass
+
+
 class GalleryEntry(BaseModel):
     id: str
     prompt: str

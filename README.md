@@ -1,12 +1,12 @@
 # GPT Image Panel
 
-Web panel for GPT Image 2 API image generation.
+Web panel for GPT Image 2 API image generation and editing.
 
 English | [中文](#中文文档)
 
 ## Overview
 
-GPT Image Panel is a lightweight FastAPI web UI for image generation. It is designed as a self-hosted panel that connects to an external GPT-compatible image API and stores generated images locally.
+GPT Image Panel is a lightweight FastAPI web UI for image generation and image editing. It is designed as a self-hosted panel that connects to an external GPT-compatible image API and stores generated images locally.
 
 Key characteristics:
 
@@ -22,7 +22,8 @@ Key characteristics:
 ## Features
 
 - settings UI for API base URL, API path, API key, and model
-- generation options for size, quality, format, compression, and quantity
+- generation and edit options for size, quality, format, compression, and quantity
+- image-to-image edits via OpenAI-compatible `/v1/images/edits`
 - auto, ratio-based, and custom image sizes
 - preview UI with prompt, parameters, and elapsed generation time
 - job polling UI with 2-second interval and 10-minute timeout
@@ -73,6 +74,17 @@ Runtime persistent storage is minimal:
 5. image data is decoded from base64 or downloaded from URL
 6. the backend saves the file and appends the gallery metadata entry
 7. the frontend polls `/api/generate/{job_id}` until success or error
+
+### Edit flow
+
+1. the frontend lets the user upload any image file
+2. the frontend sends the uploaded image and current parameters to `/api/edits`
+3. the backend creates an in-memory job and calls upstream `/v1/images/edits`
+4. the uploaded image is forwarded as multipart `image`
+5. supported parameters are forwarded as multipart fields: `prompt`, `model`, `n`, `size`, `quality`, `output_format`, and `output_compression` when applicable
+6. returned image data is decoded from base64 or downloaded from URL
+7. the backend saves the edited image and appends the gallery metadata entry
+8. the frontend polls `/api/generate/{job_id}` and renders preview/gallery like normal generation
 
 ## Tech stack
 
@@ -164,11 +176,12 @@ curl http://localhost:9090/health
 7. enter a prompt
 8. choose generation options
 9. click Generate
-10. view preview and gallery
+10. optionally click Upload, choose an image, then click Edits to run image-to-image
+11. view preview and gallery
 
 ## API paths
 
-The panel supports two upstream paths:
+The panel supports these upstream paths:
 
 ### `/v1/images/generations`
 
@@ -182,6 +195,13 @@ The panel supports two upstream paths:
 - reads base64 image data from `output[]` items of type `image_generation_call`
 - the selected image model is passed to the tool
 - the top-level Responses model defaults to `gpt-5.4` and can be changed with `DEFAULT_RESPONSES_MODEL`
+
+### `/v1/images/edits`
+
+- used by the Edits button after an image is uploaded
+- always calls `/v1/images/edits` on the configured API base URL
+- sends multipart/form-data with `image` plus supported edit parameters
+- if the upstream returns `404`, `405`, or `501`, the UI reports that `/v1/images/edits` is not supported and stops the edit request
 
 ## Image size modes
 
@@ -222,6 +242,7 @@ The panel supports two upstream paths:
 | `POST` | `/api/settings` | Save API URL and API key |
 | `GET` | `/api/settings` | Get current settings |
 | `POST` | `/api/generate` | Start an image generation job |
+| `POST` | `/api/edits` | Start an image edit job with multipart image upload |
 | `GET` | `/api/generate/{job_id}` | Get generation job status or result |
 | `GET` | `/api/gallery` | List gallery images with pagination |
 | `GET` | `/api/image/{filename}` | Serve image file |
@@ -261,13 +282,13 @@ Helpful guidelines:
 
 # GPT Image Panel
 
-GPT Image 2 API 图像生成 Web 面板。
+GPT Image 2 API 图像生成和编辑 Web 面板。
 
 [English](#gpt-image-panel) | 中文
 
 ## 概述
 
-GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成。它被设计为自托管面板，连接外部 GPT 兼容图像 API，并在本地存储生成的图片。
+GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图像编辑。它被设计为自托管面板，连接外部 GPT 兼容图像 API，并在本地存储生成的图片。
 
 主要特点：
 
@@ -283,7 +304,8 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成。它
 ## 功能
 
 - 设置界面：API Base URL、API Path、API Key、Model
-- 生成选项：尺寸、质量、格式、压缩比、数量
+- 生成/编辑选项：尺寸、质量、格式、压缩比、数量
+- 通过 OpenAI 兼容 `/v1/images/edits` 支持图生图编辑
 - 支持自动、比例和自定义图像尺寸
 - 预览界面：显示提示词、参数和生成耗时
 - 任务轮询界面：2 秒轮询一次，最长 10 分钟
@@ -334,6 +356,17 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成。它
 5. 图片数据从 base64 解码或从 URL 下载
 6. 后端保存文件并写入 Gallery 元数据
 7. 前端轮询 `/api/generate/{job_id}` 直到成功或失败
+
+### 编辑流程
+
+1. 前端让用户上传任意图片文件
+2. 前端将上传图片和当前参数发送到 `/api/edits`
+3. 后端创建内存任务并调用上游 `/v1/images/edits`
+4. 上传图片以 multipart `image` 字段转发
+5. 支持的参数以 multipart 字段转发：`prompt`、`model`、`n`、`size`、`quality`、`output_format`，以及适用时的 `output_compression`
+6. 返回图片数据从 base64 解码或从 URL 下载
+7. 后端保存编辑后的图片并写入 Gallery 元数据
+8. 前端轮询 `/api/generate/{job_id}`，并像普通生成一样渲染预览和 Gallery
 
 ## 技术栈
 
@@ -425,11 +458,12 @@ curl http://localhost:9090/health
 7. 输入提示词
 8. 选择生成参数
 9. 点击 Generate
-10. 查看预览和 Gallery
+10. 也可以点击 Upload 选择图片，再点击 Edits 执行图生图
+11. 查看预览和 Gallery
 
 ## 支持的 API Path
 
-面板支持两种上游路径：
+面板支持以下上游路径：
 
 ### `/v1/images/generations`
 
@@ -443,6 +477,13 @@ curl http://localhost:9090/health
 - 从 `output[]` 中类型为 `image_generation_call` 的项目读取 base64 图片数据
 - 界面中选择的图像模型会传给该工具
 - Responses 顶层模型默认为 `gpt-5.4`，可通过 `DEFAULT_RESPONSES_MODEL` 修改
+
+### `/v1/images/edits`
+
+- 上传图片后点击 Edits 使用
+- 始终在配置的 API Base URL 下调用 `/v1/images/edits`
+- 使用 multipart/form-data 发送 `image` 和支持的编辑参数
+- 如果上游返回 `404`、`405` 或 `501`，界面会提示 `/v1/images/edits` 不受支持并停止编辑请求
 
 ## 图像尺寸模式
 
@@ -483,6 +524,7 @@ curl http://localhost:9090/health
 | `POST` | `/api/settings` | 保存 API URL 与 API Key |
 | `GET` | `/api/settings` | 获取当前设置 |
 | `POST` | `/api/generate` | 创建图像生成任务 |
+| `POST` | `/api/edits` | 使用 multipart 图片上传创建图像编辑任务 |
 | `GET` | `/api/generate/{job_id}` | 查询任务状态或结果 |
 | `GET` | `/api/gallery` | 分页查询 Gallery 图片 |
 | `GET` | `/api/image/{filename}` | 访问图片文件 |
