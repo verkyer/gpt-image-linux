@@ -99,12 +99,16 @@
         rgba(39, 39, 42, 0.72);
     }
     .preview-loading-active {
-      min-height: var(--preview-loading-min-height, 640px);
-      max-height: none;
+      min-height: var(--preview-loading-min-height, 760px);
+      max-height: none !important;
     }
     .preview-loading-surface {
-      padding: 2.5rem 1.5rem 3rem;
+      padding: 2.5rem 1.5rem 5rem;
       overflow: visible;
+    }
+    .preview-loading-content {
+      width: 100%;
+      max-width: 28rem;
     }
     .preview-stage-list {
       display: grid;
@@ -150,7 +154,7 @@
     }
     @media (max-width: 520px) {
       .preview-loading-active {
-        min-height: var(--preview-loading-min-height, 760px);
+        min-height: var(--preview-loading-min-height, 900px);
       }
       .preview-stage-list {
         grid-template-columns: 1fr;
@@ -423,7 +427,7 @@
       <div id="previewImageWrapper" class="preview-empty relative rounded-xl overflow-hidden flex items-center justify-center min-h-48 max-h-[500px]">
         <img id="previewImage" alt="" class="hidden max-w-full max-h-[500px] object-contain fade-in">
         <div id="previewLoading" class="preview-loading-surface absolute inset-0 flex items-center justify-center bg-zinc-900/70 backdrop-blur-sm hidden">
-          <div class="w-full max-w-md px-6 text-center">
+          <div class="preview-loading-content px-6 text-center">
             <div class="spinner mx-auto mb-4" style="width:32px;height:32px;border-width:3px;"></div>
             <p id="previewLoadingText" class="text-sm font-medium text-zinc-200">Generating...</p>
             <div class="w-48 h-1 bg-zinc-700/80 rounded-full mt-4 mx-auto overflow-hidden">
@@ -1148,8 +1152,17 @@
       const previewLoading = document.getElementById('previewLoading');
       if (!previewImageWrapper || !previewLoading || previewLoading.classList.contains('hidden')) return;
 
-      const verticalBreathingRoom = 48;
-      const nextHeight = Math.ceil(previewLoading.scrollHeight + verticalBreathingRoom);
+      const loadingContent = previewLoading.querySelector('.preview-loading-content');
+      const loadingStyles = window.getComputedStyle(previewLoading);
+      const verticalPadding =
+        parseFloat(loadingStyles.paddingTop) + parseFloat(loadingStyles.paddingBottom);
+      const bottomBreathingRoom = 72;
+      const minimumHeight = window.matchMedia('(max-width: 520px)').matches ? 900 : 760;
+      const contentHeight = loadingContent?.scrollHeight || previewLoading.scrollHeight;
+      const nextHeight = Math.max(
+        minimumHeight,
+        Math.ceil(contentHeight + verticalPadding + bottomBreathingRoom),
+      );
       previewImageWrapper.style.setProperty('--preview-loading-min-height', `${nextHeight}px`);
     }
 
