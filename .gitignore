@@ -9,3 +9,5 @@ data/*
 
 images/*
 !images/.gitkeep
+
+app/__pycache__
