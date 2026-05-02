@@ -98,6 +98,14 @@
         linear-gradient(135deg, transparent 75%, rgba(63, 63, 70, 0.14) 75%) 0 0 / 28px 28px,
         rgba(39, 39, 42, 0.72);
     }
+    .preview-loading-active {
+      min-height: clamp(440px, 58vh, 560px);
+      max-height: none;
+    }
+    .preview-loading-surface {
+      padding: 2.5rem 1.5rem 3rem;
+      overflow-y: auto;
+    }
     .preview-stage-list {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -141,6 +149,9 @@
       box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.16);
     }
     @media (max-width: 520px) {
+      .preview-loading-active {
+        min-height: clamp(520px, 70vh, 680px);
+      }
       .preview-stage-list {
         grid-template-columns: 1fr;
       }
@@ -411,11 +422,11 @@
 
       <div id="previewImageWrapper" class="preview-empty relative rounded-xl overflow-hidden flex items-center justify-center min-h-48 max-h-[500px]">
         <img id="previewImage" alt="" class="hidden max-w-full max-h-[500px] object-contain fade-in">
-        <div id="previewLoading" class="absolute inset-0 flex items-center justify-center bg-zinc-900/70 backdrop-blur-sm hidden">
+        <div id="previewLoading" class="preview-loading-surface absolute inset-0 flex items-center justify-center bg-zinc-900/70 backdrop-blur-sm hidden">
           <div class="w-full max-w-md px-6 text-center">
             <div class="spinner mx-auto mb-4" style="width:32px;height:32px;border-width:3px;"></div>
             <p id="previewLoadingText" class="text-sm font-medium text-zinc-200">Generating...</p>
-            <div class="w-48 h-1 bg-zinc-700/80 rounded-full mt-4 overflow-hidden">
+            <div class="w-48 h-1 bg-zinc-700/80 rounded-full mt-4 mx-auto overflow-hidden">
               <div class="h-full bg-emerald-500 rounded-full progress-bar"></div>
             </div>
             <div id="previewStageList" class="preview-stage-list mt-5"></div>
@@ -1136,6 +1147,7 @@
       const uploadBtn = document.getElementById('uploadBtn');
       const editBtn = document.getElementById('editBtn');
       const preview = document.getElementById('previewSection');
+      const previewImageWrapper = document.getElementById('previewImageWrapper');
       const previewLoading = document.getElementById('previewLoading');
       const previewImg = document.getElementById('previewImage');
       const previewLoadingText = document.getElementById('previewLoadingText');
@@ -1155,12 +1167,14 @@
 
       if (loading) {
         preview.classList.remove('hidden');
+        previewImageWrapper.classList.add('preview-loading-active');
         previewLoading.classList.remove('hidden');
         updatePreviewStage('queued', mode);
         previewImg.removeAttribute('src');
         previewImg.classList.add('hidden');
         previewImg.style.opacity = '0';
       } else {
+        previewImageWrapper.classList.remove('preview-loading-active');
         previewLoading.classList.add('hidden');
       }
     }
@@ -1365,6 +1379,7 @@
 
       const previewImg = document.getElementById('previewImage');
       const previewLoading = document.getElementById('previewLoading');
+      const previewImageWrapper = document.getElementById('previewImageWrapper');
       const imageUrl = data.image_url + '?t=' + Date.now();
 
       document.getElementById('previewPrompt').textContent = data.prompt;
@@ -1382,6 +1397,7 @@
       previewImg.alt = data.prompt || 'Generated image';
       previewImg.className = 'max-w-full max-h-[500px] object-contain fade-in';
       previewImg.style.opacity = '1';
+      previewImageWrapper.classList.remove('preview-loading-active');
       previewLoading.classList.add('hidden');
 
       try {
