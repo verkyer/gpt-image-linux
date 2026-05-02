@@ -52,6 +52,12 @@
     .gallery-card:hover { transform: translateY(-2px); box-shadow: 0 8px 30px rgba(0,0,0,0.5); }
     .drawer-backdrop { background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); }
     .progress-bar { animation: indeterminate 1.5s ease-in-out infinite; }
+    .preview-empty {
+      background:
+        linear-gradient(135deg, rgba(63, 63, 70, 0.18) 25%, transparent 25%) 0 0 / 28px 28px,
+        linear-gradient(135deg, transparent 75%, rgba(63, 63, 70, 0.14) 75%) 0 0 / 28px 28px,
+        rgba(39, 39, 42, 0.72);
+    }
     .size-dialog-backdrop {
       background: rgba(9, 9, 11, 0.72);
       backdrop-filter: blur(8px);
@@ -290,13 +296,13 @@
         </div>
       </div>
 
-      <div id="previewImageWrapper" class="relative rounded-xl overflow-hidden bg-zinc-800/50 flex items-center justify-center min-h-48 max-h-[500px]">
-        <img id="previewImage" src="" alt="Generated image" class="max-w-full max-h-[500px] object-contain fade-in">
-        <div id="previewLoading" class="absolute inset-0 flex items-center justify-center bg-zinc-800/80 hidden">
+      <div id="previewImageWrapper" class="preview-empty relative rounded-xl overflow-hidden flex items-center justify-center min-h-48 max-h-[500px]">
+        <img id="previewImage" alt="" class="hidden max-w-full max-h-[500px] object-contain fade-in">
+        <div id="previewLoading" class="absolute inset-0 flex items-center justify-center bg-zinc-900/70 backdrop-blur-sm hidden">
           <div class="text-center">
-            <div class="spinner mx-auto mb-3" style="width:32px;height:32px;border-width:3px;"></div>
-            <p id="previewLoadingText" class="text-sm text-zinc-400">Generating...</p>
-            <div class="w-48 h-1 bg-zinc-700 rounded-full mt-3 overflow-hidden">
+            <div class="spinner mx-auto mb-4" style="width:32px;height:32px;border-width:3px;"></div>
+            <p id="previewLoadingText" class="text-sm font-medium text-zinc-200">Generating...</p>
+            <div class="w-48 h-1 bg-zinc-700/80 rounded-full mt-4 overflow-hidden">
               <div class="h-full bg-emerald-500 rounded-full progress-bar"></div>
             </div>
           </div>
@@ -871,10 +877,11 @@
         preview.classList.remove('hidden');
         previewLoading.classList.remove('hidden');
         previewLoadingText.textContent = 'Queued...';
+        previewImg.removeAttribute('src');
+        previewImg.classList.add('hidden');
         previewImg.style.opacity = '0';
       } else {
         previewLoading.classList.add('hidden');
-        previewImg.style.opacity = '1';
       }
     }
 
@@ -959,12 +966,24 @@
       currentFilename = data.image_url.replace('/api/image/', '');
 
       const previewImg = document.getElementById('previewImage');
-      previewImg.src = data.image_url + '?t=' + Date.now();
-      previewImg.className = 'max-w-full max-h-[500px] object-contain fade-in';
+      const previewLoading = document.getElementById('previewLoading');
+      const imageUrl = data.image_url + '?t=' + Date.now();
+
       document.getElementById('previewPrompt').textContent = data.prompt;
       document.getElementById('previewSection').classList.remove('hidden');
-      document.getElementById('previewLoading').classList.add('hidden');
+
+      await new Promise((resolve, reject) => {
+        previewImg.onload = resolve;
+        previewImg.onerror = () => reject(new Error('Generated image could not be loaded'));
+        previewImg.src = imageUrl;
+      });
+
+      previewImg.onload = null;
+      previewImg.onerror = null;
+      previewImg.alt = data.prompt || 'Generated image';
+      previewImg.className = 'max-w-full max-h-[500px] object-contain fade-in';
       previewImg.style.opacity = '1';
+      previewLoading.classList.add('hidden');
 
       await loadGallery();
     }
