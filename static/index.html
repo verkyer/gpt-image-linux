@@ -316,14 +316,30 @@
         <!-- Cards injected here -->
       </div>
 
-      <div id="galleryEmpty" class="hidden text-center py-16">
-        <div class="w-12 h-12 rounded-xl bg-zinc-800/80 flex items-center justify-center mx-auto mb-4">
-          <svg class="w-6 h-6 text-zinc-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
-          </svg>
+      <div id="galleryEmpty" class="hidden">
+        <div class="flex flex-col items-center py-16 px-8">
+          <div class="relative mb-6">
+            <div class="absolute inset-0 bg-emerald-500/10 rounded-full blur-xl scale-125"></div>
+            <div class="relative w-20 h-20 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center">
+              <svg class="w-9 h-9 text-zinc-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+              </svg>
+              <div class="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center">
+                <svg class="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+          <h3 class="text-base font-semibold text-zinc-300 mb-1.5">Your gallery is empty</h3>
+          <p class="text-sm text-zinc-500 max-w-xs text-center leading-relaxed">Describe the image you want to create and hit Generate to get started</p>
+          <div class="mt-6 flex items-center gap-1.5 text-xs text-zinc-600">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/>
+            </svg>
+            <span>Try a prompt like "A serene mountain lake at sunrise"</span>
+          </div>
         </div>
-        <p class="text-zinc-500 text-sm">No images yet</p>
-        <p class="text-zinc-600 text-xs mt-1">Generate your first image above</p>
       </div>
     </section>
   </main>
