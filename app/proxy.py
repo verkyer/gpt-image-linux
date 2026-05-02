@@ -191,26 +191,43 @@ async def call_image_generation_api(
                     text_preview = response_text[:200] if isinstance(response_text, str) else str(response_text)[:200]
                     raise Exception(f"No image data in upstream response: {text_preview}")
 
-                for image_data in data:
-                    image_bytes = await extract_image_bytes(session, image_data, response_text)
-
-                    max_bytes = 50 * 1024 * 1024
-                    if len(image_bytes) > max_bytes:
-                        raise Exception(
-                            f"Image too large: {len(image_bytes)} bytes (max {max_bytes})"
+                if api_path == "/v1/responses" and len(data) > 1:
+                    entries_data: list[tuple] = []
+                    for image_data in data:
+                        image_bytes = await extract_image_bytes(session, image_data, response_text)
+                        max_bytes = 50 * 1024 * 1024
+                        if len(image_bytes) > max_bytes:
+                            raise Exception(
+                                f"Image too large: {len(image_bytes)} bytes (max {max_bytes})"
+                            )
+                        image_id = storage.generate_image_id()
+                        filename = f"{image_id}.{format_info['extension']}"
+                        entries_data.append(
+                            (image_bytes, image_id, payload.prompt, payload.size, filename, gallery_metadata)
                         )
+                    batch_entries = await storage.batch_save_and_update_gallery(entries_data)
+                    entries.extend(batch_entries)
+                else:
+                    for image_data in data:
+                        image_bytes = await extract_image_bytes(session, image_data, response_text)
 
-                    image_id = storage.generate_image_id()
-                    filename = f"{image_id}.{format_info['extension']}"
-                    storage.save_image(image_bytes, filename)
-                    entry = storage.add_to_gallery(
-                        image_id=image_id,
-                        prompt=payload.prompt,
-                        size=payload.size,
-                        filename=filename,
-                        metadata=gallery_metadata,
-                    )
-                    entries.append(entry)
+                        max_bytes = 50 * 1024 * 1024
+                        if len(image_bytes) > max_bytes:
+                            raise Exception(
+                                f"Image too large: {len(image_bytes)} bytes (max {max_bytes})"
+                            )
+
+                        image_id = storage.generate_image_id()
+                        filename = f"{image_id}.{format_info['extension']}"
+                        await storage.save_image_async(image_bytes, filename)
+                        entry = storage.add_to_gallery_sync(
+                            image_id=image_id,
+                            prompt=payload.prompt,
+                            size=payload.size,
+                            filename=filename,
+                            metadata=gallery_metadata,
+                        )
+                        entries.append(entry)
 
     return entries
 
