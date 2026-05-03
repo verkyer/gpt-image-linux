@@ -2,6 +2,8 @@ __pycache__/
 *.py[cod]
 .git/
 .env
+data/
+images/
 docker-compose.yml
 Dockerfile
 README.md

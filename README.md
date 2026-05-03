@@ -144,12 +144,26 @@ docker run -d --name gpt-image-panel \
   gpt-image-panel
 ```
 
+If Docker Hub times out while resolving `python:3.11-slim`, use a reachable mirror image:
+
+```bash
+docker build \
+  --build-arg PYTHON_BASE_IMAGE=docker.m.daocloud.io/library/python:3.11-slim \
+  -t gpt-image-panel .
+```
+
 ### Docker Compose
 
 ```bash
 cp .env.example .env
 # edit .env if needed
 docker-compose up -d --build --force-recreate
+```
+
+For Docker Hub timeout issues with Compose, set this in `.env` before building:
+
+```bash
+PYTHON_BASE_IMAGE=docker.m.daocloud.io/library/python:3.11-slim
 ```
 
 ### Local development
@@ -233,6 +247,7 @@ The panel supports these upstream paths:
 | `MAX_FILE_SIZE_MB` | `50` | Max image size in MB |
 | `IMAGES_DIR` | `./images` | Directory for saved images |
 | `DATA_DIR` | `./data` | Directory for gallery metadata |
+| `PYTHON_BASE_IMAGE` | `python:3.11-slim` | Docker build base image; override when Docker Hub is slow or blocked |
 
 ## Endpoints
 
@@ -441,12 +456,26 @@ docker run -d --name gpt-image-panel \
   gpt-image-panel
 ```
 
+如果解析 `python:3.11-slim` 时 Docker Hub 超时，可以改用可访问的镜像源：
+
+```bash
+docker build \
+  --build-arg PYTHON_BASE_IMAGE=docker.m.daocloud.io/library/python:3.11-slim \
+  -t gpt-image-panel .
+```
+
 ### Docker Compose
 
 ```bash
 cp .env.example .env
 # 按需修改 .env
 docker-compose up -d --build --force-recreate
+```
+
+如果 Compose 构建时 Docker Hub 超时，先在 `.env` 里设置：
+
+```bash
+PYTHON_BASE_IMAGE=docker.m.daocloud.io/library/python:3.11-slim
 ```
 
 ### 本地开发
@@ -530,6 +559,7 @@ curl http://localhost:9090/health
 | `MAX_FILE_SIZE_MB` | `50` | 图片最大体积（MB） |
 | `IMAGES_DIR` | `./images` | 图片存储目录 |
 | `DATA_DIR` | `./data` | Gallery 元数据目录 |
+| `PYTHON_BASE_IMAGE` | `python:3.11-slim` | Docker 构建基础镜像；Docker Hub 慢或不可访问时可覆盖 |
 
 ## 接口列表
 

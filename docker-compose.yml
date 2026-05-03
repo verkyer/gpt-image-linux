@@ -1,8 +1,9 @@
-version: '3.8'
-
 services:
   gpt-image-panel:
-    build: .
+    build:
+      context: .
+      args:
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-python:3.11-slim}
     container_name: gpt-image-panel
     ports:
       - "9090:9090"
