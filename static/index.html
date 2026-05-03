@@ -91,6 +91,8 @@
     .gallery-card { transition: transform 0.2s, box-shadow 0.2s; }
     .gallery-card:hover { transform: translateY(-2px); box-shadow: 0 8px 30px rgba(0,0,0,0.5); }
     .drawer-backdrop { background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); }
+    .settings-body { min-height: 0; }
+    .settings-presets-shell { min-height: 148px; max-height: min(34vh, 300px); }
     .progress-bar { animation: indeterminate 1.5s ease-in-out infinite; }
     .preview-empty {
       background:
@@ -220,7 +222,7 @@
   <!-- Settings Drawer -->
   <div id="settingsDrawer" class="fixed inset-0 z-50 hidden">
     <div class="drawer-backdrop absolute inset-0" onclick="toggleSettings()"></div>
-    <div class="absolute right-0 top-0 h-full w-full max-w-md bg-zinc-900 border-l border-zinc-800 shadow-2xl flex flex-col fade-in">
+    <div class="absolute right-0 top-0 h-full w-full max-w-lg bg-zinc-900 border-l border-zinc-800 shadow-2xl flex flex-col fade-in">
       <div class="p-5 border-b border-zinc-800 flex items-center justify-between">
         <h2 class="text-lg font-semibold text-zinc-100">Settings</h2>
         <button onclick="toggleSettings()" class="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors">
@@ -229,7 +231,36 @@
           </svg>
         </button>
       </div>
-      <div class="p-5 space-y-5 flex-1 overflow-y-auto">
+      <div class="settings-body p-5 space-y-5 flex-1 overflow-y-auto">
+        <div class="space-y-3">
+          <div class="flex items-center justify-between gap-3">
+            <label class="block text-sm font-medium text-zinc-300">Presets</label>
+            <div class="flex gap-2">
+              <button type="button" onclick="createPreset()"
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-700 text-xs font-medium text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800 transition-colors">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                </svg>
+                New
+              </button>
+              <button type="button" id="deletePresetBtn" onclick="deleteActivePreset()"
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-700 text-xs font-medium text-zinc-400 hover:text-red-300 hover:bg-red-950/30 hover:border-red-800/70 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-zinc-400 disabled:hover:bg-transparent disabled:hover:border-zinc-700">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                </svg>
+                Delete
+              </button>
+            </div>
+          </div>
+          <div class="settings-presets-shell overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-950/30 p-2">
+            <div id="settingsPresetsList" class="space-y-2"></div>
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-zinc-300 mb-2">Preset Name</label>
+          <input type="text" id="settingsPresetName" placeholder="Default"
+            class="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 transition-colors">
+        </div>
         <div>
           <label class="block text-sm font-medium text-zinc-300 mb-2">API Base URL</label>
           <input type="url" id="settingsApiUrl" placeholder="https://api.221.qzz.io"
@@ -252,7 +283,7 @@
       </div>
       <div class="p-5 border-t border-zinc-800 flex gap-3">
         <button onclick="toggleSettings()" class="flex-1 px-4 py-2.5 rounded-lg border border-zinc-700 text-zinc-300 text-sm font-medium hover:bg-zinc-800 transition-colors">Cancel</button>
-        <button onclick="saveSettings()" class="flex-1 px-4 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-500 transition-colors">Save</button>
+        <button onclick="saveSettings()" class="flex-1 px-4 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-500 transition-colors">Save Preset</button>
       </div>
     </div>
   </div>
@@ -660,6 +691,11 @@
     let galleryPage = 1;
     let galleryTotalPages = 1;
     let activeLightboxImage = null;
+    let settingsState = {
+      activePresetId: null,
+      presets: [],
+    };
+    const MASKED_API_KEY_VALUE = '••••••••';
     const SIZE_LIMITS = {
       step: 16,
       maxSide: 3840,
@@ -755,41 +791,149 @@
     async function loadSettings() {
       try {
         const data = await apiFetch('/api/settings', {}, 'loading settings');
-        if (data.api_url) document.getElementById('settingsApiUrl').value = data.api_url;
-        document.getElementById('settingsApiPath').value = data.api_path || '/v1/images/generations';
-        if (data.api_key_masked && data.api_key_masked !== '***') {
-          document.getElementById('settingsApiKey').value = '••••••••';
-        }
+        syncSettingsState(data);
       } catch (e) { /* ignore */ }
     }
 
+    function syncSettingsState(data) {
+      settingsState = {
+        activePresetId: data.active_preset_id,
+        presets: Array.isArray(data.presets) ? data.presets : [],
+      };
+
+      const activePreset = getActiveSettingsPreset(data);
+      document.getElementById('settingsPresetName').value = activePreset?.name || '';
+      document.getElementById('settingsApiUrl').value = activePreset?.api_url || data.api_url || '';
+      document.getElementById('settingsApiPath').value = activePreset?.api_path || data.api_path || '/v1/images/generations';
+      document.getElementById('settingsApiKey').value = activePreset?.has_api_key || data.has_api_key ? MASKED_API_KEY_VALUE : '';
+      renderSettingsPresets();
+    }
+
+    function getActiveSettingsPreset(data = null) {
+      const activePresetId = data?.active_preset_id || settingsState.activePresetId;
+      const presets = data?.presets || settingsState.presets;
+      return presets.find(preset => preset.id === activePresetId) || presets[0] || null;
+    }
+
+    function renderSettingsPresets() {
+      const list = document.getElementById('settingsPresetsList');
+      const deleteButton = document.getElementById('deletePresetBtn');
+      deleteButton.disabled = settingsState.presets.length <= 1;
+
+      if (!settingsState.presets.length) {
+        list.innerHTML = '<div class="rounded-md border border-dashed border-zinc-700 px-3 py-3 text-sm text-zinc-500">No presets</div>';
+        return;
+      }
+
+      list.innerHTML = settingsState.presets.map(preset => {
+        const active = preset.id === settingsState.activePresetId;
+        const classes = active
+          ? 'border-emerald-500/70 bg-emerald-500/10 text-zinc-100'
+          : 'border-zinc-800 bg-zinc-950/40 text-zinc-300 hover:border-zinc-700 hover:bg-zinc-800/70';
+        const keyLabel = preset.has_api_key ? preset.api_key_masked : 'No key';
+        return `
+          <button type="button" onclick="activatePreset('${escapeAttribute(preset.id)}')"
+            class="w-full text-left rounded-md border ${classes} px-3 py-2.5 transition-colors">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <div class="truncate text-sm font-medium">${escapeHtml(preset.name || 'Untitled preset')}</div>
+                <div class="mt-1 truncate text-xs font-mono text-zinc-500">${escapeHtml(preset.api_url || 'No API URL')}</div>
+              </div>
+              <span class="shrink-0 rounded-md border ${active ? 'border-emerald-500/40 text-emerald-300' : 'border-zinc-700 text-zinc-500'} px-2 py-0.5 text-[11px] font-medium">
+                ${active ? 'Active' : 'Switch'}
+              </span>
+            </div>
+            <div class="mt-2 flex items-center justify-between gap-3 text-xs text-zinc-500">
+              <span class="truncate font-mono">${escapeHtml(preset.api_path || '/v1/images/generations')}</span>
+              <span class="shrink-0 font-mono">${escapeHtml(keyLabel)}</span>
+            </div>
+          </button>
+        `;
+      }).join('');
+    }
+
+    async function activatePreset(presetId) {
+      if (!presetId || presetId === settingsState.activePresetId) return;
+
+      try {
+        const data = await apiFetch(`/api/settings/presets/${encodeURIComponent(presetId)}/activate`, {
+          method: 'POST',
+        }, 'switching preset');
+        syncSettingsState(data);
+        showToast('Preset switched', 'success');
+      } catch (e) {
+        showToast('Failed to switch preset: ' + e.message, 'error');
+      }
+    }
+
+    async function createPreset() {
+      try {
+        const data = await apiFetch('/api/settings/presets', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ source_preset_id: settingsState.activePresetId }),
+        }, 'creating preset');
+        syncSettingsState(data);
+        showToast('Preset created', 'success');
+        document.getElementById('settingsPresetName').focus();
+        document.getElementById('settingsPresetName').select();
+      } catch (e) {
+        showToast('Failed to create preset: ' + e.message, 'error');
+      }
+    }
+
+    async function deleteActivePreset() {
+      const activePreset = getActiveSettingsPreset();
+      if (!activePreset || settingsState.presets.length <= 1) return;
+      if (!confirm(`Delete preset "${activePreset.name || 'Untitled preset'}"?`)) return;
+
+      try {
+        const data = await apiFetch(`/api/settings/presets/${encodeURIComponent(activePreset.id)}`, {
+          method: 'DELETE',
+        }, 'deleting preset');
+        syncSettingsState(data);
+        showToast('Preset deleted', 'success');
+      } catch (e) {
+        showToast('Failed to delete preset: ' + e.message, 'error');
+      }
+    }
+
     async function saveSettings() {
+      const presetName = document.getElementById('settingsPresetName').value.trim();
       const apiUrl = document.getElementById('settingsApiUrl').value.trim();
       const apiKey = document.getElementById('settingsApiKey').value.trim();
       const apiPath = document.getElementById('settingsApiPath').value;
-      const requestBody = { api_url: apiUrl, api_key: apiKey, api_path: apiPath };
+      const requestBody = {
+        active_preset_id: settingsState.activePresetId,
+        preset_name: presetName,
+        api_url: apiUrl,
+        api_key: apiKey,
+        api_path: apiPath,
+      };
 
       if (!apiUrl) { showToast('Please enter an API URL', 'error'); return; }
       if (!apiKey) { showToast('Please enter an API Key', 'error'); return; }
-      if (apiKey === '••••••••') requestBody.api_key = null;
+      if (apiKey === MASKED_API_KEY_VALUE) requestBody.api_key = null;
 
       try {
-        await apiFetch('/api/settings', {
+        const data = await apiFetch('/api/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(requestBody),
         }, 'saving settings');
-        showToast('Settings saved', 'success');
+        syncSettingsState(data);
+        showToast('Preset saved', 'success');
         toggleSettings();
       } catch (e) {
-        showToast('Failed to save settings: ' + e.message, 'error');
+        showToast('Failed to save preset: ' + e.message, 'error');
       }
     }
 
-    function toggleSettings() {
+    async function toggleSettings() {
       const drawer = document.getElementById('settingsDrawer');
       drawer.classList.toggle('hidden');
       if (!drawer.classList.contains('hidden')) {
+        await loadSettings();
         document.getElementById('settingsApiUrl').focus();
       }
     }

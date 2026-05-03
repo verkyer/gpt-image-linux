@@ -12,6 +12,21 @@ from .models import GalleryEntry
 from . import config
 
 
+def _default_settings() -> dict:
+    return {
+        "active_preset_id": "default",
+        "presets": [
+            {
+                "id": "default",
+                "name": "Default",
+                "api_url": config.DEFAULT_API_URL.rstrip("/"),
+                "api_key": config.DEFAULT_API_KEY,
+                "api_path": config.DEFAULT_API_PATH,
+            }
+        ],
+    }
+
+
 def _ensure_directories():
     Path(config.IMAGES_DIR).mkdir(parents=True, exist_ok=True)
     Path(config.DATA_DIR).mkdir(parents=True, exist_ok=True)
@@ -37,6 +52,43 @@ def verify_storage_writable():
     _ensure_directories()
     _check_directory_writable(Path(config.IMAGES_DIR))
     _check_directory_writable(Path(config.DATA_DIR))
+
+
+def load_settings() -> dict:
+    _ensure_directories()
+    if not Path(config.SETTINGS_FILE).exists():
+        settings = _default_settings()
+        save_settings(settings)
+        return settings
+
+    try:
+        with open(config.SETTINGS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, IOError):
+        settings = _default_settings()
+        save_settings(settings)
+        return settings
+
+    if not isinstance(data, dict):
+        settings = _default_settings()
+        save_settings(settings)
+        return settings
+
+    presets = data.get("presets")
+    if not isinstance(presets, list) or not presets:
+        settings = _default_settings()
+        save_settings(settings)
+        return settings
+
+    return data
+
+
+def save_settings(settings: dict):
+    _ensure_directories()
+    tmp = config.SETTINGS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(settings, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, config.SETTINGS_FILE)
 
 
 async def _load_gallery_async() -> list[dict]:

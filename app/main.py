@@ -16,7 +16,9 @@ from . import config
 from .models import (
     AccessRequest,
     AccessStatusResponse,
+    ApiPresetResponse,
     EditRequest,
+    PresetCreateRequest,
     SettingsRequest,
     SettingsResponse,
     GenerateRequest,
@@ -42,9 +44,7 @@ async def lifespan(app: FastAPI):
     Path(config.IMAGES_DIR).mkdir(parents=True, exist_ok=True)
     Path(config.DATA_DIR).mkdir(parents=True, exist_ok=True)
     storage.verify_storage_writable()
-    app.state.api_url = config.DEFAULT_API_URL
-    app.state.api_key = config.DEFAULT_API_KEY
-    app.state.api_path = config.DEFAULT_API_PATH
+    load_api_settings()
     app.state.generate_jobs = {}
     yield
 
@@ -119,6 +119,139 @@ def mask_key(key: str) -> str:
     if not key or len(key) <= 8:
         return "***"
     return key[:4] + "***" + key[-4:]
+
+
+def sanitize_api_preset(preset: dict, fallback_id: str = "default") -> dict:
+    preset_id = str(preset.get("id") or fallback_id)
+    return {
+        "id": preset_id,
+        "name": str(preset.get("name") or "Untitled preset").strip()
+        or "Untitled preset",
+        "api_url": str(preset.get("api_url") or "").rstrip("/"),
+        "api_key": str(preset.get("api_key") or ""),
+        "api_path": normalize_api_path(
+            str(preset.get("api_path") or "/v1/images/generations")
+        ),
+    }
+
+
+def persist_api_settings():
+    storage.save_settings(
+        {
+            "active_preset_id": getattr(app.state, "active_preset_id", "default"),
+            "presets": get_api_presets(),
+        }
+    )
+
+
+def load_api_settings():
+    data = storage.load_settings()
+    raw_presets = data.get("presets", [])
+    seen_ids = set()
+    presets = [
+        preset
+        for preset in (
+            sanitize_api_preset(preset, f"preset-{index + 1}")
+            for index, preset in enumerate(raw_presets)
+            if isinstance(preset, dict)
+        )
+        if not (preset["id"] in seen_ids or seen_ids.add(preset["id"]))
+    ]
+    if not presets:
+        presets = [
+            sanitize_api_preset(
+                {
+                    "id": "default",
+                    "name": "Default",
+                    "api_url": config.DEFAULT_API_URL,
+                    "api_key": config.DEFAULT_API_KEY,
+                    "api_path": config.DEFAULT_API_PATH,
+                }
+            )
+        ]
+
+    app.state.api_presets = presets
+    active_id = str(data.get("active_preset_id") or presets[0]["id"])
+    if not any(preset["id"] == active_id for preset in presets):
+        active_id = presets[0]["id"]
+    app.state.active_preset_id = active_id
+    apply_api_preset(get_active_preset())
+    persist_api_settings()
+
+
+def get_api_presets() -> list[dict]:
+    presets = getattr(app.state, "api_presets", None)
+    if presets:
+        return presets
+
+    preset = sanitize_api_preset(
+        {
+            "id": "default",
+            "name": "Default",
+            "api_url": getattr(app.state, "api_url", config.DEFAULT_API_URL),
+            "api_key": getattr(app.state, "api_key", config.DEFAULT_API_KEY),
+            "api_path": getattr(app.state, "api_path", config.DEFAULT_API_PATH),
+        }
+    )
+    app.state.api_presets = [preset]
+    app.state.active_preset_id = preset["id"]
+    return app.state.api_presets
+
+
+def get_active_preset() -> dict:
+    presets = get_api_presets()
+    active_id = getattr(app.state, "active_preset_id", presets[0]["id"])
+    for preset in presets:
+        if preset["id"] == active_id:
+            return preset
+
+    app.state.active_preset_id = presets[0]["id"]
+    return presets[0]
+
+
+def get_preset_by_id(preset_id: str) -> dict | None:
+    for preset in get_api_presets():
+        if preset["id"] == preset_id:
+            return preset
+    return None
+
+
+def apply_api_preset(preset: dict):
+    app.state.api_url = preset.get("api_url", "").rstrip("/")
+    app.state.api_key = preset.get("api_key", "")
+    app.state.api_path = normalize_api_path(
+        preset.get("api_path", "/v1/images/generations")
+    )
+    app.state.active_preset_id = preset["id"]
+
+
+def serialize_api_preset(preset: dict) -> ApiPresetResponse:
+    api_key = preset.get("api_key", "")
+    return ApiPresetResponse(
+        id=preset["id"],
+        name=preset.get("name") or "Untitled preset",
+        api_url=preset.get("api_url", ""),
+        api_path=normalize_api_path(
+            preset.get("api_path", "/v1/images/generations")
+        ),
+        api_key_masked=mask_key(api_key),
+        has_api_key=bool(api_key),
+    )
+
+
+def build_settings_response() -> SettingsResponse:
+    active_preset = get_active_preset()
+    api_key = active_preset.get("api_key", "")
+    return SettingsResponse(
+        active_preset_id=active_preset["id"],
+        api_url=active_preset.get("api_url", ""),
+        api_key_masked=mask_key(api_key),
+        has_api_key=bool(api_key),
+        api_path=normalize_api_path(
+            active_preset.get("api_path", "/v1/images/generations")
+        ),
+        presets=[serialize_api_preset(preset) for preset in get_api_presets()],
+    )
 
 
 def trim_generate_jobs():
@@ -241,24 +374,87 @@ async def unlock_access(req: AccessRequest, response: Response):
     )
 
 
-@app.post("/api/settings", response_model=MessageResponse)
+@app.post("/api/settings", response_model=SettingsResponse)
 async def update_settings(req: SettingsRequest):
-    app.state.api_url = req.api_url.rstrip("/")
+    preset = (
+        get_preset_by_id(req.active_preset_id)
+        if req.active_preset_id
+        else get_active_preset()
+    )
+    if not preset:
+        raise HTTPException(status_code=404, detail="Preset not found")
+
+    preset["name"] = (req.preset_name or preset.get("name") or "Untitled preset").strip()
+    preset["api_url"] = req.api_url.rstrip("/")
     if req.api_key is not None:
-        app.state.api_key = req.api_key
-    app.state.api_path = normalize_api_path(req.api_path)
-    return MessageResponse(status="ok", message="Settings updated")
+        preset["api_key"] = req.api_key
+    preset["api_path"] = normalize_api_path(req.api_path)
+    apply_api_preset(preset)
+    persist_api_settings()
+    return build_settings_response()
 
 
 @app.get("/api/settings", response_model=SettingsResponse)
 async def get_settings():
-    return SettingsResponse(
-        api_url=getattr(app.state, "api_url", ""),
-        api_key_masked=mask_key(getattr(app.state, "api_key", "")),
-        api_path=normalize_api_path(
-            getattr(app.state, "api_path", "/v1/images/generations")
+    return build_settings_response()
+
+
+@app.post("/api/settings/presets", response_model=SettingsResponse)
+async def create_settings_preset(req: PresetCreateRequest):
+    source = get_preset_by_id(req.source_preset_id) if req.source_preset_id else None
+    source = source or get_active_preset()
+    presets = get_api_presets()
+    next_number = len(presets) + 1
+    preset = {
+        "id": uuid.uuid4().hex,
+        "name": (req.name or f"Preset {next_number}").strip() or f"Preset {next_number}",
+        "api_url": (
+            req.api_url if req.api_url is not None else source.get("api_url", "")
+        ).rstrip("/"),
+        "api_key": req.api_key if req.api_key is not None else source.get("api_key", ""),
+        "api_path": normalize_api_path(
+            req.api_path or source.get("api_path", "/v1/images/generations")
         ),
+    }
+    presets.append(preset)
+    apply_api_preset(preset)
+    persist_api_settings()
+    return build_settings_response()
+
+
+@app.post("/api/settings/presets/{preset_id}/activate", response_model=SettingsResponse)
+async def activate_settings_preset(preset_id: str):
+    preset = get_preset_by_id(preset_id)
+    if not preset:
+        raise HTTPException(status_code=404, detail="Preset not found")
+
+    apply_api_preset(preset)
+    persist_api_settings()
+    return build_settings_response()
+
+
+@app.delete("/api/settings/presets/{preset_id}", response_model=SettingsResponse)
+async def delete_settings_preset(preset_id: str):
+    presets = get_api_presets()
+    if len(presets) <= 1:
+        raise HTTPException(status_code=400, detail="At least one preset is required")
+
+    delete_index = next(
+        (index for index, preset in enumerate(presets) if preset["id"] == preset_id),
+        None,
     )
+    if delete_index is None:
+        raise HTTPException(status_code=404, detail="Preset not found")
+
+    deleting_active = get_active_preset()["id"] == preset_id
+    presets.pop(delete_index)
+    if deleting_active:
+        fallback = presets[min(delete_index, len(presets) - 1)]
+        apply_api_preset(fallback)
+
+    persist_api_settings()
+
+    return build_settings_response()
 
 
 async def run_generate_job(

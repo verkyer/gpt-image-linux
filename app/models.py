@@ -2,22 +2,44 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Literal, Optional
 from datetime import datetime
 
+ApiPath = Literal["/v1/images/generations", "/v1/responses"]
+
+
+class ApiPresetResponse(BaseModel):
+    id: str
+    name: str
+    api_url: str
+    api_path: ApiPath
+    api_key_masked: str
+    has_api_key: bool
+
+
+class PresetCreateRequest(BaseModel):
+    name: Optional[str] = None
+    api_url: Optional[str] = None
+    api_key: Optional[str] = None
+    api_path: Optional[ApiPath] = None
+    source_preset_id: Optional[str] = None
+
 
 class SettingsRequest(BaseModel):
+    active_preset_id: Optional[str] = None
+    preset_name: Optional[str] = None
     api_url: str = Field(..., description="Base API URL, e.g. https://api.221.qzz.io")
     api_key: Optional[str] = Field(
         default=None,
         description="API key for authentication. Omit/null to keep the current key.",
     )
-    api_path: Literal["/v1/images/generations", "/v1/responses"] = (
-        "/v1/images/generations"
-    )
+    api_path: ApiPath = "/v1/images/generations"
 
 
 class SettingsResponse(BaseModel):
+    active_preset_id: str
     api_url: str
     api_key_masked: str
-    api_path: Literal["/v1/images/generations", "/v1/responses"]
+    has_api_key: bool
+    api_path: ApiPath
+    presets: list[ApiPresetResponse]
 
 
 class AccessRequest(BaseModel):

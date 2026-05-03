@@ -12,16 +12,17 @@ Key characteristics:
 
 - single-page frontend served from `static/index.html`
 - FastAPI backend defined primarily in `app/main.py`
-- runtime settings for API base URL and API key stored in process memory
+- API presets persisted to `data/settings.json`
 - background image-generation jobs executed with `asyncio.create_task`
 - local image storage under `images/`
 - gallery metadata stored in `data/gallery.json`
+- API preset settings stored in `data/settings.json`
 - Docker and Docker Compose deployment support
 - no test suite is currently present in the repository
 
 ## Features
 
-- settings UI for API base URL, API path, API key, and model
+- settings UI for API presets, API base URL, API path, API key, and model
 - generation and edit options for size, quality, format, compression, quantity, and response format
 - image-to-image edits via OpenAI-compatible `/v1/images/edits`
 - auto, ratio-based, and custom image sizes
@@ -185,15 +186,16 @@ curl http://localhost:9090/health
 
 1. open the site
 2. click the settings gear icon
-3. enter the API base URL
-4. choose the API path
-5. enter the API key
-6. click Save
-7. enter a prompt
-8. choose generation options
-9. click Generate
-10. optionally click Upload, choose an image, then click Edits to run image-to-image
-11. view preview and gallery
+3. choose an existing preset or click New
+4. enter the API base URL
+5. choose the API path
+6. enter the API key
+7. click Save Preset
+8. enter a prompt
+9. choose generation options
+10. click Generate
+11. optionally click Upload, choose an image, then click Edits to run image-to-image
+12. view preview and gallery
 
 ## API paths
 
@@ -257,8 +259,11 @@ The panel supports these upstream paths:
 | `GET` | `/health` | Health check |
 | `GET` | `/api/access/status` | Check access-key session status |
 | `POST` | `/api/access` | Unlock access for 3 hours |
-| `POST` | `/api/settings` | Save API URL and API key |
-| `GET` | `/api/settings` | Get current settings |
+| `POST` | `/api/settings` | Save the active API preset |
+| `GET` | `/api/settings` | Get current settings and presets |
+| `POST` | `/api/settings/presets` | Create and activate an API preset |
+| `POST` | `/api/settings/presets/{preset_id}/activate` | Activate an API preset |
+| `DELETE` | `/api/settings/presets/{preset_id}` | Delete an API preset |
 | `POST` | `/api/generate` | Start an image generation job |
 | `POST` | `/api/edits` | Start an image edit job with multipart image upload |
 | `GET` | `/api/generate/{job_id}` | Get generation job status or result |
@@ -270,8 +275,9 @@ The panel supports these upstream paths:
 
 ## Runtime behavior notes
 
-- API settings are stored only in process memory unless provided by environment variables.
-- The API key is masked for display; it is not encrypted at rest.
+- API presets are persisted to `data/settings.json`.
+- If `data/settings.json` does not exist, the default preset is initialized from `DEFAULT_API_URL`, `DEFAULT_API_KEY`, and `DEFAULT_API_PATH`.
+- API keys are masked in the UI but stored as plain text in `data/settings.json`.
 - Finished generation jobs are trimmed when the job store exceeds `MAX_GENERATE_JOBS`.
 - `DELETE /api/gallery/{image_id}` removes metadata but does not delete the image file from disk.
 - Streaming image responses use an opened file handle; avoid interrupting cleanup logic if you modify serving behavior.
@@ -324,16 +330,17 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 
 - 单页前端，由 `static/index.html` 提供
 - FastAPI 后端主要定义在 `app/main.py`
-- API 基础地址和 API 密钥仅保存在进程内存中
+- API 预设持久化保存在 `data/settings.json`
 - 图像生成任务通过 `asyncio.create_task` 异步执行
 - 图片保存在 `images/`
 - Gallery 元数据保存在 `data/gallery.json`
+- API 预设配置保存在 `data/settings.json`
 - 支持 Docker 和 Docker Compose 部署
 - 仓库目前没有测试套件
 
 ## 功能
 
-- 设置界面：API Base URL、API Path、API Key、Model
+- 设置界面：API 预设、API Base URL、API Path、API Key、Model
 - 生成/编辑选项：尺寸、质量、格式、压缩比、数量、响应格式
 - 通过 OpenAI 兼容 `/v1/images/edits` 支持图生图编辑
 - 支持自动、比例和自定义图像尺寸
@@ -497,15 +504,16 @@ curl http://localhost:9090/health
 
 1. 打开网站
 2. 点击右上角齿轮图标
-3. 填写 API Base URL
-4. 选择 API Path
-5. 填写 API Key
-6. 点击 Save
-7. 输入提示词
-8. 选择生成参数
-9. 点击 Generate
-10. 也可以点击 Upload 选择图片，再点击 Edits 执行图生图
-11. 查看预览和 Gallery
+3. 选择已有预设，或点击 New 新建预设
+4. 填写 API Base URL
+5. 选择 API Path
+6. 填写 API Key
+7. 点击 Save Preset
+8. 输入提示词
+9. 选择生成参数
+10. 点击 Generate
+11. 也可以点击 Upload 选择图片，再点击 Edits 执行图生图
+12. 查看预览和 Gallery
 
 ## 支持的 API Path
 
@@ -569,8 +577,11 @@ curl http://localhost:9090/health
 | `GET` | `/health` | 健康检查 |
 | `GET` | `/api/access/status` | 访问密钥会话状态 |
 | `POST` | `/api/access` | 解锁访问 3 小时 |
-| `POST` | `/api/settings` | 保存 API URL 与 API Key |
-| `GET` | `/api/settings` | 获取当前设置 |
+| `POST` | `/api/settings` | 保存当前 API 预设 |
+| `GET` | `/api/settings` | 获取当前设置和预设列表 |
+| `POST` | `/api/settings/presets` | 新建并激活 API 预设 |
+| `POST` | `/api/settings/presets/{preset_id}/activate` | 激活 API 预设 |
+| `DELETE` | `/api/settings/presets/{preset_id}` | 删除 API 预设 |
 | `POST` | `/api/generate` | 创建图像生成任务 |
 | `POST` | `/api/edits` | 使用 multipart 图片上传创建图像编辑任务 |
 | `GET` | `/api/generate/{job_id}` | 查询任务状态或结果 |
@@ -582,8 +593,9 @@ curl http://localhost:9090/health
 
 ## 运行时注意事项
 
-- 如果没有通过环境变量提供，API 设置仅保存在进程内存中。
-- API Key 仅做掩码展示，不做落盘加密。
+- API 预设持久化保存在 `data/settings.json`。
+- 如果 `data/settings.json` 不存在，默认预设会使用 `DEFAULT_API_URL`、`DEFAULT_API_KEY` 和 `DEFAULT_API_PATH` 初始化。
+- API Key 在界面中掩码展示，但会以明文保存到 `data/settings.json`。
 - 当任务数量超过 `MAX_GENERATE_JOBS` 时，已结束任务会被裁剪。
 - `DELETE /api/gallery/{image_id}` 仅删除元数据，不会删除磁盘上的图片文件。
 - 图片流式返回依赖已打开的文件句柄，修改相关逻辑时需注意资源释放。
