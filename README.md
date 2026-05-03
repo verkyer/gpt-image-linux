@@ -233,7 +233,7 @@ The panel supports these upstream paths:
 - Format: `PNG`, `JPEG`, or `WebP`
 - Compression: disabled for `PNG`; `0-100` for `JPEG` and `WebP`
 - Quantity: integer from `1` to `10`
-- Response Format: `None`, `b64_json`, or `url`; `None` omits the `response_format` parameter
+- Response Format: `b64_json`, `url`, or `none`; `none` omits the `response_format` parameter
 
 ## Environment variables
 
@@ -551,7 +551,7 @@ curl http://localhost:9090/health
 - Format：`PNG`、`JPEG`、`WebP`
 - Compression：`PNG` 不可用；`JPEG` 和 `WebP` 可设置 `0-100`
 - Quantity：`1` 到 `10`
-- Response Format：`None`、`b64_json` 或 `url`；`None` 会省略 `response_format` 参数
+- Response Format：`b64_json`、`url` 或 `none`；`none` 会省略 `response_format` 参数
 
 ## 环境变量
 
