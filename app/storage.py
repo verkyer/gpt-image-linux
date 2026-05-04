@@ -2,6 +2,7 @@ import asyncio
 import json
 import uuid
 import os
+import struct
 import aiofiles
 import aiofiles.os
 from pathlib import Path
@@ -115,6 +116,73 @@ def generate_image_id() -> str:
     return str(uuid.uuid4())
 
 
+def get_image_dimensions(image_bytes: bytes) -> tuple[int, int] | None:
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n") and len(image_bytes) >= 24:
+        return struct.unpack(">II", image_bytes[16:24])
+
+    if image_bytes.startswith(b"\xff\xd8"):
+        offset = 2
+        while offset + 9 < len(image_bytes):
+            if image_bytes[offset] != 0xFF:
+                offset += 1
+                continue
+            marker = image_bytes[offset + 1]
+            offset += 2
+            while marker == 0xFF and offset < len(image_bytes):
+                marker = image_bytes[offset]
+                offset += 1
+            if marker in (0xD8, 0xD9):
+                continue
+            if offset + 2 > len(image_bytes):
+                return None
+            segment_length = struct.unpack(">H", image_bytes[offset : offset + 2])[0]
+            if segment_length < 2 or offset + segment_length > len(image_bytes):
+                return None
+            if marker in (
+                0xC0,
+                0xC1,
+                0xC2,
+                0xC3,
+                0xC5,
+                0xC6,
+                0xC7,
+                0xC9,
+                0xCA,
+                0xCB,
+                0xCD,
+                0xCE,
+                0xCF,
+            ):
+                height, width = struct.unpack(">HH", image_bytes[offset + 3 : offset + 7])
+                return width, height
+            offset += segment_length
+
+    if image_bytes.startswith(b"RIFF") and image_bytes[8:12] == b"WEBP":
+        chunk_type = image_bytes[12:16]
+        if chunk_type == b"VP8X" and len(image_bytes) >= 30:
+            width = int.from_bytes(image_bytes[24:27], "little") + 1
+            height = int.from_bytes(image_bytes[27:30], "little") + 1
+            return width, height
+        if chunk_type == b"VP8 " and len(image_bytes) >= 30:
+            width, height = struct.unpack("<HH", image_bytes[26:30])
+            return width & 0x3FFF, height & 0x3FFF
+        if chunk_type == b"VP8L" and len(image_bytes) >= 25 and image_bytes[20] == 0x2F:
+            bits = int.from_bytes(image_bytes[21:25], "little")
+            width = (bits & 0x3FFF) + 1
+            height = ((bits >> 14) & 0x3FFF) + 1
+            return width, height
+
+    return None
+
+
+def _image_dimension_metadata(image_bytes: bytes) -> dict[str, int]:
+    dimensions = get_image_dimensions(image_bytes)
+    if not dimensions:
+        return {}
+    width, height = dimensions
+    return {"image_width": width, "image_height": height}
+
+
 async def save_image_async(image_bytes: bytes, filename: str) -> Path:
     _ensure_directories()
     path = Path(config.IMAGES_DIR) / filename
@@ -158,6 +226,7 @@ async def add_to_gallery_async(
         "filename": filename,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
+    entry.update(_image_dimension_metadata(image_bytes))
     if metadata:
         entry.update({key: value for key, value in metadata.items() if value is not None})
 
@@ -185,6 +254,7 @@ async def batch_save_and_update_gallery(
             "filename": filename,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
+        entry.update(_image_dimension_metadata(image_bytes))
         if metadata:
             entry.update(
                 {key: value for key, value in metadata.items() if value is not None}
@@ -236,6 +306,7 @@ def add_to_gallery_sync(
     size: str,
     filename: str,
     metadata: dict[str, Any] | None = None,
+    image_bytes: bytes | None = None,
 ) -> GalleryEntry:
     entry = {
         "id": image_id,
@@ -244,6 +315,8 @@ def add_to_gallery_sync(
         "filename": filename,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
+    if image_bytes:
+        entry.update(_image_dimension_metadata(image_bytes))
     if metadata:
         entry.update({key: value for key, value in metadata.items() if value is not None})
     entries = _load_gallery()

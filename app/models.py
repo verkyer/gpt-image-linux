@@ -111,6 +111,8 @@ class GalleryEntry(BaseModel):
     size: str
     filename: str
     created_at: str
+    image_width: Optional[int] = None
+    image_height: Optional[int] = None
     model: Optional[str] = None
     quality: Optional[str] = None
     output_format: Optional[str] = None
@@ -127,6 +129,8 @@ class GenerateResponse(BaseModel):
     prompt: str
     size: str
     created_at: str
+    image_width: Optional[int] = None
+    image_height: Optional[int] = None
     model: Optional[str] = None
     quality: Optional[str] = None
     output_format: Optional[str] = None
@@ -155,6 +159,8 @@ class GenerateJobStatus(BaseModel):
     prompt: Optional[str] = None
     size: Optional[str] = None
     created_at: Optional[str] = None
+    image_width: Optional[int] = None
+    image_height: Optional[int] = None
     model: Optional[str] = None
     quality: Optional[str] = None
     output_format: Optional[str] = None

@@ -351,6 +351,7 @@ async def call_image_generation_api(
                             size=payload.size,
                             filename=filename,
                             metadata=gallery_metadata,
+                            image_bytes=image_bytes,
                         )
                         entries.append(entry)
 

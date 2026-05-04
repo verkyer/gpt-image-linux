@@ -344,7 +344,7 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 - 生成/编辑选项：尺寸、质量、格式、压缩比、数量、响应格式
 - 通过 OpenAI 兼容 `/v1/images/edits` 支持图生图编辑
 - 支持自动、比例和自定义图像尺寸
-- 预览界面：显示提示词、参数、生成耗时，以及英文 generation/edit 细分阶段
+- 预览界面：显示提示词、参数、真实图片分辨率、生成耗时，以及英文 generation/edit 细分阶段
 - 任务轮询界面：2 秒轮询一次，最长 10 分钟
 - Gallery：分页、Lightbox、下载、批量下载为 ZIP、删除、复制提示词、复制图片链接
 - 可选站点访问密钥
@@ -381,7 +381,7 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 运行时持久化存储非常简单：
 
 - 生成的图片保存在 `images/` 目录
-- Gallery 元数据保存在 `data/gallery.json`
+- Gallery 元数据保存在 `data/gallery.json`，新记录会保存真实图片宽高
 - 生成任务仅保存在进程内存中，重启后会丢失
 
 ### 生成流程

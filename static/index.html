@@ -1849,6 +1849,9 @@
         prompt: img.prompt || '',
         created_at: img.created_at || '',
         size: img.size || 'Unknown',
+        image_width: Number.isFinite(Number(img.image_width)) ? Number(img.image_width) : null,
+        image_height: Number.isFinite(Number(img.image_height)) ? Number(img.image_height) : null,
+        image_dimensions_loaded: Boolean(img.image_width && img.image_height),
         model: img.model || 'Unknown',
         quality: img.quality || 'Unknown',
         output_format: img.output_format || guessFormatFromFilename(img.filename || img.image_url),
@@ -1865,6 +1868,13 @@
       return ['png', 'jpeg', 'webp'].includes(ext) ? ext : 'Unknown';
     }
 
+    function formatImageResolution(image) {
+      if (image?.image_width && image?.image_height) {
+        return `${image.image_width}x${image.image_height}`;
+      }
+      return image?.image_dimensions_loaded ? 'Unknown' : 'Loading...';
+    }
+
     function formatParameterValue(value) {
       if (value === null || value === undefined || value === '') return 'Not stored';
       return String(value);
@@ -1878,12 +1888,39 @@
         </div>`;
     }
 
+    function renderLightboxParams(image) {
+      document.getElementById('lightboxParams').innerHTML = [
+        renderParameter('Model', image.model),
+        renderParameter('Size', formatImageResolution(image)),
+        renderParameter('Quality', image.quality),
+        renderParameter('Output Format', image.output_format),
+        renderParameter('Output Compression', image.output_compression),
+        renderParameter('Quantity', image.n),
+        renderParameter('Response Format', image.response_format),
+        renderParameter('API Path', image.api_path),
+      ].join('');
+    }
+
     function openLightbox(imageId) {
       const image = galleryById.get(imageId);
       if (!image) return;
 
       activeLightboxImage = image;
       const lightboxImg = document.getElementById('lightboxImg');
+      lightboxImg.onload = () => {
+        if (activeLightboxImage?.id !== image.id) return;
+        image.image_width = lightboxImg.naturalWidth || image.image_width;
+        image.image_height = lightboxImg.naturalHeight || image.image_height;
+        image.image_dimensions_loaded = true;
+        galleryById.set(image.id, image);
+        renderLightboxParams(image);
+      };
+      lightboxImg.onerror = () => {
+        if (activeLightboxImage?.id !== image.id) return;
+        image.image_dimensions_loaded = true;
+        galleryById.set(image.id, image);
+        renderLightboxParams(image);
+      };
       lightboxImg.src = '/api/image/' + image.filename;
       lightboxImg.alt = image.prompt || 'Generated image';
       document.getElementById('lightboxPrompt').textContent = image.prompt || 'Not stored';
@@ -1896,22 +1933,15 @@
             minute: '2-digit',
           })
         : '';
-      document.getElementById('lightboxParams').innerHTML = [
-        renderParameter('Model', image.model),
-        renderParameter('Size', image.size),
-        renderParameter('Quality', image.quality),
-        renderParameter('Output Format', image.output_format),
-        renderParameter('Output Compression', image.output_compression),
-        renderParameter('Quantity', image.n),
-        renderParameter('Response Format', image.response_format),
-        renderParameter('API Path', image.api_path),
-      ].join('');
+      renderLightboxParams(image);
 
       document.getElementById('lightbox').classList.remove('hidden');
       document.body.style.overflow = 'hidden';
     }
 
     function closeLightbox() {
+      document.getElementById('lightboxImg').onload = null;
+      document.getElementById('lightboxImg').onerror = null;
       document.getElementById('lightbox').classList.add('hidden');
       document.getElementById('lightboxImg').removeAttribute('src');
       activeLightboxImage = null;
