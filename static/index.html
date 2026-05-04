@@ -696,6 +696,7 @@
       activePresetId: null,
       presets: [],
     };
+    let activeApiPath = '/v1/images/generations';
     const MASKED_API_KEY_VALUE = '••••••••';
     const SIZE_LIMITS = {
       step: 16,
@@ -727,7 +728,7 @@
       document.getElementById('promptInput').addEventListener('input', updatePromptLen);
       document.getElementById('compressionInput').addEventListener('input', clampCompressionInput);
       document.getElementById('quantityInput').addEventListener('input', clampQuantityInput);
-      handleOutputFormatChange();
+      refreshParameterControls();
       renderSizeButton();
       await checkAccess();
     })();
@@ -803,11 +804,13 @@
       };
 
       const activePreset = getActiveSettingsPreset(data);
+      activeApiPath = activePreset?.api_path || data.api_path || '/v1/images/generations';
       document.getElementById('settingsPresetName').value = activePreset?.name || '';
       document.getElementById('settingsApiUrl').value = activePreset?.api_url || data.api_url || '';
-      document.getElementById('settingsApiPath').value = activePreset?.api_path || data.api_path || '/v1/images/generations';
+      document.getElementById('settingsApiPath').value = activeApiPath;
       document.getElementById('settingsApiKey').value = activePreset?.has_api_key || data.has_api_key ? MASKED_API_KEY_VALUE : '';
       renderSettingsPresets();
+      refreshParameterControls();
     }
 
     function getActiveSettingsPreset(data = null) {
@@ -965,13 +968,57 @@
       return clampIntegerInput(document.getElementById('quantityInput'), 1, 10, 1);
     }
 
+    function isResponsesApiSelected() {
+      return activeApiPath === '/v1/responses';
+    }
+
+    function setControlDisabled(id, disabled) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.disabled = disabled;
+      el.classList.toggle('opacity-50', disabled);
+      el.classList.toggle('cursor-not-allowed', disabled);
+      el.classList.toggle('cursor-pointer', !disabled && el.tagName === 'SELECT');
+    }
+
+    function refreshParameterControls(loading = false) {
+      const responsesMode = isResponsesApiSelected();
+      const lockParameters = loading || responsesMode;
+      const parameterIds = ['modelSelect', 'qualitySelect', 'formatSelect', 'quantityInput', 'responseFormatSelect'];
+
+      parameterIds.forEach(id => setControlDisabled(id, lockParameters));
+      setControlDisabled('sizeSelect', lockParameters);
+
+      if (responsesMode) {
+        setControlDisabled('compressionInput', true);
+        document.getElementById('compressionInput').placeholder = 'Disabled for Responses';
+        return;
+      }
+
+      if (loading) {
+        setControlDisabled('compressionInput', true);
+        return;
+      }
+
+      handleOutputFormatChange();
+    }
+
     function handleOutputFormatChange() {
       const format = document.getElementById('formatSelect').value;
       const compressionInput = document.getElementById('compressionInput');
       const isPng = format === 'png';
 
+      if (isResponsesApiSelected()) {
+        compressionInput.disabled = true;
+        compressionInput.placeholder = 'Disabled for Responses';
+        compressionInput.classList.add('opacity-50', 'cursor-not-allowed');
+        return;
+      }
+
       compressionInput.disabled = isPng;
       compressionInput.placeholder = isPng ? 'Disabled for PNG' : '0-100';
+      compressionInput.classList.toggle('opacity-50', isPng);
+      compressionInput.classList.toggle('cursor-not-allowed', isPng);
 
       if (isPng) {
         compressionInput.value = '';
@@ -1244,8 +1291,7 @@
 
     function getPreviewStages(mode) {
       if (mode === 'edit') return PREVIEW_STAGES.edit;
-      const apiPath = document.getElementById('settingsApiPath')?.value || '/v1/images/generations';
-      return apiPath === '/v1/responses' ? PREVIEW_STAGES.generationResponses : PREVIEW_STAGES.generationImages;
+      return isResponsesApiSelected() ? PREVIEW_STAGES.generationResponses : PREVIEW_STAGES.generationImages;
     }
 
     function getStageLabel(mode, stage) {
@@ -1284,7 +1330,6 @@
       const previewLoading = document.getElementById('previewLoading');
       const previewImg = document.getElementById('previewImage');
       const previewLoadingText = document.getElementById('previewLoadingText');
-      const inputs = ['promptInput', 'modelSelect', 'qualitySelect', 'formatSelect', 'compressionInput', 'quantityInput', 'responseFormatSelect'];
       const isEditing = mode === 'edit';
       const generateSpinnerHTML = '<span class="spinner"></span> Generating...';
       const editSpinnerHTML = '<span class="spinner"></span> Editing...';
@@ -1294,9 +1339,8 @@
       uploadBtn.disabled = loading;
       editBtn.disabled = loading || !selectedEditImage;
       editBtn.innerHTML = loading && isEditing ? editSpinnerHTML : '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L12 14l-4 1 1-4 8.586-8.586z"/></svg> Edits';
-      inputs.forEach(id => { document.getElementById(id).disabled = loading; });
-      document.getElementById('sizeSelect').disabled = loading;
-      if (!loading) handleOutputFormatChange();
+      document.getElementById('promptInput').disabled = loading;
+      refreshParameterControls(loading);
 
       if (loading) {
         preview.classList.remove('hidden');
@@ -1399,6 +1443,10 @@
     }
 
     function getImageRequestBody() {
+      if (isResponsesApiSelected()) {
+        return { prompt: document.getElementById('promptInput').value.trim() };
+      }
+
       const outputFormat = document.getElementById('formatSelect').value;
       const responseFormat = document.getElementById('responseFormatSelect').value;
       const requestBody = {

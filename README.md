@@ -209,10 +209,9 @@ The panel supports these upstream paths:
 ### `/v1/responses`
 
 - sends generation requests to the Responses API
-- uses an `image_generation` tool
+- sends only `prompt` in the upstream request body
 - reads base64 image data from `output[]` items of type `image_generation_call`
-- the selected image model is passed to the tool
-- the top-level Responses model defaults to `gpt-5.4` and can be changed with `DEFAULT_RESPONSES_MODEL`
+- model, size, quality, format, compression, quantity, and response format controls are disabled in the UI for this path
 
 ### `/v1/images/edits`
 
@@ -527,10 +526,9 @@ curl http://localhost:9090/health
 ### `/v1/responses`
 
 - 向 Responses API 发送生成请求
-- 使用 `image_generation` 工具
+- 上游请求体只发送 `prompt`
 - 从 `output[]` 中类型为 `image_generation_call` 的项目读取 base64 图片数据
-- 界面中选择的图像模型会传给该工具
-- Responses 顶层模型默认为 `gpt-5.4`，可通过 `DEFAULT_RESPONSES_MODEL` 修改
+- 选择该路径时，界面中的模型、尺寸、质量、格式、压缩率、数量和 response format 控件会被禁用
 
 ### `/v1/images/edits`
 

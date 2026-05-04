@@ -131,24 +131,7 @@ def build_images_edit_form_data(payload: EditRequest) -> dict[str, Any]:
 
 
 def build_responses_request_data(payload: GenerateRequest) -> dict[str, Any]:
-    image_generation_tool: dict[str, Any] = {
-        "type": "image_generation",
-        "model": payload.model,
-        "size": payload.size,
-        "quality": payload.quality,
-        "output_format": payload.output_format,
-    }
-    if payload.response_format is not None:
-        image_generation_tool["response_format"] = payload.response_format
-    if payload.output_format != "png" and payload.output_compression is not None:
-        image_generation_tool["output_compression"] = payload.output_compression
-
-    return {
-        "model": config.DEFAULT_RESPONSES_MODEL,
-        "input": payload.prompt,
-        "tools": [image_generation_tool],
-        "tool_choice": {"type": "image_generation"},
-    }
+    return {"prompt": payload.prompt}
 
 
 def normalize_api_path(api_path: str) -> str:
@@ -217,7 +200,7 @@ async def call_image_generation_api(
         if progress:
             progress("building_responses_payload", "Building Responses API payload")
         request_data = build_responses_request_data(payload)
-        request_count = payload.n
+        request_count = 1
     else:
         if progress:
             progress("building_generation_payload", "Building image generation payload")
