@@ -28,7 +28,7 @@ Key characteristics:
 - auto, ratio-based, and custom image sizes
 - preview UI with prompt, parameters, elapsed time, and detailed English generation/edit stages
 - job polling UI with 2-second interval and 10-minute timeout
-- gallery with pagination, lightbox, download, download all as ZIP, delete, copy prompt, and copy image URL
+- gallery with pagination, lightbox, download, download all as ZIP, delete, delete all, copy prompt, and copy image URL
 - optional site access key with session unlock
 - optional IP allowlist and reverse proxy header support
 
@@ -63,7 +63,7 @@ There is no frontend build step.
 Runtime persistent storage is minimal:
 
 - generated images are saved in the `images/` directory
-- gallery metadata is stored in `data/gallery.json`
+- gallery metadata is stored in `data/gallery.json`, including generation duration
 - generation jobs live only in process memory and are lost on restart
 
 ### Generation flow
@@ -347,7 +347,7 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 - 支持自动、比例和自定义图像尺寸
 - 预览界面：显示提示词、参数、真实图片分辨率、生成耗时，以及英文 generation/edit 细分阶段
 - 任务轮询界面：2 秒轮询一次，最长 10 分钟
-- Gallery：分页、Lightbox、生成所用 preset、下载、批量下载为 ZIP、删除、复制提示词、复制图片链接
+- Gallery：分页、Lightbox、生成所用 preset、下载、批量下载为 ZIP、删除、全部删除、复制提示词、复制图片链接、耗时
 - 可选站点访问密钥
 - 可选 IP 白名单和反向代理头支持
 
@@ -382,7 +382,7 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 运行时持久化存储非常简单：
 
 - 生成的图片保存在 `images/` 目录
-- Gallery 元数据保存在 `data/gallery.json`，新记录会保存真实图片宽高
+- Gallery 元数据保存在 `data/gallery.json`，包含真实图片宽高和生成耗时
 - 生成任务仅保存在进程内存中，重启后会丢失
 
 ### 生成流程
