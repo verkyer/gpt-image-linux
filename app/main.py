@@ -873,15 +873,12 @@ async def delete_all_gallery_images():
 
 @app.delete("/api/gallery/{image_id}", response_model=MessageResponse)
 async def delete_gallery_item(image_id: str):
-    entry_found = False
-    for e in storage.get_gallery():
-        if e.id == image_id:
-            entry_found = True
-            break
+    deleted_entry, deleted_file_count = storage.delete_gallery_image(image_id)
 
-    if not entry_found:
+    if not deleted_entry:
         raise HTTPException(status_code=404, detail="Gallery entry not found")
 
-    storage.delete_from_gallery(image_id)
-
-    return MessageResponse(status="ok", message="Gallery entry deleted")
+    return MessageResponse(
+        status="ok",
+        message=f"Deleted gallery entry and {deleted_file_count} image file(s)",
+    )

@@ -358,13 +358,33 @@ def update_gallery_entry(image_id: str, updates: dict[str, Any]) -> GalleryEntry
 
 
 def delete_from_gallery(image_id: str) -> bool:
+    deleted_entry, _ = delete_gallery_image(image_id)
+    return deleted_entry
+
+
+def delete_gallery_image(image_id: str) -> tuple[bool, int]:
     entries = _load_gallery()
-    original_len = len(entries)
-    entries = [e for e in entries if e["id"] != image_id]
-    if len(entries) == original_len:
-        return False
-    _save_gallery(entries)
-    return True
+    removed_entries = [e for e in entries if e.get("id") == image_id]
+    if not removed_entries:
+        return False, 0
+
+    remaining_entries = [e for e in entries if e.get("id") != image_id]
+    remaining_filenames = {
+        e.get("filename") for e in remaining_entries if e.get("filename")
+    }
+    removed_filenames = {
+        e.get("filename")
+        for e in removed_entries
+        if e.get("filename") and e.get("filename") not in remaining_filenames
+    }
+
+    deleted_count = 0
+    for filename in removed_filenames:
+        if delete_image(filename):
+            deleted_count += 1
+
+    _save_gallery(remaining_entries)
+    return True, deleted_count
 
 
 def delete_all_gallery_images() -> int:
