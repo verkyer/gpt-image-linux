@@ -93,6 +93,8 @@ IMAGE_UPLOAD_CONTENT_TYPES = {
 }
 AUTH_EXEMPT_PATHS = {"/", "/api/access", "/api/access/status", "/favicon.ico", "/health"}
 AUTH_EXEMPT_PREFIXES = ("/static/",)
+NO_CACHE_PATHS = {"/", "/static/index.html"}
+NO_CACHE_PREFIXES = ("/static/js/",)
 
 
 @app.middleware("http")
@@ -117,7 +119,14 @@ async def access_control_middleware(request: Request, call_next):
                 content={"status": "error", "detail": "Access key required"},
             )
 
-    return await call_next(request)
+    response = await call_next(request)
+
+    if request.url.path in NO_CACHE_PATHS or request.url.path.startswith(
+        NO_CACHE_PREFIXES
+    ):
+        response.headers["Cache-Control"] = "no-cache"
+
+    return response
 
 
 @app.exception_handler(Exception)
