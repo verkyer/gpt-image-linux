@@ -1,5 +1,10 @@
 # GPT Image Panel
 
+![FastAPI](https://img.shields.io/badge/FastAPI-0.109-009688?logo=fastapi)
+![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python)
+![SQLite](https://img.shields.io/badge/SQLite-3-003B57?logo=sqlite)
+![Docker](https://img.shields.io/badge/Docker-24.0+-2496ED?logo=docker)
+
 Web panel for GPT Image 2 API image generation and editing.
 
 English | [中文](#中文文档)
@@ -10,7 +15,7 @@ GPT Image Panel is a lightweight FastAPI web UI for image generation and image e
 
 Key characteristics:
 
-- single-page frontend served from `static/index.html`
+- single-page frontend shell in `static/index.html` with ES modules under `static/js/`
 - FastAPI backend defined primarily in `app/main.py`
 - API presets persisted to SQLite at `data/app.sqlite3`
 - background image-generation jobs executed with `asyncio.create_task`
@@ -48,13 +53,13 @@ Responsibilities are split into a few modules:
 
 ### Frontend
 
-The frontend is a single-page application in `static/index.html`.
+The frontend is a single-page application with the HTML shell in `static/index.html` and vanilla ES modules in `static/js/`.
 
 It uses:
 
 - Tailwind CSS via CDN
 - Font Awesome via CDN
-- vanilla JavaScript for polling, gallery rendering, preview/lightbox, download, and delete actions
+- vanilla ES modules split across API access, settings, size dialog, jobs, gallery/lightbox, and app bootstrap code
 
 There is no frontend build step.
 
@@ -118,6 +123,15 @@ app/
   storage.py
 static/
   index.html
+  js/
+    access.js
+    api.js
+    app.js
+    gallery.js
+    jobs.js
+    settings.js
+    size-dialog.js
+    ui.js
 images/
 data/
 ```
@@ -332,7 +346,7 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 
 主要特点：
 
-- 单页前端，由 `static/index.html` 提供
+- 单页前端壳位于 `static/index.html`，ES modules 位于 `static/js/`
 - FastAPI 后端主要定义在 `app/main.py`
 - API 预设持久化保存在 SQLite：`data/app.sqlite3`
 - 图像生成任务通过 `asyncio.create_task` 异步执行
@@ -370,13 +384,13 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 
 ### 前端
 
-前端是单页应用，位于 `static/index.html`。
+前端是单页应用，HTML 壳位于 `static/index.html`，原生 ES modules 位于 `static/js/`。
 
 使用技术：
 
 - Tailwind CSS（CDN）
 - Font Awesome（CDN）
-- 原生 JavaScript，用于任务轮询、Gallery 渲染、预览/Lightbox、下载和删除操作
+- 原生 ES modules，拆分为 API 访问、设置、尺寸弹窗、任务、Gallery/Lightbox 和应用启动逻辑
 
 没有前端构建步骤。
 
@@ -440,6 +454,15 @@ app/
   storage.py
 static/
   index.html
+  js/
+    access.js
+    api.js
+    app.js
+    gallery.js
+    jobs.js
+    settings.js
+    size-dialog.js
+    ui.js
 images/
 data/
 ```

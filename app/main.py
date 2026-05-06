@@ -57,6 +57,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="GPT Image Panel", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 MAX_GENERATE_JOBS = 100
 MAX_UPLOAD_BYTES = config.MAX_FILE_SIZE_MB * 1024 * 1024
@@ -90,7 +91,8 @@ IMAGE_UPLOAD_CONTENT_TYPES = {
     ".tiff": "image/tiff",
     ".webp": "image/webp",
 }
-AUTH_EXEMPT_PATHS = {"/", "/api/access", "/api/access/status", "/health"}
+AUTH_EXEMPT_PATHS = {"/", "/api/access", "/api/access/status", "/favicon.ico", "/health"}
+AUTH_EXEMPT_PREFIXES = ("/static/",)
 
 
 @app.middleware("http")
@@ -103,7 +105,11 @@ async def access_control_middleware(request: Request, call_next):
                 content={"status": "error", "detail": "IP address is not allowed"},
             )
 
-    if config.ACCESS_KEY and request.url.path not in AUTH_EXEMPT_PATHS:
+    if (
+        config.ACCESS_KEY
+        and request.url.path not in AUTH_EXEMPT_PATHS
+        and not request.url.path.startswith(AUTH_EXEMPT_PREFIXES)
+    ):
         token = request.cookies.get(config.ACCESS_KEY_COOKIE_NAME)
         if not auth.verify_access_token(token):
             return JSONResponse(
