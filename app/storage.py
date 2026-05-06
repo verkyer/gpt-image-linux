@@ -233,6 +233,18 @@ def delete_image(filename: str) -> bool:
     return False
 
 
+def _scan_image_files() -> set[str]:
+    images_dir = Path(config.IMAGES_DIR)
+    if not images_dir.exists():
+        return set()
+
+    return {
+        path.name
+        for path in images_dir.iterdir()
+        if path.is_file() and path.suffix.lower() in IMAGE_FILE_EXTENSIONS
+    }
+
+
 async def add_to_gallery_async(
     image_bytes: bytes,
     image_id: str,
@@ -355,6 +367,23 @@ def update_gallery_entry(image_id: str, updates: dict[str, Any]) -> GalleryEntry
             _save_gallery(entries)
             return GalleryEntry(**entry)
     return None
+
+
+def sync_gallery_with_image_files() -> int:
+    entries = _load_gallery()
+    if not entries:
+        return 0
+
+    image_filenames = _scan_image_files()
+    synced_entries = [
+        entry
+        for entry in entries
+        if entry.get("filename") and entry["filename"] in image_filenames
+    ]
+    removed_count = len(entries) - len(synced_entries)
+    if removed_count:
+        _save_gallery(synced_entries)
+    return removed_count
 
 
 def delete_from_gallery(image_id: str) -> bool:

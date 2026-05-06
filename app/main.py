@@ -45,6 +45,12 @@ async def lifespan(app: FastAPI):
     Path(config.IMAGES_DIR).mkdir(parents=True, exist_ok=True)
     Path(config.DATA_DIR).mkdir(parents=True, exist_ok=True)
     storage.verify_storage_writable()
+    removed_gallery_entries = storage.sync_gallery_with_image_files()
+    if removed_gallery_entries:
+        logger.info(
+            "Removed %s stale gallery entries for missing image files",
+            removed_gallery_entries,
+        )
     load_api_settings()
     app.state.generate_jobs = {}
     yield

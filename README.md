@@ -278,6 +278,7 @@ The panel supports these upstream paths:
 - API presets are persisted to `data/settings.json`.
 - If `data/settings.json` does not exist, the default preset is initialized from `DEFAULT_API_URL`, `DEFAULT_API_KEY`, and `DEFAULT_API_PATH`.
 - API keys are masked in the UI but stored as plain text in `data/settings.json`.
+- On startup, the backend scans `IMAGES_DIR` and removes gallery metadata entries whose image files are missing.
 - Finished generation jobs are trimmed when the job store exceeds `MAX_GENERATE_JOBS`.
 - `DELETE /api/gallery/{image_id}` removes metadata and deletes the image file from `IMAGES_DIR` when no remaining gallery entry references that filename.
 - `DELETE /api/gallery` removes all gallery metadata and deletes image files from `IMAGES_DIR`.
@@ -597,6 +598,7 @@ curl http://localhost:9090/health
 - API 预设持久化保存在 `data/settings.json`。
 - 如果 `data/settings.json` 不存在，默认预设会使用 `DEFAULT_API_URL`、`DEFAULT_API_KEY` 和 `DEFAULT_API_PATH` 初始化。
 - API Key 在界面中掩码展示，但会以明文保存到 `data/settings.json`。
+- 启动时后端会扫描 `IMAGES_DIR`，并移除图片文件已不存在的 Gallery 元数据条目。
 - 当任务数量超过 `MAX_GENERATE_JOBS` 时，已结束任务会被裁剪。
 - `DELETE /api/gallery/{image_id}` 会删除元数据；如果没有其他 Gallery 条目引用同一文件名，也会删除 `IMAGES_DIR` 中的对应图片文件。
 - `DELETE /api/gallery` 会删除所有 Gallery 元数据，并删除 `IMAGES_DIR` 中的图片文件。
