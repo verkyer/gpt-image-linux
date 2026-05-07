@@ -67,13 +67,6 @@ export function toggleGenerateJobSelection(jobId, selected) {
   renderJobHistoryActions();
 }
 
-export function toggleAllGenerateJobs(selected) {
-  jobHistoryState.selectedJobIds = selected
-    ? new Set(jobHistoryState.jobs.map(job => job.job_id))
-    : new Set();
-  renderJobHistory();
-}
-
 export async function deleteSelectedGenerateJobs() {
   const jobIds = Array.from(jobHistoryState.selectedJobIds);
   if (!jobIds.length || jobHistoryState.deleting) return;
@@ -132,14 +125,9 @@ function updateJobHistoryBadge() {
 function renderJobHistory() {
   const list = document.getElementById('jobHistoryList');
   const empty = document.getElementById('jobHistoryEmpty');
-  const selectAll = document.getElementById('jobHistorySelectAll');
-  if (!list || !empty || !selectAll) return;
+  if (!list || !empty) return;
 
   const jobs = jobHistoryState.jobs;
-  selectAll.checked = jobs.length > 0 && jobHistoryState.selectedJobIds.size === jobs.length;
-  selectAll.indeterminate = jobHistoryState.selectedJobIds.size > 0
-    && jobHistoryState.selectedJobIds.size < jobs.length;
-  selectAll.disabled = jobs.length === 0 || jobHistoryState.loading || jobHistoryState.deleting;
 
   if (jobHistoryState.loading && !jobs.length) {
     empty.classList.add('hidden');

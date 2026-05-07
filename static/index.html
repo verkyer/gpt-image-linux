@@ -212,7 +212,7 @@
       <div class="flex items-center gap-2">
         <button id="jobHistoryBtn" onclick="toggleJobHistory()"
           class="relative p-2 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors"
-          title="历史任务" aria-label="历史任务">
+          title="Job History" aria-label="Job History">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 6.5h10M4 12h8M4 17.5h10M17 9l2 2 4-4M17 17l2 2 4-4"/>
           </svg>
@@ -235,8 +235,8 @@
     <div class="absolute right-0 top-0 h-full w-full max-w-lg bg-zinc-900 border-l border-zinc-800 shadow-2xl flex flex-col fade-in">
       <div class="p-5 border-b border-zinc-800 flex items-center justify-between">
         <div class="min-w-0">
-          <h2 class="text-lg font-semibold text-zinc-100">历史任务</h2>
-          <p class="mt-1 text-xs text-zinc-500">仅显示正在执行或排队中的生图任务</p>
+          <h2 class="text-lg font-semibold text-zinc-100">Job History</h2>
+          <p class="mt-1 text-xs text-zinc-500">Queued and running generation jobs</p>
         </div>
         <button onclick="toggleJobHistory()" class="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors" aria-label="Close job history">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -244,12 +244,7 @@
           </svg>
         </button>
       </div>
-      <div class="p-5 border-b border-zinc-800 flex items-center justify-between gap-3">
-        <label class="inline-flex items-center gap-2 text-sm text-zinc-300">
-          <input id="jobHistorySelectAll" type="checkbox" onchange="toggleAllGenerateJobs(this.checked)"
-            class="h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-emerald-500 focus:ring-emerald-500/30">
-          Select all
-        </label>
+      <div class="p-5 border-b border-zinc-800 flex items-center justify-end gap-3">
         <button type="button" onclick="refreshJobHistory()"
           class="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-zinc-700 text-xs font-medium text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800 transition-colors">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
