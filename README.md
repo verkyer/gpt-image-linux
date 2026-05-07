@@ -34,7 +34,7 @@ Key characteristics:
 - preview UI with prompt, parameters, elapsed time, and detailed English generation/edit stages
 - job polling UI with 2-second interval and 10-minute timeout
 - active job history drawer with selectable cancellation for queued/running generation and edit jobs
-- gallery with pagination, lightbox, download, download all as ZIP, delete, delete all, copy prompt, and copy image URL
+- gallery with pagination, lightbox, download, download all as ZIP, delete, delete all, copy prompt, copy image URL, and total image size display
 - optional site access key with session unlock
 - optional IP allowlist and reverse proxy header support
 - app version badge with GitHub release update detection

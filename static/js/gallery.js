@@ -13,6 +13,12 @@ let galleryPage = 1;
 let galleryTotalPages = 1;
 let activeLightboxImage = null;
 
+function formatGalleryTotalSize(totalBytes) {
+  const bytes = Number(totalBytes);
+  if (!Number.isFinite(bytes) || bytes <= 0) return '';
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export async function loadGallery(page = galleryPage, options = {}) {
   const { throwOnError = false } = options;
   try {
@@ -24,12 +30,14 @@ export async function loadGallery(page = galleryPage, options = {}) {
     const grid = document.getElementById('galleryGrid');
     const empty = document.getElementById('galleryEmpty');
     const count = document.getElementById('galleryCount');
+    const totalSize = document.getElementById('galleryTotalSize');
     const pagination = document.getElementById('galleryPagination');
 
     galleryPage = data.page || 1;
     galleryTotalPages = data.total_pages || 1;
 
     count.textContent = data.total > 0 ? `${data.total} image${data.total !== 1 ? 's' : ''}` : '';
+    totalSize.textContent = data.total > 0 ? formatGalleryTotalSize(data.total_bytes) : '';
     renderGalleryPagination(data);
 
     if (!data.images || data.images.length === 0) {

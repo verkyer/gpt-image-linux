@@ -676,6 +676,29 @@ def get_gallery_count() -> int:
         return int(row[0]) if row else 0
 
 
+def get_gallery_total_bytes() -> int:
+    _ensure_database()
+    total_bytes = 0
+    seen_filenames: set[str] = set()
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT filename FROM gallery_entries WHERE filename IS NOT NULL"
+        ).fetchall()
+
+    for row in rows:
+        filename = row["filename"]
+        if not filename or filename in seen_filenames:
+            continue
+        seen_filenames.add(filename)
+        path = get_image_path(filename)
+        try:
+            total_bytes += path.stat().st_size
+        except OSError:
+            continue
+
+    return total_bytes
+
+
 def get_gallery(
     limit: int | None = None,
     offset: int | None = None,

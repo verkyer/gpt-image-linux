@@ -942,12 +942,14 @@ async def get_gallery_handler(
     page_size: int = Query(default=9, ge=1, le=100),
 ):
     total = storage.get_gallery_count()
+    total_bytes = storage.get_gallery_total_bytes()
     total_pages = max((total + page_size - 1) // page_size, 1)
     page = min(page, total_pages)
     offset = (page - 1) * page_size
 
     return GalleryResponse(
         total=total,
+        total_bytes=total_bytes,
         page=page,
         page_size=page_size,
         total_pages=total_pages,

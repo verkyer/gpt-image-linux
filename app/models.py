@@ -184,6 +184,7 @@ class GenerateJobStatus(BaseModel):
 
 class GalleryResponse(BaseModel):
     total: int
+    total_bytes: int = 0
     page: int
     page_size: int
     total_pages: int
