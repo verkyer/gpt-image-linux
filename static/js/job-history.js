@@ -13,6 +13,7 @@ const POLL_INTERVAL_MS = 3000;
 let jobHistoryState = {
   jobs: [],
   selectedJobIds: new Set(),
+  selectAllActive: false,
   loading: false,
   deleting: false,
   pollingStarted: false,
@@ -50,7 +51,11 @@ export async function refreshJobHistory(options = {}) {
     jobHistoryState.jobs = Array.isArray(jobs)
       ? jobs.filter(job => ACTIVE_JOB_STATUSES.has(job.status))
       : [];
-    pruneSelectedJobs();
+    if (jobHistoryState.selectAllActive && jobHistoryState.jobs.length) {
+      jobHistoryState.selectedJobIds = new Set(jobHistoryState.jobs.map(job => job.job_id));
+    } else {
+      pruneSelectedJobs();
+    }
     updateJobHistoryBadge();
   } catch (error) {
     if (!options.silent) {
@@ -68,6 +73,18 @@ export function toggleGenerateJobSelection(jobId, selected) {
   } else {
     jobHistoryState.selectedJobIds.delete(jobId);
   }
+  jobHistoryState.selectAllActive = hasAllJobsSelected();
+  syncJobHistorySelectionUI();
+}
+
+export function toggleAllGenerateJobs() {
+  if (jobHistoryState.deleting) return;
+
+  const shouldSelectAll = !hasAllJobsSelected();
+  jobHistoryState.selectAllActive = shouldSelectAll;
+  jobHistoryState.selectedJobIds = shouldSelectAll
+    ? new Set(jobHistoryState.jobs.map(job => job.job_id))
+    : new Set();
   syncJobHistorySelectionUI();
 }
 
@@ -98,6 +115,7 @@ export async function deleteSelectedGenerateJobs() {
   });
 
   jobHistoryState.deleting = false;
+  jobHistoryState.selectAllActive = false;
   jobHistoryState.selectedJobIds.clear();
   await refreshJobHistory({ silent: true });
 
@@ -111,10 +129,21 @@ export async function deleteSelectedGenerateJobs() {
 }
 
 function pruneSelectedJobs() {
+  if (!jobHistoryState.jobs.length) {
+    jobHistoryState.selectedJobIds = new Set();
+    jobHistoryState.selectAllActive = false;
+    return;
+  }
+
   const activeJobIds = new Set(jobHistoryState.jobs.map(job => job.job_id));
   jobHistoryState.selectedJobIds = new Set(
     Array.from(jobHistoryState.selectedJobIds).filter(jobId => activeJobIds.has(jobId)),
   );
+  if (!jobHistoryState.selectedJobIds.size) {
+    jobHistoryState.selectAllActive = false;
+    return;
+  }
+  jobHistoryState.selectAllActive = hasAllJobsSelected();
 }
 
 function updateJobHistoryBadge() {
@@ -202,7 +231,20 @@ function syncJobHistorySelectionUI() {
     });
   }
 
+  syncSelectAllButton();
   renderJobHistoryActions();
+}
+
+function syncSelectAllButton() {
+  const button = document.getElementById('selectAllJobsBtn');
+  if (!button) return;
+
+  const jobCount = jobHistoryState.jobs.length;
+  const allSelected = hasAllJobsSelected();
+  button.disabled = jobCount === 0 || jobHistoryState.deleting;
+  button.innerHTML = allSelected
+    ? '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg> Clear Selection'
+    : '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> Select All';
 }
 
 function renderJobHistoryActions() {
@@ -216,6 +258,7 @@ function renderJobHistoryActions() {
   deleteBtn.innerHTML = jobHistoryState.deleting
     ? '<span class="spinner"></span> Cancelling...'
     : '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg> Delete Selected';
+  syncSelectAllButton();
 }
 
 function bindJobHistoryEvents() {
@@ -231,6 +274,11 @@ function bindJobHistoryEvents() {
   });
 
   jobHistoryState.eventsBound = true;
+}
+
+function hasAllJobsSelected() {
+  return jobHistoryState.jobs.length > 0
+    && jobHistoryState.jobs.every(job => jobHistoryState.selectedJobIds.has(job.job_id));
 }
 
 function formatCreatedAt(createdAt) {

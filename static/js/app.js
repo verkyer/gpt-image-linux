@@ -47,6 +47,7 @@ import {
   deleteSelectedGenerateJobs,
   refreshJobHistory,
   startJobHistoryPolling,
+  toggleAllGenerateJobs,
   toggleGenerateJobSelection,
   toggleJobHistory,
 } from './job-history.js';
@@ -91,6 +92,7 @@ function exposeGlobals() {
     selectSizeMode,
     selectSizeRatio,
     startJobHistoryPolling,
+    toggleAllGenerateJobs,
     toggleGenerateJobSelection,
     toggleJobHistory,
     toggleSettings,
