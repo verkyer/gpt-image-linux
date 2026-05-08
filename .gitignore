@@ -11,3 +11,6 @@ images/*
 !images/.gitkeep
 
 app/__pycache__
+
+node_modules/
+npm-debug.log*

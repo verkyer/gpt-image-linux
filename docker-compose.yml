@@ -6,7 +6,7 @@ services:
         PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-python:3.11-slim}
     container_name: gpt-image-panel
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./images:/app/images
       - ./data:/app/data
@@ -16,6 +16,7 @@ services:
       - DEFAULT_API_PATH=${DEFAULT_API_PATH:-/v1/images/generations}
       - DEFAULT_RESPONSES_MODEL=${DEFAULT_RESPONSES_MODEL:-gpt-5.4}
       - ACCESS_KEY=${ACCESS_KEY:-}
+      - ALLOW_UNAUTHENTICATED=${ALLOW_UNAUTHENTICATED:-false}
       - IP_ALLOWLIST=${IP_ALLOWLIST:-}
       - TRUST_PROXY_HEADERS=${TRUST_PROXY_HEADERS:-false}
       - MAX_FILE_SIZE_MB=50

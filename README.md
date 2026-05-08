@@ -59,11 +59,15 @@ The frontend is a single-page application with the HTML shell in `static/index.h
 
 It uses:
 
-- Tailwind CSS via CDN
-- Font Awesome via CDN
+- local Tailwind CSS build output (`static/css/tailwind.css`)
 - vanilla ES modules split across API access, settings, size dialog, jobs, gallery/lightbox, and app bootstrap code
 
-There is no frontend build step.
+Frontend CSS build:
+
+```bash
+npm install
+npm run build:css
+```
 
 ### Storage
 
@@ -105,7 +109,7 @@ Runtime persistent storage is minimal:
 - SQLite
 - Pydantic v2
 - Pillow
-- Tailwind CSS and Font Awesome via CDN
+- Tailwind CSS (local build with Tailwind CLI)
 
 ## Project structure
 
@@ -118,6 +122,9 @@ docker-compose.yml
 .env.example
 VERSION
 requirements.txt
+package.json
+package-lock.json
+tailwind.config.js
 app/
   __init__.py
   config.py
@@ -126,6 +133,9 @@ app/
   proxy.py
   storage.py
 static/
+  css/
+    input.css
+    tailwind.css
   index.html
   js/
     access.js
@@ -157,7 +167,7 @@ An external GPT-compatible image API is required for actual image generation.
 ```bash
 docker build -t gpt-image-panel .
 docker run -d --name gpt-image-panel \
-  -p 9090:9090 \
+  -p 127.0.0.1:9090:9090 \
   -v $(pwd)/images:/app/images \
   -v $(pwd)/data:/app/data \
   gpt-image-panel
@@ -176,6 +186,7 @@ docker build \
 ```bash
 cp .env.example .env
 # edit .env if needed
+# ACCESS_KEY is required by default unless ALLOW_UNAUTHENTICATED=true
 docker-compose up -d --build --force-recreate
 ```
 
@@ -193,6 +204,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 9090 --reload
 ```
 
 Then open `http://localhost:9090`.
+
+If you want to run without access auth during local dev, set `ALLOW_UNAUTHENTICATED=true`.
 
 ### Health check
 
@@ -262,7 +275,8 @@ The panel supports these upstream paths:
 | `DEFAULT_RESPONSES_MODEL` | `gpt-5.4` | Top-level model used when calling `/v1/responses` |
 | `APP_VERSION` | `VERSION` file | Override the app version shown in the UI and returned by `/api/version` |
 | `GITHUB_REPO` | `Z1rconium/gpt-image-linux` | GitHub `owner/repo` used for release update detection; set empty to disable latest-version checks |
-| `ACCESS_KEY` | empty | Site access key; when set, every non-health route requires unlock |
+| `ACCESS_KEY` | empty | Required by default; all non-health routes require unlock when set |
+| `ALLOW_UNAUTHENTICATED` | `false` | Set `true` to explicitly allow startup without `ACCESS_KEY` |
 | `IP_ALLOWLIST` | empty | Comma-separated allowed IPs/CIDRs |
 | `TRUST_PROXY_HEADERS` | `false` | Read `X-Forwarded-For` or `X-Real-IP` from a trusted reverse proxy |
 | `MAX_FILE_SIZE_MB` | `50` | Max image size in MB |
@@ -328,7 +342,7 @@ Helpful guidelines:
 - use FastAPI response models from `app/models.py` where applicable
 - keep persistent storage operations centralized in `app/storage.py`
 - keep upstream API interaction centralized in `app/proxy.py`
-- avoid introducing a frontend build system unless explicitly requested
+- keep the frontend build flow minimal (currently only Tailwind CSS compilation)
 - avoid storing real API keys in repository files
 - do not commit generated images or runtime gallery metadata unless explicitly requested
 - preserve the existing async generation flow and polling model unless the change explicitly requires altering job lifecycle behavior
@@ -403,11 +417,15 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 
 使用技术：
 
-- Tailwind CSS（CDN）
-- Font Awesome（CDN）
+- 本地构建的 Tailwind CSS（`static/css/tailwind.css`）
 - 原生 ES modules，拆分为 API 访问、设置、尺寸弹窗、任务、Gallery/Lightbox 和应用启动逻辑
 
-没有前端构建步骤。
+前端 CSS 构建命令：
+
+```bash
+npm install
+npm run build:css
+```
 
 ### 存储
 
@@ -449,7 +467,7 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 - SQLite
 - Pydantic v2
 - Pillow
-- Tailwind CSS 与 Font Awesome（CDN）
+- Tailwind CSS（本地通过 Tailwind CLI 构建）
 
 ## 项目结构
 
@@ -460,7 +478,11 @@ README_ZH.md
 Dockerfile
 docker-compose.yml
 .env.example
+VERSION
 requirements.txt
+package.json
+package-lock.json
+tailwind.config.js
 app/
   __init__.py
   config.py
@@ -469,6 +491,9 @@ app/
   proxy.py
   storage.py
 static/
+  css/
+    input.css
+    tailwind.css
   index.html
   js/
     access.js
@@ -500,7 +525,7 @@ data/
 ```bash
 docker build -t gpt-image-panel .
 docker run -d --name gpt-image-panel \
-  -p 9090:9090 \
+  -p 127.0.0.1:9090:9090 \
   -v $(pwd)/images:/app/images \
   -v $(pwd)/data:/app/data \
   gpt-image-panel
@@ -519,6 +544,7 @@ docker build \
 ```bash
 cp .env.example .env
 # 按需修改 .env
+# 默认必须设置 ACCESS_KEY，除非显式设置 ALLOW_UNAUTHENTICATED=true
 docker-compose up -d --build --force-recreate
 ```
 
@@ -536,6 +562,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 9090 --reload
 ```
 
 然后打开 `http://localhost:9090`。
+
+若本地开发需要无鉴权启动，请设置 `ALLOW_UNAUTHENTICATED=true`。
 
 ### 健康检查
 
@@ -603,7 +631,8 @@ curl http://localhost:9090/health
 | `DEFAULT_API_KEY` | 空 | 预填 API Key |
 | `DEFAULT_API_PATH` | `/v1/images/generations` | 默认上游路径 |
 | `DEFAULT_RESPONSES_MODEL` | `gpt-5.4` | 调用 `/v1/responses` 时使用的顶层模型 |
-| `ACCESS_KEY` | 空 | 站点访问密钥；设置后每个非健康路由均需解锁 |
+| `ACCESS_KEY` | 空 | 默认要求设置；设置后每个非健康路由均需解锁 |
+| `ALLOW_UNAUTHENTICATED` | `false` | 设置为 `true` 可显式允许在未设置 `ACCESS_KEY` 时启动 |
 | `IP_ALLOWLIST` | 空 | 允许访问的 IP/CIDR，逗号分隔 |
 | `TRUST_PROXY_HEADERS` | `false` | 是否读取受信任反向代理的 `X-Forwarded-For` 或 `X-Real-IP` |
 | `MAX_FILE_SIZE_MB` | `50` | 图片最大体积（MB） |
@@ -664,7 +693,7 @@ curl http://localhost:9090/health
 - 尽量使用 `app/models.py` 中的 FastAPI 响应模型
 - 持久化存储操作集中在 `app/storage.py`
 - 上游 API 调用集中在 `app/proxy.py`
-- 除非明确要求，否则不要引入前端构建系统
+- 前端构建流程保持最小化（当前仅 Tailwind CSS 编译）
 - 不要在仓库文件中保存真实 API Key
 - 除非明确要求，否则不要提交生成图片或运行时 Gallery 元数据
 - 除非明确要求改变任务生命周期，否则保留现有异步生成与轮询机制

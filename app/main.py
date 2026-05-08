@@ -36,6 +36,23 @@ from . import auth
 
 logger = logging.getLogger(__name__)
 
+CONTENT_SECURITY_POLICY = "; ".join(
+    [
+        "default-src 'self'",
+        "base-uri 'self'",
+        "object-src 'none'",
+        "frame-ancestors 'none'",
+        "form-action 'self'",
+        "script-src 'self'",
+        "script-src-elem 'self'",
+        "script-src-attr 'unsafe-inline'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: blob:",
+        "font-src 'self' data:",
+        "connect-src 'self' https://raw.githubusercontent.com",
+    ]
+)
+
 
 def get_exception_message(error: Exception) -> str:
     return str(error) or repr(error) or error.__class__.__name__
@@ -43,6 +60,12 @@ def get_exception_message(error: Exception) -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if not config.ACCESS_KEY and not config.ALLOW_UNAUTHENTICATED:
+        raise RuntimeError(
+            "ACCESS_KEY is required. Set ACCESS_KEY, or set "
+            "ALLOW_UNAUTHENTICATED=true to explicitly run without authentication."
+        )
+
     Path(config.IMAGES_DIR).mkdir(parents=True, exist_ok=True)
     Path(config.DATA_DIR).mkdir(parents=True, exist_ok=True)
     storage.verify_storage_writable()
@@ -113,14 +136,23 @@ NO_CACHE_PATHS = {"/", "/static/index.html"}
 NO_CACHE_PREFIXES = ("/static/js/",)
 
 
+def apply_security_headers(response: Response) -> Response:
+    response.headers["Content-Security-Policy"] = CONTENT_SECURITY_POLICY
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "same-origin"
+    return response
+
+
 @app.middleware("http")
 async def access_control_middleware(request: Request, call_next):
     if request.url.path != "/health":
         client_ip = auth.get_client_ip(request)
         if not auth.is_ip_allowed(client_ip):
-            return JSONResponse(
-                status_code=403,
-                content={"status": "error", "detail": "IP address is not allowed"},
+            return apply_security_headers(
+                JSONResponse(
+                    status_code=403,
+                    content={"status": "error", "detail": "IP address is not allowed"},
+                )
             )
 
     if (
@@ -130,9 +162,11 @@ async def access_control_middleware(request: Request, call_next):
     ):
         token = request.cookies.get(config.ACCESS_KEY_COOKIE_NAME)
         if not auth.verify_access_token(token):
-            return JSONResponse(
-                status_code=401,
-                content={"status": "error", "detail": "Access key required"},
+            return apply_security_headers(
+                JSONResponse(
+                    status_code=401,
+                    content={"status": "error", "detail": "Access key required"},
+                )
             )
 
     response = await call_next(request)
@@ -142,7 +176,7 @@ async def access_control_middleware(request: Request, call_next):
     ):
         response.headers["Cache-Control"] = "no-cache"
 
-    return response
+    return apply_security_headers(response)
 
 
 @app.exception_handler(Exception)
