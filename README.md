@@ -34,7 +34,7 @@ Key characteristics:
 - preview UI with prompt, parameters, elapsed time, and detailed English generation/edit stages
 - job polling UI with 2-second interval and 10-minute timeout
 - active job history drawer with selectable cancellation for queued/running generation and edit jobs
-- gallery with pagination, lightbox, download, download all as ZIP, delete, delete all, copy prompt, copy image URL, and total image size display
+- gallery with pagination, lightbox, per-image "Edit this image" actions, download, download all as ZIP, delete, delete all, copy prompt, copy image URL, and total image size display
 - optional site access key with session unlock
 - optional IP allowlist and reverse proxy header support
 - app version badge with GitHub release update detection
@@ -90,10 +90,10 @@ Runtime persistent storage is minimal:
 
 ### Edit flow
 
-1. the frontend lets the user upload any image file
-2. the frontend sends the uploaded image and current parameters to `/api/edits`
+1. the frontend lets the user upload an image file or choose an existing gallery image via "Edit this image" on cards/lightbox
+2. the frontend sends current parameters to `/api/edits` (upload flow) or `/api/edits/from-gallery/{image_id}` (gallery flow)
 3. the backend creates an in-memory job and calls upstream `/v1/images/edits`
-4. the uploaded image is forwarded as multipart `image`
+4. the source image is forwarded as multipart `image` (from upload bytes or gallery file bytes)
 5. supported parameters are forwarded as multipart fields: `prompt`, `model`, `n`, `size`, `quality`, `output_format`, optional `response_format`, and `output_compression` when applicable
 6. the backend reports detailed stages while building multipart form data, uploading the source image, waiting for the upstream API, parsing JSON, extracting edited image data, decoding `b64_json`, validating bytes, and saving files
 7. returned image data is decoded from base64 or downloaded from URL
@@ -225,7 +225,7 @@ curl http://localhost:9090/health
 8. enter a prompt
 9. choose generation options
 10. click Generate
-11. optionally click Upload, choose an image, then click Edits to run image-to-image
+11. optionally click Upload (or pick "Edit this image" in Gallery/Lightbox), then click Edits to run image-to-image
 12. view preview and gallery
 
 ## API paths
@@ -246,9 +246,9 @@ The panel supports these upstream paths:
 
 ### `/v1/images/edits`
 
-- used by the Edits button after an image is uploaded
+- used by the Edits button after either image upload or gallery-image selection
 - always calls `/v1/images/edits` on the configured API base URL
-- sends multipart/form-data with `image` plus supported edit parameters
+- sends multipart/form-data with `image` plus supported edit parameters (source image can come from upload or gallery file)
 - if the upstream returns `404`, `405`, or `501`, the UI reports that `/v1/images/edits` is not supported and stops the edit request
 
 ## Image size modes
@@ -301,6 +301,7 @@ The panel supports these upstream paths:
 | `DELETE` | `/api/settings/presets/{preset_id}` | Delete an API preset |
 | `POST` | `/api/generate` | Start an image generation job |
 | `POST` | `/api/edits` | Start an image edit job with multipart image upload |
+| `POST` | `/api/edits/from-gallery/{image_id}` | Start an image edit job using an existing gallery image as source |
 | `GET` | `/api/generate/jobs` | List queued/running generation and edit jobs |
 | `GET` | `/api/generate/{job_id}` | Get generation job status or result |
 | `DELETE` | `/api/generate/{job_id}` | Cancel and remove a queued/running generation or edit job |
@@ -393,7 +394,7 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 - 预览界面：显示提示词、参数、真实图片分辨率、生成耗时，以及英文 generation/edit 细分阶段
 - 任务轮询界面：2 秒轮询一次，最长 10 分钟
 - 历史任务抽屉：列出正在排队/运行的生成和编辑任务，并支持选择后主动终止
-- Gallery：分页、Lightbox、生成所用 preset、下载、批量下载为 ZIP、删除、全部删除、复制提示词、复制图片链接、耗时
+- Gallery：分页、Lightbox、卡片/Lightbox 直接 “Edit this image”、生成所用 preset、下载、批量下载为 ZIP、删除、全部删除、复制提示词、复制图片链接、耗时
 - 可选站点访问密钥
 - 可选 IP 白名单和反向代理头支持
 
@@ -448,10 +449,10 @@ npm run build:css
 
 ### 编辑流程
 
-1. 前端让用户上传任意图片文件
-2. 前端将上传图片和当前参数发送到 `/api/edits`
+1. 前端支持两种编辑源：上传任意图片文件，或在 Gallery 卡片/Lightbox 点击 “Edit this image”
+2. 前端将当前参数发送到 `/api/edits`（上传流）或 `/api/edits/from-gallery/{image_id}`（Gallery 流）
 3. 后端创建内存任务并调用上游 `/v1/images/edits`
-4. 上传图片以 multipart `image` 字段转发
+4. 源图片以 multipart `image` 字段转发（来自上传字节或 Gallery 文件字节）
 5. 支持的参数以 multipart 字段转发：`prompt`、`model`、`n`、`size`、`quality`、`output_format`、可选的 `response_format`，以及适用时的 `output_compression`
 6. 后端在构建 multipart 表单、上传源图片、等待上游 API、解析 JSON、提取编辑图片数据、解码 `b64_json`、校验字节和保存文件时持续上报细分阶段
 7. 返回图片数据从 base64 解码或从 URL 下载
@@ -604,9 +605,9 @@ curl http://localhost:9090/health
 
 ### `/v1/images/edits`
 
-- 上传图片后点击 Edits 使用
+- 上传图片后点击 Edits，或在 Gallery 里选择 “Edit this image” 后点击 Edits 使用
 - 始终在配置的 API Base URL 下调用 `/v1/images/edits`
-- 使用 multipart/form-data 发送 `image` 和支持的编辑参数
+- 使用 multipart/form-data 发送 `image` 和支持的编辑参数（源图片可来自上传或 Gallery）
 - 如果上游返回 `404`、`405` 或 `501`，界面会提示 `/v1/images/edits` 不受支持并停止编辑请求
 
 ## 图像尺寸模式
@@ -656,6 +657,7 @@ curl http://localhost:9090/health
 | `DELETE` | `/api/settings/presets/{preset_id}` | 删除 API 预设 |
 | `POST` | `/api/generate` | 创建图像生成任务 |
 | `POST` | `/api/edits` | 使用 multipart 图片上传创建图像编辑任务 |
+| `POST` | `/api/edits/from-gallery/{image_id}` | 使用已有 Gallery 图片作为源图创建图像编辑任务 |
 | `GET` | `/api/generate/jobs` | 查询排队/运行中的生成和编辑任务 |
 | `GET` | `/api/generate/{job_id}` | 查询任务状态或结果 |
 | `DELETE` | `/api/generate/{job_id}` | 取消并移除排队/运行中的生成或编辑任务 |

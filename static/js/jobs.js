@@ -66,6 +66,7 @@ let currentFilename = null;
 let lastRequestBody = null;
 let lastAction = 'generate';
 let selectedEditImage = null;
+let selectedGalleryImageId = null;
 let generationStartedAt = null;
 let activeGenerateJobId = null;
 let latestJobId = null;
@@ -83,6 +84,28 @@ export function openEditImagePicker() {
   document.getElementById('editImageInput').click();
 }
 
+export function prepareGalleryImageForEdit(imageId, filename = '') {
+  const normalizedId = String(imageId || '').trim();
+  if (!normalizedId) return;
+
+  selectedEditImage = null;
+  selectedGalleryImageId = normalizedId;
+
+  const editInput = document.getElementById('editImageInput');
+  const editBtn = document.getElementById('editBtn');
+  const imageName = document.getElementById('editImageName');
+  if (editInput) editInput.value = '';
+
+  const displayName = String(filename || normalizedId);
+  imageName.textContent = `Gallery: ${displayName}`;
+  imageName.title = `Gallery: ${displayName}`;
+  imageName.classList.remove('hidden');
+  editBtn.disabled = false;
+
+  hideError();
+  showToast('Gallery image ready for edits', 'success');
+}
+
 export function handleEditImageSelected(event) {
   const file = event.target.files?.[0] || null;
   const editBtn = document.getElementById('editBtn');
@@ -90,6 +113,7 @@ export function handleEditImageSelected(event) {
 
   if (!file) {
     selectedEditImage = null;
+    selectedGalleryImageId = null;
     editBtn.disabled = true;
     imageName.classList.add('hidden');
     imageName.textContent = '';
@@ -98,6 +122,7 @@ export function handleEditImageSelected(event) {
 
   if (!isImageFile(file)) {
     selectedEditImage = null;
+    selectedGalleryImageId = null;
     editBtn.disabled = true;
     imageName.classList.add('hidden');
     imageName.textContent = '';
@@ -107,6 +132,7 @@ export function handleEditImageSelected(event) {
   }
 
   selectedEditImage = file;
+  selectedGalleryImageId = null;
   editBtn.disabled = false;
   imageName.textContent = file.name;
   imageName.title = file.name;
@@ -147,8 +173,8 @@ export async function generateImage() {
 
 export async function editImage() {
   hideError();
-  if (!selectedEditImage) {
-    showError('Please upload an image first');
+  if (!selectedEditImage && !selectedGalleryImageId) {
+    showError('Please upload an image or choose one from gallery first');
     return;
   }
 
@@ -160,12 +186,17 @@ export async function editImage() {
   }
 
   const formData = new FormData();
-  formData.append('image', selectedEditImage, selectedEditImage.name);
   Object.entries(requestBody).forEach(([key, value]) => {
     if (value !== null && value !== undefined && value !== '') {
       formData.append(key, String(value));
     }
   });
+  let endpoint = '/api/edits';
+  if (selectedEditImage) {
+    formData.append('image', selectedEditImage, selectedEditImage.name);
+  } else {
+    endpoint = '/api/edits/from-gallery/' + encodeURIComponent(selectedGalleryImageId);
+  }
 
   lastRequestBody = requestBody;
   lastAction = 'edit';
@@ -173,7 +204,7 @@ export async function editImage() {
   showPreviewLoading('edit', prompt);
 
   try {
-    const job = await apiFetch('/api/edits', {
+    const job = await apiFetch(endpoint, {
       method: 'POST',
       body: formData,
     }, 'starting image edit');
@@ -188,7 +219,7 @@ export async function editImage() {
 
 export function regenerate() {
   if (!lastRequestBody) return;
-  if (lastAction === 'edit' && selectedEditImage) {
+  if (lastAction === 'edit' && (selectedEditImage || selectedGalleryImageId)) {
     editImage();
   } else {
     generateImage();

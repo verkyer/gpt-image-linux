@@ -41,6 +41,7 @@ import {
   generateImage,
   handleEditImageSelected,
   openEditImagePicker,
+  prepareGalleryImageForEdit,
   regenerate,
 } from './jobs.js';
 import {
@@ -84,6 +85,7 @@ function exposeGlobals() {
     handleOutputFormatChange,
     hideError,
     openEditImagePicker,
+    prepareGalleryImageForEdit,
     openLightbox,
     openSizeDialog,
     refreshJobHistory,

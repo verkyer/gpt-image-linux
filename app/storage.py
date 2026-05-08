@@ -721,6 +721,22 @@ def get_gallery(
     return [GalleryEntry(**_gallery_entry_from_row(row)) for row in rows]
 
 
+def get_gallery_entry(image_id: str) -> GalleryEntry | None:
+    _ensure_database()
+    with _connect() as conn:
+        row = conn.execute(
+            f"""
+            SELECT {", ".join(GALLERY_COLUMNS)}
+            FROM gallery_entries
+            WHERE id = ?
+            """,
+            (image_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return GalleryEntry(**_gallery_entry_from_row(row))
+
+
 def get_all_filenames() -> list[str]:
     """Return all filenames in the gallery without loading full entry objects."""
     _ensure_database()

@@ -437,6 +437,85 @@ def get_upload_image_content_type(upload: UploadFile) -> str:
     )
 
 
+def build_edit_request_from_form(
+    prompt: str,
+    size: str,
+    model: str,
+    n: int,
+    quality: str,
+    output_format: str,
+    output_compression: int | None,
+    response_format: str | None,
+) -> EditRequest:
+    try:
+        return EditRequest(
+            prompt=prompt,
+            size=size,
+            model=model,
+            n=n,
+            quality=quality,
+            output_format=output_format,
+            output_compression=output_compression,
+            response_format=response_format,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+
+def queue_edit_job(
+    req: EditRequest,
+    image_bytes: bytes,
+    image_filename: str,
+    image_content_type: str,
+) -> GenerateJobResponse:
+    api_url: str = getattr(app.state, "api_url", "")
+    api_key: str = getattr(app.state, "api_key", "")
+    active_preset = get_active_preset()
+    api_preset_name = active_preset.get("name") or "Untitled preset"
+
+    if not api_url:
+        raise HTTPException(
+            status_code=400,
+            detail="API URL not configured. Please set it in Settings.",
+        )
+    if not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="API Key not configured. Please set it in Settings.",
+        )
+
+    job_id = str(uuid.uuid4())
+    app.state.generate_jobs[job_id] = build_pending_job(
+        job_id,
+        req,
+        "edit",
+        "Queued image edit",
+    )
+    track_generate_job_task(
+        job_id,
+        asyncio.create_task(
+            run_edit_job(
+                job_id,
+                api_url,
+                api_key,
+                api_preset_name,
+                req,
+                image_bytes,
+                image_filename,
+                image_content_type,
+            )
+        ),
+    )
+
+    return GenerateJobResponse(
+        job_id=job_id,
+        status="queued",
+        stage="queued",
+        message="Queued image edit",
+        operation="edit",
+    )
+
+
 @app.get("/favicon.ico")
 async def favicon():
     return FileResponse("static/favicon.ico")
@@ -892,15 +971,6 @@ async def edit_image(
     output_compression: int | None = Form(None),
     response_format: str | None = Form(None),
 ):
-    api_url: str = getattr(app.state, "api_url", "")
-    api_key: str = getattr(app.state, "api_key", "")
-    active_preset = get_active_preset()
-    api_preset_name = active_preset.get("name") or "Untitled preset"
-
-    if not api_url:
-        raise HTTPException(status_code=400, detail="API URL not configured. Please set it in Settings.")
-    if not api_key:
-        raise HTTPException(status_code=400, detail="API Key not configured. Please set it in Settings.")
     if not is_image_upload(image):
         raise HTTPException(status_code=400, detail="Upload must be an image file.")
 
@@ -913,49 +983,80 @@ async def edit_image(
             detail=f"Uploaded image is too large. Max size is {config.MAX_FILE_SIZE_MB} MB.",
         )
 
+    req = build_edit_request_from_form(
+        prompt=prompt,
+        size=size,
+        model=model,
+        n=n,
+        quality=quality,
+        output_format=output_format,
+        output_compression=output_compression,
+        response_format=response_format,
+    )
+    return queue_edit_job(
+        req=req,
+        image_bytes=image_bytes,
+        image_filename=image.filename or "image.png",
+        image_content_type=get_upload_image_content_type(image),
+    )
+
+
+@app.post(
+    "/api/edits/from-gallery/{image_id}",
+    response_model=GenerateJobResponse,
+    status_code=202,
+)
+async def edit_image_from_gallery(
+    image_id: str,
+    prompt: str = Form(...),
+    size: str = Form("1024x1024"),
+    model: str = Form("gpt-image-2"),
+    n: int = Form(1),
+    quality: str = Form("auto"),
+    output_format: str = Form("png"),
+    output_compression: int | None = Form(None),
+    response_format: str | None = Form(None),
+):
+    entry = storage.get_gallery_entry(image_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Gallery entry not found")
+
+    path = storage.get_image_path(entry.filename)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Gallery image file not found")
+
     try:
-        req = EditRequest(
-            prompt=prompt,
-            size=size,
-            model=model,
-            n=n,
-            quality=quality,
-            output_format=output_format,
-            output_compression=output_compression,
-            response_format=response_format,
+        image_bytes = await asyncio.to_thread(path.read_bytes)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail="Failed to read gallery image") from e
+
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="Gallery image is empty")
+    if len(image_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Gallery image is too large. Max size is {config.MAX_FILE_SIZE_MB} MB.",
         )
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e)) from e
 
-    job_id = str(uuid.uuid4())
-    app.state.generate_jobs[job_id] = build_pending_job(
-        job_id,
-        req,
-        "edit",
-        "Queued image edit",
+    req = build_edit_request_from_form(
+        prompt=prompt,
+        size=size,
+        model=model,
+        n=n,
+        quality=quality,
+        output_format=output_format,
+        output_compression=output_compression,
+        response_format=response_format,
     )
-    track_generate_job_task(
-        job_id,
-        asyncio.create_task(
-            run_edit_job(
-                job_id,
-                api_url,
-                api_key,
-                api_preset_name,
-                req,
-                image_bytes,
-                image.filename or "image.png",
-                get_upload_image_content_type(image),
-            )
-        ),
+    image_content_type = (
+        mimetypes.guess_type(path.name)[0]
+        or IMAGE_UPLOAD_CONTENT_TYPES.get(path.suffix.lower(), "application/octet-stream")
     )
-
-    return GenerateJobResponse(
-        job_id=job_id,
-        status="queued",
-        stage="queued",
-        message="Queued image edit",
-        operation="edit",
+    return queue_edit_job(
+        req=req,
+        image_bytes=image_bytes,
+        image_filename=path.name,
+        image_content_type=image_content_type,
     )
 
 

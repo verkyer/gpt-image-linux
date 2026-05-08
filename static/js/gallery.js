@@ -219,6 +219,12 @@ export function openLightbox(imageId) {
   if (!image) return;
 
   activeLightboxImage = image;
+  const lightboxEditBtn = document.getElementById('lightboxEditBtn');
+  if (lightboxEditBtn) {
+    lightboxEditBtn.dataset.imageId = image.id || '';
+    lightboxEditBtn.dataset.filename = image.filename || '';
+    lightboxEditBtn.disabled = !image.id;
+  }
   const lightboxImg = document.getElementById('lightboxImg');
   lightboxImg.onload = () => {
     if (activeLightboxImage?.id !== image.id) return;
@@ -257,6 +263,12 @@ export function closeLightbox() {
   document.getElementById('lightboxImg').onerror = null;
   document.getElementById('lightbox').classList.add('hidden');
   document.getElementById('lightboxImg').removeAttribute('src');
+  const lightboxEditBtn = document.getElementById('lightboxEditBtn');
+  if (lightboxEditBtn) {
+    lightboxEditBtn.dataset.imageId = '';
+    lightboxEditBtn.dataset.filename = '';
+    lightboxEditBtn.disabled = true;
+  }
   activeLightboxImage = null;
   document.body.style.overflow = '';
 }
@@ -271,6 +283,7 @@ function renderGalleryCard(img) {
   const shortPrompt = prompt.length > 80 ? prompt.substring(0, 80) + '...' : prompt;
   const escapedImageIdAttr = escapeAttribute(img.id);
   const escapedPromptAttr = escapeAttribute(prompt);
+  const escapedFilenameAttr = escapeAttribute(filename);
   const escapedShortPrompt = escapeHtml(shortPrompt);
 
   return `
@@ -278,7 +291,17 @@ function renderGalleryCard(img) {
       <div class="relative cursor-pointer group" data-image-id="${escapedImageIdAttr}" onclick="openLightbox(this.dataset.imageId)">
         <img src="${imagePath}" alt="${escapedPromptAttr}"
           class="w-full aspect-square object-cover bg-zinc-800" loading="lazy">
-        <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-3">
+        <button type="button"
+          onclick="event.stopPropagation(); prepareGalleryImageForEdit(this.dataset.imageId, this.dataset.filename)"
+          data-image-id="${escapedImageIdAttr}"
+          data-filename="${escapedFilenameAttr}"
+          class="absolute left-2 bottom-2 z-10 p-1.5 rounded-lg bg-zinc-950/80 text-zinc-200 border border-zinc-700/80 hover:text-sky-300 hover:border-sky-400/40 hover:bg-zinc-900 transition-colors"
+          title="Edit this image" aria-label="Edit this image">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L12 14l-4 1 1-4 8.586-8.586z"/>
+          </svg>
+        </button>
+        <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-3 pl-12">
           <span class="text-xs text-white truncate">${escapedShortPrompt}</span>
         </div>
       </div>
