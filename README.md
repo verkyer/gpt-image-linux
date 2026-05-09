@@ -37,10 +37,12 @@ Key characteristics:
 - SSE progress updates for preview state with a polling fallback on stream reconnect failure
 - active job history drawer backed by SSE with selectable cancellation for queued/running generation and edit jobs
 - optional per-job webhook callback (`webhook_url`) with HTTPS validation, SSRF protection, signed delivery, and retry
+- upload or gallery-based edit source selection with clickable source preview
 - gallery with pagination, prompt/model/preset/size/date/favorites filters, favorite toggles, lightbox, per-image "Edit this image" actions, download, export/import ZIP with `metadata.json`, delete, delete all, copy prompt, copy image URL, and total image size display
 - optional site access key with session unlock
 - optional IP allowlist and reverse proxy header support
-- app version badge with GitHub release update detection
+- app version badge with GitHub `VERSION` update detection
+- nonce-based Content Security Policy for the served frontend index
 
 ## Architecture
 
@@ -59,6 +61,8 @@ Responsibilities are split into a few modules:
 - `backend/app/services/` — webhook signing, retry, and async delivery
 
 The compatibility `app/` package re-exports the new backend modules so old imports like `uvicorn app.main:app` still work in local environments where the full repository is present.
+
+When serving the static frontend, the backend injects a per-response script nonce into `frontend/build/index.html` and sends a matching Content Security Policy. Asset and index serving are covered by the backend contract tests.
 
 ### Frontend
 
@@ -103,7 +107,7 @@ Runtime persistent storage is minimal:
 
 ### Edit flow
 
-1. the frontend lets the user upload an image file or choose an existing gallery image via "Edit this image" on cards/lightbox
+1. the frontend lets the user upload an image file or choose an existing gallery image via "Edit this image" on cards/lightbox; the selected source can be previewed before submitting the edit request
 2. the frontend sends current parameters to `/api/edits` (upload flow) or `/api/edits/from-gallery/{image_id}` (gallery flow)
 3. the backend creates a SQLite-backed job and calls upstream `/v1/images/edits`
 4. the source image is forwarded as multipart `image` (from upload bytes or gallery file bytes)
@@ -130,7 +134,6 @@ Runtime persistent storage is minimal:
 ```text
 LICENSE
 README.md
-README_ZH.md
 Dockerfile
 docker-compose.yml
 .env.example
@@ -335,7 +338,7 @@ The panel supports these upstream paths:
 |--------|------|-------------|
 | `GET` | `/` | Frontend UI |
 | `GET` | `/health` | Health check |
-| `GET` | `/api/version` | Current app version and GitHub release metadata |
+| `GET` | `/api/version` | Current app version, configured GitHub repo, and latest-release URL |
 | `GET` | `/api/access/status` | Check access-key session status |
 | `POST` | `/api/access` | Unlock access for 3 hours |
 | `POST` | `/api/settings` | Save the active API preset |
@@ -364,6 +367,7 @@ The panel supports these upstream paths:
 
 - The current app version is read from `APP_VERSION` first, then from the root `VERSION` file.
 - The frontend checks `https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION` on page load and shows a `New` header badge when that version is newer than the current app version.
+- Version comparison ignores a leading `v`, compares numeric version segments, and does not block app startup or usage.
 - If the remote version check fails, the UI keeps showing the current version and continues normally.
 - API presets are persisted to the SQLite database configured by `DATABASE_FILE`.
 - Generation and edit job history is persisted to SQLite with status, stage, error, timing, request parameters, and result metadata.
@@ -387,7 +391,7 @@ npm run frontend:build
 python3 -m pytest backend/tests/test_contract.py -q
 ```
 
-The contract tests cover the frozen public API surface, including access cookies, settings, generation/edit job creation, SSE response framing, gallery import/export, downloads, validation errors, and 500 error shape.
+The contract tests cover the frozen public API surface, including access cookies, settings, generation/edit job creation, SSE response framing, gallery import/export, frontend index/CSP handling, static asset access, downloads, validation errors, and 500 error shape.
 
 ## Contributing
 
@@ -453,9 +457,12 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 - 预览进度通过 SSE 实时推送，流断开时退回轮询兜底
 - 历史任务抽屉通过 SSE 更新正在排队/运行的生成和编辑任务，并支持选择后主动终止
 - 支持每个任务可选 `webhook_url` 回调：仅允许 HTTPS，带 SSRF 防护、签名投递与重试
+- 支持上传图片或选择 Gallery 图片作为编辑源，并可在提交前预览编辑源
 - Gallery：分页、按 prompt/model/preset/尺寸/日期/收藏筛选、收藏切换、Lightbox、卡片/Lightbox 直接 “Edit this image”、生成所用 preset、下载、导出/导入带 `metadata.json` 的 ZIP、删除、全部删除、复制提示词、复制图片链接、耗时
 - 可选站点访问密钥
 - 可选 IP 白名单和反向代理头支持
+- 头部显示当前版本，并可基于 GitHub 仓库 `VERSION` 检测新版本
+- 后端服务前端入口时会注入 nonce，并发送对应的 Content Security Policy
 
 ## 架构
 
@@ -474,6 +481,8 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 - `backend/app/services/` — webhook 签名、重试和异步投递
 
 根目录 `app/` 兼容包会 re-export 新后端模块，所以在完整仓库环境里旧命令 `uvicorn app.main:app` 仍可运行。
+
+后端服务静态前端时，会为 `frontend/build/index.html` 注入每次响应不同的 script nonce，并发送匹配的 Content Security Policy。前端入口和静态资源访问已纳入后端契约测试。
 
 ### 前端
 
@@ -518,7 +527,7 @@ npm --prefix frontend run build
 
 ### 编辑流程
 
-1. 前端支持两种编辑源：上传任意图片文件，或在 Gallery 卡片/Lightbox 点击 “Edit this image”
+1. 前端支持两种编辑源：上传任意图片文件，或在 Gallery 卡片/Lightbox 点击 “Edit this image”；选中后可先预览编辑源
 2. 前端将当前参数发送到 `/api/edits`（上传流）或 `/api/edits/from-gallery/{image_id}`（Gallery 流）
 3. 后端创建持久化到 SQLite 的任务并调用上游 `/v1/images/edits`
 4. 源图片以 multipart `image` 字段转发（来自上传字节或 Gallery 文件字节）
@@ -545,7 +554,6 @@ npm --prefix frontend run build
 ```text
 LICENSE
 README.md
-README_ZH.md
 Dockerfile
 docker-compose.yml
 .env.example
@@ -727,6 +735,8 @@ curl http://localhost:9090/health
 | `DEFAULT_API_KEY` | 空 | 预填 API Key |
 | `DEFAULT_API_PATH` | `/v1/images/generations` | 默认上游路径 |
 | `DEFAULT_RESPONSES_MODEL` | `gpt-5.4` | 调用 `/v1/responses` 时使用的顶层模型 |
+| `APP_VERSION` | `VERSION` 文件 | 覆盖界面显示和 `/api/version` 返回的当前应用版本 |
+| `GITHUB_REPO` | `Z1rconium/gpt-image-linux` | 用于检测新版本的 GitHub `owner/repo`；设为空可禁用最新版本检查 |
 | `ACCESS_KEY` | 空 | 默认要求设置；设置后每个非健康路由均需解锁 |
 | `ALLOW_UNAUTHENTICATED` | `false` | 设置为 `true` 可显式允许在未设置 `ACCESS_KEY` 时启动 |
 | `IP_ALLOWLIST` | 空 | 允许访问的 IP/CIDR，逗号分隔 |
@@ -737,6 +747,10 @@ curl http://localhost:9090/health
 | `DATABASE_FILE` | `./data/app.sqlite3` | 保存 Gallery 元数据和 API 预设的 SQLite 数据库 |
 | `PYTHON_BASE_IMAGE` | `python:3.11-slim` | Docker 构建基础镜像；Docker Hub 慢或不可访问时可覆盖 |
 | `NODE_BASE_IMAGE` | `node:24-alpine` | Docker 前端构建基础镜像；Docker Hub 慢或不可访问时可覆盖 |
+| `WEBHOOK_SIGNING_SECRET` | 空 | 使用 `webhook_url` 时需要；用于签名 webhook payload（`X-Webhook-Signature`） |
+| `WEBHOOK_HOST_ALLOWLIST` | 空 | 可选 webhook 主机名白名单，逗号分隔 |
+| `WEBHOOK_TIMEOUT_SECONDS` | `5` | 单次 webhook 投递超时时间（秒） |
+| `WEBHOOK_MAX_ATTEMPTS` | `3` | webhook 最大重试次数 |
 
 ## 接口列表
 
@@ -744,6 +758,7 @@ curl http://localhost:9090/health
 |------|------|------|
 | `GET` | `/` | 前端页面 |
 | `GET` | `/health` | 健康检查 |
+| `GET` | `/api/version` | 当前应用版本、配置的 GitHub 仓库和 latest release URL |
 | `GET` | `/api/access/status` | 访问密钥会话状态 |
 | `POST` | `/api/access` | 解锁访问 3 小时 |
 | `POST` | `/api/settings` | 保存当前 API 预设 |
@@ -770,8 +785,12 @@ curl http://localhost:9090/health
 
 ## 运行时注意事项
 
+- 当前应用版本优先读取 `APP_VERSION`，其次读取根目录 `VERSION` 文件。
+- 前端页面加载时会请求 `https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION`，当远端版本高于当前版本时在头部版本 badge 上显示 `New`。
+- 版本比较会忽略开头的 `v`，按数字版本段比较；远端检查失败不会阻塞启动或使用。
 - API 预设持久化保存在 `DATABASE_FILE` 指向的 SQLite 数据库。
 - 生成/编辑任务历史持久化保存在 SQLite，包含状态、阶段、错误、耗时、请求参数和结果元数据。
+- `/api/generate`、`/api/edits` 和 `/api/edits/from-gallery/{image_id}` 接受可选 `webhook_url`；回调使用异步重试，配置 `WEBHOOK_SIGNING_SECRET` 时会签名请求。
 - 如果数据库中没有 preset，默认预设会使用 `DEFAULT_API_URL`、`DEFAULT_API_KEY` 和 `DEFAULT_API_PATH` 初始化。
 - API Key 在界面中掩码展示，但会以明文保存到 SQLite。
 - 旧的 `data/settings.json` 和 `data/gallery.json` 会在对应数据库表为空时导入一次。
@@ -791,7 +810,7 @@ npm run frontend:build
 python3 -m pytest backend/tests/test_contract.py -q
 ```
 
-契约测试覆盖冻结的公共 API 表面，包括访问 cookie、settings、generation/edit 任务创建、SSE 响应 framing、Gallery import/export、下载、422 校验错误和 500 错误形状。
+契约测试覆盖冻结的公共 API 表面，包括访问 cookie、settings、generation/edit 任务创建、SSE 响应 framing、Gallery import/export、前端入口/CSP 处理、静态资源访问、下载、422 校验错误和 500 错误形状。
 
 ## 贡献
 
@@ -800,6 +819,7 @@ python3 -m pytest backend/tests/test_contract.py -q
 建议遵循以下原则：
 
 - 后端修改尽量保持简单和明确
+- 用户可见变更或值得发布的修复应同步更新 `VERSION`，格式为 `vMAJOR.MINOR.PATCH`
 - 尽量使用 `backend/app/schemas/` 中的 FastAPI 响应模型
 - 持久化存储操作集中在 `backend/app/repositories/`
 - 上游 API 调用集中在 `backend/app/integrations/`
