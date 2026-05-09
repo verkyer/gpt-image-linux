@@ -363,8 +363,8 @@ The panel supports these upstream paths:
 ## Runtime behavior notes
 
 - The current app version is read from `APP_VERSION` first, then from the root `VERSION` file.
-- The frontend checks `https://api.github.com/repos/{GITHUB_REPO}/releases/latest` on page load and shows a header badge when a newer release exists.
-- GitHub release checks are cached in browser `localStorage` for 6 hours to avoid rate limits. If the check fails, the UI keeps showing the current version and continues normally.
+- The frontend checks `https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION` on page load and shows a `New` header badge when that version is newer than the current app version.
+- If the remote version check fails, the UI keeps showing the current version and continues normally.
 - API presets are persisted to the SQLite database configured by `DATABASE_FILE`.
 - Generation and edit job history is persisted to SQLite with status, stage, error, timing, request parameters, and result metadata.
 - `/api/generate`, `/api/edits`, and `/api/edits/from-gallery/{image_id}` accept optional `webhook_url`; callback delivery uses async retries and request signing when `WEBHOOK_SIGNING_SECRET` is configured.

@@ -29,8 +29,11 @@
   import { copyText, filenameFromImageUrl, imageUrl } from '$lib/utils/format';
 
   const ACTIVE_STATUSES = new Set(['queued', 'running']);
+  const VERSION_BRANCH = 'main';
 
   let version = '';
+  let latestVersion = '';
+  let versionHasUpdate = false;
   let releaseUrl: string | null = null;
   let accessVisible = true;
   let accessLoading = false;
@@ -117,13 +120,71 @@
 
   async function loadVersion() {
     try {
-      const data = await apiFetch<{ version: string; release_url: string | null }>('/api/version', {}, 'loading version');
+      const data = await apiFetch<{ version: string; github_repo?: string; release_url: string | null }>(
+        '/api/version',
+        {},
+        'loading version'
+      );
       version = data.version;
       releaseUrl = data.release_url;
+      latestVersion = '';
+      versionHasUpdate = false;
+
+      try {
+        const latest = await fetchLatestVersion(data.github_repo);
+        latestVersion = latest;
+        versionHasUpdate = compareVersions(latest, version) > 0;
+      } catch {
+        latestVersion = '';
+        versionHasUpdate = false;
+      }
     } catch {
       version = '';
+      latestVersion = '';
+      versionHasUpdate = false;
       releaseUrl = null;
     }
+  }
+
+  async function fetchLatestVersion(githubRepo?: string) {
+    if (!githubRepo) {
+      return '';
+    }
+
+    const url = `https://raw.githubusercontent.com/${githubRepo}/${VERSION_BRANCH}/VERSION`;
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) {
+      throw new Error(`Version check failed: ${res.status}`);
+    }
+    return normalizeVersion(await res.text());
+  }
+
+  function compareVersions(a: string, b: string) {
+    const left = versionParts(a);
+    const right = versionParts(b);
+    const length = Math.max(left.length, right.length);
+
+    for (let i = 0; i < length; i += 1) {
+      const l = left[i] || 0;
+      const r = right[i] || 0;
+      if (l > r) return 1;
+      if (l < r) return -1;
+    }
+
+    return 0;
+  }
+
+  function versionParts(value: string) {
+    return normalizeVersion(value)
+      .split('.')
+      .map((part) => Number.parseInt(part, 10))
+      .map((part) => (Number.isFinite(part) ? part : 0));
+  }
+
+  function normalizeVersion(value: string) {
+    return String(value || '')
+      .trim()
+      .replace(/^v/i, '');
   }
 
   async function checkAccess() {
@@ -693,7 +754,15 @@
 </svelte:head>
 
 <AccessGate visible={accessVisible} error={accessError} loading={accessLoading} onUnlock={unlockAccess} />
-<Header {version} {releaseUrl} {activeJobsCount} onOpenJobs={() => (jobsOpen = true)} onOpenSettings={() => (settingsOpen = true)} />
+<Header
+  {version}
+  {latestVersion}
+  hasVersionUpdate={versionHasUpdate}
+  {releaseUrl}
+  {activeJobsCount}
+  onOpenJobs={() => (jobsOpen = true)}
+  onOpenSettings={() => (settingsOpen = true)}
+/>
 
 <SettingsDrawer
   open={settingsOpen}

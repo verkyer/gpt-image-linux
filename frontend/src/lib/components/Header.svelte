@@ -1,9 +1,15 @@
 <script lang="ts">
   export let activeJobsCount = 0;
   export let version = '';
+  export let latestVersion = '';
+  export let hasVersionUpdate = false;
   export let releaseUrl: string | null = null;
   export let onOpenJobs: () => void = () => {};
   export let onOpenSettings: () => void = () => {};
+
+  $: versionTitle = hasVersionUpdate
+    ? `Current ${version}. Latest v${latestVersion}.`
+    : `Current ${version}`;
 </script>
 
 <header class="sticky top-0 z-40 border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-md">
@@ -20,9 +26,15 @@
               href={releaseUrl || undefined}
               target="_blank"
               rel="noreferrer"
-              class="rounded-md border border-zinc-700 px-2 py-0.5 text-[11px] font-semibold leading-5 text-zinc-400 transition-colors hover:text-zinc-100"
+              title={versionTitle}
+              class={hasVersionUpdate
+                ? 'inline-flex items-center rounded-md border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-[11px] font-semibold leading-5 text-amber-200 transition-colors hover:border-amber-300/70 hover:bg-amber-400/15'
+                : 'rounded-md border border-zinc-700 px-2 py-0.5 text-[11px] font-semibold leading-5 text-zinc-400 transition-colors hover:text-zinc-100'}
             >
               {version}
+              {#if hasVersionUpdate}
+                <span class="ml-1 rounded bg-amber-400/20 px-1 py-px text-[10px] text-amber-300">New</span>
+              {/if}
             </a>
           {/if}
         </div>
