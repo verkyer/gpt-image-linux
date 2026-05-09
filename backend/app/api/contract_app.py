@@ -1,5 +1,4 @@
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from contextlib import asynccontextmanager
 import asyncio
@@ -139,9 +138,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="GPT Image Panel", lifespan=lifespan)
 FRONTEND_BUILD_DIR = config.PROJECT_ROOT / "frontend" / "build"
-LEGACY_STATIC_DIR = config.PROJECT_ROOT / "static"
-if LEGACY_STATIC_DIR.exists():
-    app.mount("/static", StaticFiles(directory=str(LEGACY_STATIC_DIR)), name="static")
 
 MAX_GENERATE_JOBS = 100
 MAX_UPLOAD_BYTES = config.MAX_FILE_SIZE_MB * 1024 * 1024
@@ -183,9 +179,9 @@ AUTH_EXEMPT_PATHS = {
     "/favicon.ico",
     "/health",
 }
-AUTH_EXEMPT_PREFIXES = ("/static/", "/_app/")
-NO_CACHE_PATHS = {"/", "/static/index.html"}
-NO_CACHE_PREFIXES = ("/static/js/",)
+AUTH_EXEMPT_PREFIXES = ("/_app/",)
+NO_CACHE_PATHS = {"/"}
+NO_CACHE_PREFIXES: tuple[str, ...] = ()
 ACTIVE_JOB_STATUSES = {"queued", "running"}
 
 
@@ -855,7 +851,7 @@ async def favicon():
     frontend_favicon = FRONTEND_BUILD_DIR / "favicon.ico"
     if frontend_favicon.exists():
         return FileResponse(frontend_favicon)
-    return FileResponse(LEGACY_STATIC_DIR / "favicon.ico")
+    raise HTTPException(status_code=404, detail="Frontend favicon not found")
 
 
 @app.get("/")
@@ -863,7 +859,10 @@ async def index():
     frontend_index = FRONTEND_BUILD_DIR / "index.html"
     if frontend_index.exists():
         return frontend_index_response(frontend_index)
-    return frontend_index_response(LEGACY_STATIC_DIR / "index.html")
+    raise HTTPException(
+        status_code=500,
+        detail="Frontend build not found. Run `npm --prefix frontend run build`.",
+    )
 
 
 @app.get("/health")

@@ -63,6 +63,7 @@ The compatibility `app/` package re-exports the new backend modules so old impor
 ### Frontend
 
 The frontend is a SvelteKit static application in `frontend/`.
+The backend serves only `frontend/build`; run a frontend build before starting the production backend.
 
 It uses:
 
@@ -477,6 +478,7 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 ### 前端
 
 前端是 SvelteKit 静态应用，位于 `frontend/`。
+后端只服务 `frontend/build`；生产方式启动后端前需要先完成前端构建。
 
 使用技术：
 

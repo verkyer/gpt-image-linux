@@ -61,6 +61,10 @@
   let editFile: File | null = null;
   let selectedGalleryImageId = '';
   let editLabel = '';
+  let editPreviewOpen = false;
+  let editPreviewUrl = '';
+  let editPreviewLabel = '';
+  let editPreviewObjectUrl = '';
   let editInput: HTMLInputElement;
   let promptLen = 0;
 
@@ -537,6 +541,7 @@
     if (!confirm('Delete this image from gallery?')) return;
     await apiFetch(`/api/gallery/${encodeURIComponent(image.id)}`, { method: 'DELETE' }, 'deleting image');
     if (lightboxImage?.id === image.id) lightboxImage = null;
+    if (selectedGalleryImageId === image.id) clearEditSource();
     await loadGallery(galleryPage);
     showToast('Image deleted');
   }
@@ -545,6 +550,7 @@
     if (!confirm('This permanently deletes every gallery image stored on the server. Continue?')) return;
     await apiFetch('/api/gallery', { method: 'DELETE' }, 'deleting all images');
     lightboxImage = null;
+    clearEditSource();
     clearPreview();
     await loadGallery(1);
     showToast('All server images deleted');
@@ -569,6 +575,7 @@
     editFile = null;
     selectedGalleryImageId = image.id;
     editLabel = `Gallery: ${image.filename}`;
+    setEditPreview(imageUrl(image.filename), editLabel);
     if (editInput) editInput.value = '';
     lightboxImage = null;
     showToast('Gallery image ready for edits');
@@ -578,23 +585,57 @@
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0] || null;
     if (!file) {
-      editFile = null;
-      selectedGalleryImageId = '';
-      editLabel = '';
+      clearEditSource();
       return;
     }
-    if (!file.type.startsWith('image/')) {
+    if (!isImageFile(file)) {
       input.value = '';
+      clearEditSource();
       setPreviewError('Please upload an image file');
       return;
     }
     editFile = file;
     selectedGalleryImageId = '';
     editLabel = file.name;
+    const objectUrl = URL.createObjectURL(file);
+    setEditPreview(objectUrl, file.name, objectUrl);
   }
 
   function openEditPicker() {
     editInput?.click();
+  }
+
+  function setEditPreview(url: string, label: string, objectUrl = '') {
+    revokeEditPreviewObjectUrl();
+    editPreviewUrl = url;
+    editPreviewLabel = label;
+    editPreviewObjectUrl = objectUrl;
+  }
+
+  function revokeEditPreviewObjectUrl() {
+    if (!editPreviewObjectUrl) return;
+    URL.revokeObjectURL(editPreviewObjectUrl);
+    editPreviewObjectUrl = '';
+  }
+
+  function clearEditSource() {
+    editFile = null;
+    selectedGalleryImageId = '';
+    editLabel = '';
+    editPreviewOpen = false;
+    editPreviewUrl = '';
+    editPreviewLabel = '';
+    revokeEditPreviewObjectUrl();
+    if (editInput) editInput.value = '';
+  }
+
+  function openEditPreview() {
+    if (editPreviewUrl) editPreviewOpen = true;
+  }
+
+  function isImageFile(file: File) {
+    if (file.type.startsWith('image/')) return true;
+    return /\.(avif|bmp|gif|heic|heif|ico|jpe?g|png|svg|tiff?|webp)$/i.test(file.name);
   }
 
   async function copyPrompt(image: GalleryEntry) {
@@ -628,7 +669,8 @@
 
     const keydown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
-      if (lightboxImage) lightboxImage = null;
+      if (editPreviewOpen) editPreviewOpen = false;
+      else if (lightboxImage) lightboxImage = null;
       else if (sizeDialogOpen) sizeDialogOpen = false;
       else if (jobsOpen) jobsOpen = false;
       else if (settingsOpen) settingsOpen = false;
@@ -641,6 +683,7 @@
       if (jobsPollingTimer) clearInterval(jobsPollingTimer);
       if (galleryFilterTimer) clearTimeout(galleryFilterTimer);
       if (toastTimer) clearTimeout(toastTimer);
+      revokeEditPreviewObjectUrl();
     };
   });
 </script>
@@ -770,7 +813,14 @@
           Upload edit image
         </button>
         {#if editLabel}
-          <span class="ml-3 inline-block max-w-[260px] truncate align-middle text-xs text-zinc-500">{editLabel}</span>
+          <button
+            type="button"
+            class="ml-3 inline-block max-w-[260px] truncate align-middle text-left text-xs font-medium text-emerald-300 underline decoration-emerald-500/40 underline-offset-4 hover:text-emerald-200"
+            title={`Preview ${editLabel}`}
+            on:click={openEditPreview}
+          >
+            {editLabel}
+          </button>
         {/if}
       </div>
       <div class="flex gap-2">
@@ -821,5 +871,23 @@
   onCopyPrompt={copyPrompt}
   onCopyUrl={copyImageUrl}
 />
+
+{#if editPreviewOpen && editPreviewUrl}
+  <div class="fixed inset-0 z-[75] flex items-center justify-center bg-black/75 p-4">
+    <button class="absolute inset-0" type="button" aria-label="Close edit image preview" on:click={() => (editPreviewOpen = false)}></button>
+    <div class="relative flex max-h-[calc(100vh-32px)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 shadow-2xl">
+      <div class="flex items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
+        <div class="min-w-0">
+          <h2 class="text-sm font-semibold text-zinc-100">Edit Source Preview</h2>
+          <p class="mt-1 truncate text-xs text-zinc-500">{editPreviewLabel}</p>
+        </div>
+        <button type="button" class="rounded-lg px-2 py-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" on:click={() => (editPreviewOpen = false)}>x</button>
+      </div>
+      <div class="flex min-h-0 flex-1 items-center justify-center bg-zinc-950 p-4">
+        <img src={editPreviewUrl} alt={editPreviewLabel} class="max-h-[calc(100vh-140px)] max-w-full rounded-lg object-contain" />
+      </div>
+    </div>
+  </div>
+{/if}
 
 <SizeDialog open={sizeDialogOpen} value={size} onApply={(nextSize) => (size = nextSize)} onClose={() => (sizeDialogOpen = false)} />
