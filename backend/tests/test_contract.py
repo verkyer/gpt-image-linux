@@ -1,7 +1,9 @@
+import asyncio
 import base64
 import io
 import json
 import re
+import threading
 import time
 import zipfile
 from pathlib import Path
@@ -50,6 +52,13 @@ def _configure_runtime(tmp_path: Path, *, access_key: str = "", allow_unauthenti
     config.WEBHOOK_TIMEOUT_SECONDS = 1
     config.WEBHOOK_MAX_ATTEMPTS = 1
     config.MAX_FILE_SIZE_MB = 50
+    config.IMPORT_ARCHIVE_MAX_MB = config.MAX_FILE_SIZE_MB * 20
+    config.IMPORT_MAX_FILES = 500
+    config.IMPORT_MAX_UNCOMPRESSED_MB = 1024
+    config.IMPORT_MAX_METADATA_BYTES = 2 * 1024 * 1024
+    config.IMPORT_MAX_COMPRESSION_RATIO = 100
+    config.MAX_ACTIVE_GENERATE_JOBS = 2
+    config.MAX_QUEUED_GENERATE_JOBS = 20
 
     storage._db_initialized = False
     backend_main.app.state._state.clear()
@@ -92,6 +101,50 @@ def _fake_gallery_entry(image_id: str, prompt: str, size: str, filename: str):
         image_bytes=PNG_BYTES,
     )
     return storage.get_gallery_entry(image_id)
+
+
+DEFAULT_IMPORT_METADATA = object()
+
+
+def _import_archive_bytes(
+    *,
+    metadata: dict | object | None = DEFAULT_IMPORT_METADATA,
+    image_name: str = "images/import-1.png",
+    image_bytes: bytes = PNG_BYTES,
+    compression: int = zipfile.ZIP_DEFLATED,
+    extra_files: int = 0,
+) -> bytes:
+    if metadata is DEFAULT_IMPORT_METADATA:
+        metadata = {
+            "schema_version": 1,
+            "exported_at": "2026-01-01T00:00:00Z",
+            "app": {"name": "gpt-image-linux", "version": "v0.0.0"},
+            "images": [
+                {
+                    "id": "import-1",
+                    "prompt": "imported",
+                    "size": "1024x1024",
+                    "filename": image_name,
+                    "created_at": "2026-01-01T00:00:00Z",
+                }
+            ],
+        }
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression) as zf:
+        if metadata is not None:
+            zf.writestr("metadata.json", json.dumps(metadata))
+        zf.writestr(image_name, image_bytes)
+        for index in range(extra_files):
+            zf.writestr(f"extra/{index}.txt", "x")
+    return buf.getvalue()
+
+
+def _post_import_archive(client: TestClient, archive_bytes: bytes):
+    return client.post(
+        "/api/import",
+        files={"archive": ("archive.zip", archive_bytes, "application/zip")},
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -400,32 +453,264 @@ def test_gallery_image_download_and_zip(client):
 
 
 def test_import_archive(client):
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("metadata.json", json.dumps({
-            "schema_version": 1,
-            "exported_at": "2026-01-01T00:00:00Z",
-            "app": {"name": "gpt-image-linux", "version": "v0.0.0"},
-            "images": [
-                {
-                    "id": "import-1",
-                    "prompt": "imported",
-                    "size": "1024x1024",
-                    "filename": "images/import-1.png",
-                    "created_at": "2026-01-01T00:00:00Z",
-                }
-            ],
-        }))
-        zf.writestr("images/import-1.png", PNG_BYTES)
-
-    buf.seek(0)
-    resp = client.post(
-        "/api/import",
-        files={"archive": ("archive.zip", buf.getvalue(), "application/zip")},
-    )
+    resp = _post_import_archive(client, _import_archive_bytes())
     assert resp.status_code == 200
     assert resp.json()["status"] == "success"
     assert resp.json()["imported"] == 1
+
+
+@pytest.mark.parametrize(
+    ("archive_bytes", "expected_detail", "config_updates"),
+    [
+        (
+            lambda: _import_archive_bytes(metadata=None),
+            "metadata.json is required",
+            {},
+        ),
+        (
+            lambda: _import_archive_bytes(extra_files=2),
+            "Import archive contains too many files",
+            {"IMPORT_MAX_FILES": 2},
+        ),
+        (
+            lambda: _import_archive_bytes(image_bytes=b"x" * 2048),
+            "Imported image is too large",
+            {"MAX_FILE_SIZE_MB": 0},
+        ),
+        (
+            lambda: _import_archive_bytes(image_name="../evil.png"),
+            "Import archive contains unsafe paths",
+            {},
+        ),
+        (
+            lambda: _import_archive_bytes(image_name="/evil.png"),
+            "Import archive contains unsafe paths",
+            {},
+        ),
+        (
+            lambda: _import_archive_bytes(image_name="images\\evil.png"),
+            "Import archive contains unsafe paths",
+            {},
+        ),
+        (
+            lambda: _import_archive_bytes(
+                image_name="images/import-1.svg",
+                image_bytes=b"<svg></svg>",
+            ),
+            "No importable images found",
+            {},
+        ),
+    ],
+)
+def test_import_archive_rejects_invalid_content(
+    client,
+    archive_bytes,
+    expected_detail,
+    config_updates,
+):
+    for name, value in config_updates.items():
+        setattr(config, name, value)
+
+    resp = _post_import_archive(client, archive_bytes())
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == expected_detail
+
+
+def test_import_archive_rejects_uncompressed_size_limit(client):
+    config.IMPORT_MAX_UNCOMPRESSED_MB = 0
+
+    resp = _post_import_archive(client, _import_archive_bytes())
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Import archive uncompressed size exceeds limit"
+
+
+def test_import_archive_rejects_large_metadata(client):
+    config.IMPORT_MAX_METADATA_BYTES = 10
+
+    resp = _post_import_archive(client, _import_archive_bytes())
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "metadata.json is too large"
+
+
+def test_import_archive_rejects_uploaded_archive_size_limit(client):
+    config.IMPORT_ARCHIVE_MAX_MB = 0
+
+    resp = _post_import_archive(client, _import_archive_bytes())
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Uploaded archive is too large"
+
+
+def test_import_archive_rejects_high_compression_ratio(client):
+    config.IMPORT_MAX_COMPRESSION_RATIO = 1
+
+    resp = _post_import_archive(client, _import_archive_bytes(image_bytes=b"0" * 1024))
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Import archive compression ratio exceeds limit"
+
+
+def test_upload_rejects_svg(client):
+    resp = client.post(
+        "/api/edits",
+        data={
+            "prompt": "no svg",
+            "model": "gpt-image-2",
+            "n": 1,
+            "quality": "auto",
+            "output_format": "png",
+        },
+        files={"image": ("input.svg", b"<svg></svg>", "image/svg+xml")},
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Upload must be an image file."
+
+
+def test_generate_queue_capacity_and_concurrency_limit(tmp_path, monkeypatch):
+    _configure_runtime(tmp_path)
+    config.MAX_ACTIVE_GENERATE_JOBS = 1
+    config.MAX_QUEUED_GENERATE_JOBS = 1
+    active_calls = 0
+    max_active_calls = 0
+    release_event = threading.Event()
+
+    async def blocking_generation_api(*args, **kwargs):
+        nonlocal active_calls, max_active_calls
+        active_calls += 1
+        max_active_calls = max(max_active_calls, active_calls)
+        try:
+            await asyncio.to_thread(release_event.wait)
+        finally:
+            active_calls -= 1
+        payload = args[3]
+        api_path = args[2]
+        api_preset_name = args[4]
+        image_id = storage.generate_image_id()
+        filename = f"{image_id}.png"
+        entry = await storage.add_to_gallery_async(
+            image_bytes=PNG_BYTES,
+            image_id=image_id,
+            prompt=payload.prompt,
+            size=payload.size,
+            filename=filename,
+            metadata={
+                "model": payload.model,
+                "quality": payload.quality,
+                "output_format": payload.output_format,
+                "output_compression": payload.output_compression,
+                "response_format": payload.response_format,
+                "n": payload.n,
+                "api_path": api_path,
+                "api_preset_name": api_preset_name,
+            },
+        )
+        return [entry]
+
+    monkeypatch.setattr(backend_main.proxy, "call_image_generation_api", blocking_generation_api)
+
+    with TestClient(backend_main.app) as client:
+        first = client.post(
+            "/api/generate",
+            json={"prompt": "one", "model": "gpt-image-2"},
+        )
+        second = client.post(
+            "/api/generate",
+            json={"prompt": "two", "model": "gpt-image-2"},
+        )
+        third = client.post(
+            "/api/generate",
+            json={"prompt": "three", "model": "gpt-image-2"},
+        )
+
+        assert first.status_code == 202
+        assert second.status_code == 202
+        assert third.status_code == 429
+        assert third.json()["detail"] == "Generation job queue is full"
+
+        release_event.set()
+        assert _wait_for_job(client, first.json()["job_id"])["status"] == "success"
+        assert _wait_for_job(client, second.json()["job_id"])["status"] == "success"
+
+    assert max_active_calls == 1
+
+
+def test_edit_jobs_share_queue_capacity(tmp_path, monkeypatch):
+    _configure_runtime(tmp_path)
+    config.MAX_ACTIVE_GENERATE_JOBS = 1
+    config.MAX_QUEUED_GENERATE_JOBS = 1
+    release_event = threading.Event()
+
+    async def blocking_generation_api(*args, **kwargs):
+        await asyncio.to_thread(release_event.wait)
+        payload = args[3]
+        image_id = storage.generate_image_id()
+        filename = f"{image_id}.png"
+        entry = await storage.add_to_gallery_async(
+            image_bytes=PNG_BYTES,
+            image_id=image_id,
+            prompt=payload.prompt,
+            size=payload.size,
+            filename=filename,
+            metadata={"api_path": args[2], "api_preset_name": args[4]},
+        )
+        return [entry]
+
+    async def blocking_edit_api(*args, **kwargs):
+        await asyncio.to_thread(release_event.wait)
+        payload = args[2]
+        image_id = storage.generate_image_id()
+        filename = f"{image_id}.png"
+        entry = await storage.add_to_gallery_async(
+            image_bytes=PNG_BYTES,
+            image_id=image_id,
+            prompt=payload.prompt,
+            size=payload.size,
+            filename=filename,
+            metadata={"api_path": "/v1/images/edits", "api_preset_name": args[6]},
+        )
+        return [entry]
+
+    monkeypatch.setattr(backend_main.proxy, "call_image_generation_api", blocking_generation_api)
+    monkeypatch.setattr(backend_main.proxy, "call_image_edit_api", blocking_edit_api)
+
+    with TestClient(backend_main.app) as client:
+        generate = client.post(
+            "/api/generate",
+            json={"prompt": "one", "model": "gpt-image-2"},
+        )
+        edit = client.post(
+            "/api/edits",
+            data={
+                "prompt": "two",
+                "model": "gpt-image-2",
+                "n": 1,
+                "quality": "auto",
+                "output_format": "png",
+            },
+            files={"image": ("input.png", PNG_BYTES, "image/png")},
+        )
+        overflow = client.post(
+            "/api/edits",
+            data={
+                "prompt": "three",
+                "model": "gpt-image-2",
+                "n": 1,
+                "quality": "auto",
+                "output_format": "png",
+            },
+            files={"image": ("input.png", PNG_BYTES, "image/png")},
+        )
+
+        assert generate.status_code == 202
+        assert edit.status_code == 202
+        assert overflow.status_code == 429
+        release_event.set()
+        assert _wait_for_job(client, generate.json()["job_id"])["status"] == "success"
+        assert _wait_for_job(client, edit.json()["job_id"])["status"] == "success"
 
 
 def test_validation_422_and_global_500(tmp_path, monkeypatch):

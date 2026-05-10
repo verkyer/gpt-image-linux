@@ -13,7 +13,7 @@ import secrets
 import time
 import uuid
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from datetime import datetime, timezone
 
 from ..core import settings as config
@@ -122,6 +122,7 @@ async def lifespan(app: FastAPI):
     load_api_settings()
     app.state.generate_jobs = {}
     app.state.generate_job_tasks = {}
+    app.state.generate_job_semaphore = asyncio.Semaphore(config.MAX_ACTIVE_GENERATE_JOBS)
     app.state.generate_job_subscribers = {}
     app.state.generate_jobs_subscribers = set()
     app.state.generate_job_webhooks = {}
@@ -140,7 +141,20 @@ app = FastAPI(title="GPT Image Panel", lifespan=lifespan)
 FRONTEND_BUILD_DIR = config.PROJECT_ROOT / "frontend" / "build"
 
 MAX_GENERATE_JOBS = 100
-MAX_UPLOAD_BYTES = config.MAX_FILE_SIZE_MB * 1024 * 1024
+
+
+def max_upload_bytes() -> int:
+    return config.MAX_FILE_SIZE_MB * 1024 * 1024
+
+
+def import_archive_max_bytes() -> int:
+    return config.IMPORT_ARCHIVE_MAX_MB * 1024 * 1024
+
+
+def import_max_uncompressed_bytes() -> int:
+    return config.IMPORT_MAX_UNCOMPRESSED_MB * 1024 * 1024
+
+
 IMAGE_UPLOAD_EXTENSIONS = {
     ".avif",
     ".bmp",
@@ -151,7 +165,6 @@ IMAGE_UPLOAD_EXTENSIONS = {
     ".jpg",
     ".jpeg",
     ".png",
-    ".svg",
     ".tif",
     ".tiff",
     ".webp",
@@ -166,7 +179,6 @@ IMAGE_UPLOAD_CONTENT_TYPES = {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
     ".png": "image/png",
-    ".svg": "image/svg+xml",
     ".tif": "image/tiff",
     ".tiff": "image/tiff",
     ".webp": "image/webp",
@@ -494,6 +506,65 @@ def sanitize_import_filename(filename: str, fallback_ext: str = ".png") -> str:
     return f"{safe_stem or uuid.uuid4().hex}{suffix}"
 
 
+def is_safe_zip_member_name(filename: str) -> bool:
+    if "\\" in filename:
+        return False
+    path = PurePosixPath(filename)
+    return bool(
+        filename
+        and not path.is_absolute()
+        and not re.match(r"^[A-Za-z]:/", filename)
+        and all(part not in {"", ".", ".."} for part in path.parts)
+    )
+
+
+def validate_import_zip_infos(zf: zipfile.ZipFile) -> set[str]:
+    file_infos = [info for info in zf.infolist() if not info.is_dir()]
+    if len(file_infos) > config.IMPORT_MAX_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail="Import archive contains too many files",
+        )
+
+    names: set[str] = set()
+    total_uncompressed = 0
+    metadata_info: zipfile.ZipInfo | None = None
+    for info in file_infos:
+        if not is_safe_zip_member_name(info.filename):
+            raise HTTPException(status_code=400, detail="Import archive contains unsafe paths")
+        if info.filename == "metadata.json":
+            metadata_info = info
+        elif Path(info.filename).suffix.lower() in IMAGE_UPLOAD_EXTENSIONS:
+            if info.file_size > max_upload_bytes():
+                raise HTTPException(status_code=400, detail="Imported image is too large")
+
+        total_uncompressed += info.file_size
+        if total_uncompressed > import_max_uncompressed_bytes():
+            raise HTTPException(
+                status_code=400,
+                detail="Import archive uncompressed size exceeds limit",
+            )
+        if (
+            info.file_size > 0
+            and (
+                info.compress_size == 0
+                or info.file_size / info.compress_size > config.IMPORT_MAX_COMPRESSION_RATIO
+            )
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Import archive compression ratio exceeds limit",
+            )
+        names.add(info.filename)
+
+    if metadata_info is None:
+        raise HTTPException(status_code=400, detail="metadata.json is required")
+    if metadata_info.file_size > config.IMPORT_MAX_METADATA_BYTES:
+        raise HTTPException(status_code=400, detail="metadata.json is too large")
+
+    return names
+
+
 def build_import_gallery_entries(zip_bytes: bytes) -> list[tuple[bytes, dict]]:
     try:
         zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
@@ -501,6 +572,7 @@ def build_import_gallery_entries(zip_bytes: bytes) -> list[tuple[bytes, dict]]:
         raise HTTPException(status_code=400, detail="Import file must be a valid ZIP") from e
 
     with zf:
+        names = validate_import_zip_infos(zf)
         try:
             metadata = json.loads(zf.read("metadata.json").decode("utf-8"))
         except KeyError as e:
@@ -512,7 +584,6 @@ def build_import_gallery_entries(zip_bytes: bytes) -> list[tuple[bytes, dict]]:
         if not isinstance(raw_images, list):
             raise HTTPException(status_code=400, detail="metadata.json images must be a list")
 
-        names = {info.filename for info in zf.infolist() if not info.is_dir()}
         imports: list[tuple[bytes, dict]] = []
         used_names = set(storage.get_all_filenames())
         used_ids = set(storage.get_all_gallery_ids())
@@ -525,6 +596,8 @@ def build_import_gallery_entries(zip_bytes: bytes) -> list[tuple[bytes, dict]]:
             zip_name = exported_filename if exported_filename in names else f"images/{exported_filename}"
             if zip_name not in names:
                 continue
+            if Path(zip_name).suffix.lower() not in IMAGE_UPLOAD_EXTENSIONS:
+                continue
 
             try:
                 image_bytes = zf.read(zip_name)
@@ -532,10 +605,10 @@ def build_import_gallery_entries(zip_bytes: bytes) -> list[tuple[bytes, dict]]:
                 continue
             if not image_bytes:
                 continue
-            if len(image_bytes) > MAX_UPLOAD_BYTES:
+            if len(image_bytes) > max_upload_bytes():
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Imported image is too large: {exported_filename}",
+                    detail="Imported image is too large",
                 )
 
             original_name = Path(exported_filename or zip_name).name
@@ -664,6 +737,29 @@ def get_generate_job_tasks() -> dict[str, asyncio.Task]:
     return tasks
 
 
+def get_generate_job_semaphore() -> asyncio.Semaphore:
+    semaphore = getattr(app.state, "generate_job_semaphore", None)
+    if semaphore is None:
+        semaphore = asyncio.Semaphore(config.MAX_ACTIVE_GENERATE_JOBS)
+        app.state.generate_job_semaphore = semaphore
+    return semaphore
+
+
+def count_active_jobs() -> int:
+    jobs = getattr(app.state, "generate_jobs", {}) or {}
+    return sum(
+        1
+        for job in jobs.values()
+        if job.get("status") in ACTIVE_JOB_STATUSES
+    )
+
+
+def ensure_job_queue_capacity():
+    capacity = config.MAX_ACTIVE_GENERATE_JOBS + config.MAX_QUEUED_GENERATE_JOBS
+    if count_active_jobs() >= capacity:
+        raise HTTPException(status_code=429, detail="Generation job queue is full")
+
+
 def track_generate_job_task(job_id: str, task: asyncio.Task):
     tasks = get_generate_job_tasks()
     tasks[job_id] = task
@@ -733,14 +829,18 @@ def normalize_api_path(api_path: str) -> str:
 
 
 def is_image_upload(upload: UploadFile) -> bool:
+    suffix = Path(upload.filename or "").suffix.lower()
+    if suffix not in IMAGE_UPLOAD_EXTENSIONS:
+        return False
+
     if upload.content_type and upload.content_type.startswith("image/"):
-        return True
+        return upload.content_type != "image/svg+xml"
 
     guessed_type = mimetypes.guess_type(upload.filename or "")[0]
     if guessed_type and guessed_type.startswith("image/"):
-        return True
+        return guessed_type != "image/svg+xml"
 
-    return Path(upload.filename or "").suffix.lower() in IMAGE_UPLOAD_EXTENSIONS
+    return True
 
 
 def get_upload_image_content_type(upload: UploadFile) -> str:
@@ -807,6 +907,7 @@ def queue_edit_job(
         )
 
     webhook_url = validate_job_webhook_url(req.webhook_url)
+    ensure_job_queue_capacity()
     job_id = str(uuid.uuid4())
     if webhook_url:
         get_generate_job_webhooks()[job_id] = webhook_url
@@ -1037,42 +1138,47 @@ async def run_generate_job(
     req: GenerateRequest,
 ):
     started_at = time.monotonic()
-    store_generate_job(
-        job_id,
-        {
-            "status": "running",
-            "stage": "starting_generation",
-            "message": "Starting image generation",
-            "operation": "generation",
-            "prompt": req.prompt,
-            "size": req.size,
-            "started_at": datetime.now(timezone.utc).isoformat(),
-            "model": req.model,
-            "quality": req.quality,
-            "output_format": req.output_format,
-            "output_compression": req.output_compression,
-            "response_format": req.response_format,
-            "n": req.n,
-            "api_path": api_path,
-            "api_preset_name": api_preset_name,
-        },
-    )
 
     try:
-        entries = await proxy.call_image_generation_api(
-            api_url,
-            api_key,
-            api_path,
-            req,
-            api_preset_name,
-            lambda stage, message: set_generate_job_progress(
+        async with get_generate_job_semaphore():
+            if job_id not in app.state.generate_jobs:
+                logger.info("Image generation skipped after cancellation: job_id=%s", job_id)
+                return
+            started_at = time.monotonic()
+            store_generate_job(
                 job_id,
-                stage,
-                message,
-                "generation",
-            ),
-        )
-        duration = f"{time.monotonic() - started_at:.2f}s"
+                {
+                    "status": "running",
+                    "stage": "starting_generation",
+                    "message": "Starting image generation",
+                    "operation": "generation",
+                    "prompt": req.prompt,
+                    "size": req.size,
+                    "started_at": datetime.now(timezone.utc).isoformat(),
+                    "model": req.model,
+                    "quality": req.quality,
+                    "output_format": req.output_format,
+                    "output_compression": req.output_compression,
+                    "response_format": req.response_format,
+                    "n": req.n,
+                    "api_path": api_path,
+                    "api_preset_name": api_preset_name,
+                },
+            )
+            entries = await proxy.call_image_generation_api(
+                api_url,
+                api_key,
+                api_path,
+                req,
+                api_preset_name,
+                lambda stage, message: set_generate_job_progress(
+                    job_id,
+                    stage,
+                    message,
+                    "generation",
+                ),
+            )
+            duration = f"{time.monotonic() - started_at:.2f}s"
     except asyncio.CancelledError:
         store_generate_job(
             job_id,
@@ -1173,44 +1279,49 @@ async def run_edit_job(
     image_content_type: str,
 ):
     started_at = time.monotonic()
-    store_generate_job(
-        job_id,
-        {
-            "status": "running",
-            "stage": "starting_edit",
-            "message": "Starting image edit",
-            "operation": "edit",
-            "prompt": req.prompt,
-            "size": req.size,
-            "started_at": datetime.now(timezone.utc).isoformat(),
-            "model": req.model,
-            "quality": req.quality,
-            "output_format": req.output_format,
-            "output_compression": req.output_compression,
-            "response_format": req.response_format,
-            "n": req.n,
-            "api_path": "/v1/images/edits",
-            "api_preset_name": api_preset_name,
-        },
-    )
 
     try:
-        entries = await proxy.call_image_edit_api(
-            api_url,
-            api_key,
-            req,
-            image_bytes,
-            image_filename,
-            image_content_type,
-            api_preset_name,
-            lambda stage, message: set_generate_job_progress(
+        async with get_generate_job_semaphore():
+            if job_id not in app.state.generate_jobs:
+                logger.info("Image edit skipped after cancellation: job_id=%s", job_id)
+                return
+            started_at = time.monotonic()
+            store_generate_job(
                 job_id,
-                stage,
-                message,
-                "edit",
-            ),
-        )
-        duration = f"{time.monotonic() - started_at:.2f}s"
+                {
+                    "status": "running",
+                    "stage": "starting_edit",
+                    "message": "Starting image edit",
+                    "operation": "edit",
+                    "prompt": req.prompt,
+                    "size": req.size,
+                    "started_at": datetime.now(timezone.utc).isoformat(),
+                    "model": req.model,
+                    "quality": req.quality,
+                    "output_format": req.output_format,
+                    "output_compression": req.output_compression,
+                    "response_format": req.response_format,
+                    "n": req.n,
+                    "api_path": "/v1/images/edits",
+                    "api_preset_name": api_preset_name,
+                },
+            )
+            entries = await proxy.call_image_edit_api(
+                api_url,
+                api_key,
+                req,
+                image_bytes,
+                image_filename,
+                image_content_type,
+                api_preset_name,
+                lambda stage, message: set_generate_job_progress(
+                    job_id,
+                    stage,
+                    message,
+                    "edit",
+                ),
+            )
+            duration = f"{time.monotonic() - started_at:.2f}s"
     except asyncio.CancelledError:
         store_generate_job(
             job_id,
@@ -1314,6 +1425,7 @@ async def generate(req: GenerateRequest):
         raise HTTPException(status_code=400, detail="API Key not configured. Please set it in Settings.")
 
     webhook_url = validate_job_webhook_url(req.webhook_url)
+    ensure_job_queue_capacity()
     job_id = str(uuid.uuid4())
     if webhook_url:
         get_generate_job_webhooks()[job_id] = webhook_url
@@ -1363,7 +1475,7 @@ async def edit_image(
     image_bytes = await image.read()
     if not image_bytes:
         raise HTTPException(status_code=400, detail="Uploaded image is empty.")
-    if len(image_bytes) > MAX_UPLOAD_BYTES:
+    if len(image_bytes) > max_upload_bytes():
         raise HTTPException(
             status_code=400,
             detail=f"Uploaded image is too large. Max size is {config.MAX_FILE_SIZE_MB} MB.",
@@ -1420,7 +1532,7 @@ async def edit_image_from_gallery(
 
     if not image_bytes:
         raise HTTPException(status_code=400, detail="Gallery image is empty")
-    if len(image_bytes) > MAX_UPLOAD_BYTES:
+    if len(image_bytes) > max_upload_bytes():
         raise HTTPException(
             status_code=400,
             detail=f"Gallery image is too large. Max size is {config.MAX_FILE_SIZE_MB} MB.",
@@ -1703,7 +1815,7 @@ async def import_gallery_archive(archive: UploadFile = File(...)):
     archive_bytes = await archive.read()
     if not archive_bytes:
         raise HTTPException(status_code=400, detail="Uploaded archive is empty")
-    if len(archive_bytes) > MAX_UPLOAD_BYTES * 20:
+    if len(archive_bytes) > import_archive_max_bytes():
         raise HTTPException(status_code=400, detail="Uploaded archive is too large")
 
     imports = build_import_gallery_entries(archive_bytes)
