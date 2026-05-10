@@ -40,7 +40,7 @@ Key characteristics:
 - configurable concurrency and queue limits shared by generation and edit jobs
 - optional per-job webhook callback (`webhook_url`) with HTTPS validation, SSRF protection, signed delivery, and retry
 - upload or gallery-based edit source selection with clickable source preview
-- gallery with pagination, prompt/model/preset/size/date/favorites filters, favorite toggles, lightbox, per-image "Edit this image" actions, download, validated export/import ZIP with `metadata.json`, delete, delete all, copy prompt, copy image URL, and total image size display
+- gallery with pagination, prompt/model/preset/size/date/favorites filters, favorite toggles, lightbox, per-image "Edit this image" actions, download, validated ZIP export/import with `metadata.json`, delete, delete all, copy prompt, copy image URL, and total image size display
 - optional site access key with session unlock
 - optional IP allowlist and reverse proxy header support
 - app version badge with GitHub `VERSION` update detection
@@ -106,7 +106,6 @@ Runtime persistent storage is minimal:
 7. the frontend listens to `/api/generate/{job_id}/events` and renders each SSE progress update in Preview
 8. the job history drawer listens to `/api/generate/jobs/events`, can refresh via `/api/generate/jobs`, and cancels selected jobs via `DELETE /api/generate/{job_id}`
 9. if `webhook_url` is provided, the backend validates it and asynchronously delivers `image.job.finished` after job completion (with signature headers when configured)
-10. when the shared queue is full, generation and edit requests return `429 Generation job queue is full`
 
 ### Edit flow
 
@@ -119,7 +118,6 @@ Runtime persistent storage is minimal:
 7. returned image data is decoded from base64 or downloaded from URL
 8. the backend saves the edited image and appends the gallery metadata entry
 9. the frontend listens to `/api/generate/{job_id}/events` and renders preview/gallery like normal generation
-10. edit jobs share the same concurrency and queue limits as generation jobs
 
 ## Tech stack
 
@@ -318,9 +316,8 @@ The panel supports these upstream paths:
 - uploaded source images are limited by `MAX_FILE_SIZE_MB`
 - `/api/import` accepts ZIP archives created by `/api/download-all`
 - import archives must include `metadata.json`
-- import archives are validated for maximum uploaded size, maximum file count, maximum uncompressed size, maximum metadata size, safe member paths, and maximum compression ratio
-- import only processes supported image file extensions referenced by `metadata.json`
-- import rejects unsafe paths such as absolute paths, `..` traversal, and backslash-based path variants
+- import archives are validated for uploaded size, file count, total uncompressed size, metadata size, member-path safety, and compression ratio
+- import only processes supported image file extensions referenced by `metadata.json`, and rejects unsafe paths such as absolute paths, `..` traversal, and backslash-based path variants
 
 ## Environment variables
 
@@ -485,7 +482,7 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 - 生成和编辑任务共享可配置的并发上限与排队上限
 - 支持每个任务可选 `webhook_url` 回调：仅允许 HTTPS，带 SSRF 防护、签名投递与重试
 - 支持上传图片或选择 Gallery 图片作为编辑源，并可在提交前预览编辑源
-- Gallery：分页、按 prompt/model/preset/尺寸/日期/收藏筛选、收藏切换、Lightbox、卡片/Lightbox 直接 “Edit this image”、生成所用 preset、下载、带 `metadata.json` 的校验式 ZIP 导出/导入、删除、全部删除、复制提示词、复制图片链接、耗时
+- Gallery：分页、按 prompt/model/preset/尺寸/日期/收藏筛选、收藏切换、Lightbox、卡片/Lightbox 直接 “Edit this image”、生成所用预设、下载、带 `metadata.json` 的 ZIP 导出/导入（导入含安全校验）、删除、全部删除、复制提示词、复制图片链接、耗时
 - 可选站点访问密钥
 - 可选 IP 白名单和反向代理头支持
 - 头部显示当前版本，并可基于 GitHub 仓库 `VERSION` 检测新版本
@@ -555,7 +552,7 @@ npm --prefix frontend run build
 
 ### 编辑流程
 
-1. 前端支持两种编辑源：上传任意图片文件，或在 Gallery 卡片/Lightbox 点击 “Edit this image”；选中后可先预览编辑源
+1. 前端支持两种编辑源：上传受支持的位图图片文件，或在 Gallery 卡片/Lightbox 点击 “Edit this image”；选中后可先预览编辑源
 2. 前端将当前参数发送到 `/api/edits`（上传流）或 `/api/edits/from-gallery/{image_id}`（Gallery 流）
 3. 后端创建持久化到 SQLite 的任务并调用上游 `/v1/images/edits`
 4. 源图片以 multipart `image` 字段转发（来自上传字节或 Gallery 文件字节）；SVG 上传会被拒绝
@@ -763,9 +760,8 @@ curl http://localhost:9090/health
 - 上传作为编辑源图的图片大小受 `MAX_FILE_SIZE_MB` 限制
 - `/api/import` 只接受由 `/api/download-all` 导出的 ZIP 归档
 - 导入 ZIP 必须包含 `metadata.json`
-- 导入 ZIP 会校验最大上传体积、最大文件数、最大解压总体积、最大 metadata 大小、安全路径和最大压缩比
-- 导入时只处理 `metadata.json` 中引用且扩展名受支持的图片文件
-- 导入会拒绝绝对路径、`..` 路径穿越和带反斜杠的危险路径变体
+- 导入 ZIP 会校验上传体积、文件数、解压总体积、metadata 大小、安全路径和压缩比
+- 导入时只处理 `metadata.json` 中引用且扩展名受支持的图片文件，并拒绝绝对路径、`..` 路径穿越和带反斜杠的危险路径变体
 
 ## 环境变量
 
