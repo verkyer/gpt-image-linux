@@ -1,3 +1,5 @@
+import { translate } from '$lib/i18n';
+
 type UnauthorizedHandler = (message?: string) => void;
 
 let unauthorizedHandler: UnauthorizedHandler | null = null;
@@ -30,8 +32,8 @@ export async function apiFetch<T>(url: string, options: RequestInit = {}, action
       }
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Failed to fetch';
-    throw new Error(`Network error while ${action}: ${message}`);
+    const message = error instanceof Error ? error.message : translate().messages.failedToFetch;
+    throw new Error(translate().messages.networkError(message));
   }
 
   const contentType = response.headers.get('content-type') || '';
@@ -48,12 +50,13 @@ export async function apiFetch<T>(url: string, options: RequestInit = {}, action
 
   if (!response.ok) {
     if (response.status === 401) {
-      unauthorizedHandler?.('Session expired. Please enter the access key.');
-      throw new ApiError('Session expired. Please enter the access key.', response.status, body);
+      const message = translate().messages.sessionExpired;
+      unauthorizedHandler?.(message);
+      throw new ApiError(message, response.status, body);
     }
 
     const data = body as { detail?: string; error?: string; message?: string } | null;
-    const message = data?.detail || data?.error || data?.message || bodyText || `${action} failed`;
+    const message = data?.detail || data?.error || data?.message || bodyText || translate().messages.requestFailed;
     throw new ApiError(`${message}${response.status ? ` (${response.status})` : ''}`, response.status, body);
   }
 
@@ -63,4 +66,3 @@ export async function apiFetch<T>(url: string, options: RequestInit = {}, action
 
   return body as T;
 }
-

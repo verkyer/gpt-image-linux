@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import type { ApiPath, ApiPreset, SettingsResponse } from '$lib/api/types';
 
   const MASKED_API_KEY_VALUE = '********';
@@ -38,28 +39,28 @@
   }
 
   function keyLabel(preset: ApiPreset) {
-    return preset.has_api_key ? preset.api_key_masked : 'No key';
+    return preset.has_api_key ? preset.api_key_masked : $t.common.noKey;
   }
 </script>
 
 {#if open}
   <div class="fixed inset-0 z-50">
-    <button class="drawer-backdrop absolute inset-0" type="button" aria-label="Close settings" on:click={onClose}></button>
+    <button class="drawer-backdrop absolute inset-0" type="button" aria-label={$t.settings.closeLabel} on:click={onClose}></button>
     <aside class="fade-in absolute right-0 top-0 flex h-full w-full max-w-lg flex-col border-l border-zinc-800 bg-zinc-900 shadow-2xl">
       <div class="flex items-center justify-between border-b border-zinc-800 p-5">
         <div>
-          <h2 class="text-lg font-semibold text-zinc-100">Settings</h2>
-          <p class="mt-1 text-xs text-zinc-500">API presets and upstream path</p>
+          <h2 class="text-lg font-semibold text-zinc-100">{$t.settings.title}</h2>
+          <p class="mt-1 text-xs text-zinc-500">{$t.settings.subtitle}</p>
         </div>
-        <button type="button" class="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" on:click={onClose}>x</button>
+        <button type="button" class="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" aria-label={$t.settings.closeLabel} on:click={onClose}>x</button>
       </div>
 
       <div class="min-h-0 flex-1 overflow-y-auto p-5">
         <div class="mb-5 flex items-center justify-between">
-          <h3 class="text-sm font-semibold text-zinc-200">Presets</h3>
+          <h3 class="text-sm font-semibold text-zinc-200">{$t.settings.presets}</h3>
           <div class="flex gap-2">
             <button type="button" class="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800" on:click={onCreate}>
-              New
+              {$t.settings.newPreset}
             </button>
             <button
               type="button"
@@ -67,7 +68,7 @@
               class="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
               on:click={onDelete}
             >
-              Delete
+              {$t.settings.deletePreset}
             </button>
           </div>
         </div>
@@ -85,11 +86,11 @@
             >
               <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">
-                  <div class="truncate text-sm font-medium">{preset.name || 'Untitled preset'}</div>
-                  <div class="mt-1 truncate font-mono text-xs text-zinc-500">{preset.api_url || 'No API URL'}</div>
+                  <div class="truncate text-sm font-medium">{preset.name || $t.common.untitledPreset}</div>
+                  <div class="mt-1 truncate font-mono text-xs text-zinc-500">{preset.api_url || $t.common.noApiUrl}</div>
                 </div>
                 <span class="shrink-0 rounded-md border border-zinc-700 px-2 py-0.5 text-[11px] font-medium text-zinc-500">
-                  {preset.id === settings?.active_preset_id ? 'Active' : 'Switch'}
+                  {preset.id === settings?.active_preset_id ? $t.common.active : $t.common.switch}
                 </span>
               </div>
               <div class="mt-2 flex items-center justify-between gap-3 text-xs text-zinc-500">
@@ -102,22 +103,22 @@
 
         <div class="space-y-4">
           <label class="block">
-            <span class="mb-1.5 block text-xs font-medium text-zinc-400">Preset name</span>
+            <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.settings.presetName}</span>
             <input bind:value={presetName} class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none" />
           </label>
           <label class="block">
-            <span class="mb-1.5 block text-xs font-medium text-zinc-400">API URL</span>
+            <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.settings.apiUrl}</span>
             <input bind:value={apiUrl} class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 font-mono text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none" placeholder="https://api.example.com" />
           </label>
           <label class="block">
-            <span class="mb-1.5 block text-xs font-medium text-zinc-400">API path</span>
+            <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.settings.apiPath}</span>
             <select bind:value={apiPath} class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none">
               <option value="/v1/images/generations">/v1/images/generations</option>
               <option value="/v1/responses">/v1/responses</option>
             </select>
           </label>
           <label class="block">
-            <span class="mb-1.5 block text-xs font-medium text-zinc-400">API key</span>
+            <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.settings.apiKey}</span>
             <input bind:value={apiKey} type="password" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 font-mono text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none" />
           </label>
         </div>
@@ -130,7 +131,7 @@
           class="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
           on:click={save}
         >
-          {saving ? 'Saving...' : 'Save Preset'}
+          {saving ? $t.settings.saving : $t.settings.savePreset}
         </button>
       </div>
     </aside>

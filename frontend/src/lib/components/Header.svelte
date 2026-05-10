@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { language, t, toggleLanguage } from '$lib/i18n';
+
   export let activeJobsCount = 0;
   export let version = '';
   export let latestVersion = '';
@@ -8,13 +10,23 @@
   export let onOpenSettings: () => void = () => {};
 
   $: versionTitle = hasVersionUpdate
-    ? `Current ${version}. Latest v${latestVersion}.`
-    : `Current ${version}`;
+    ? $t.header.versionUpdateTitle(version, latestVersion)
+    : $t.header.versionTitle(version);
 </script>
 
 <header class="sticky top-0 z-40 border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-md">
   <div class="mx-auto flex max-w-5xl items-center justify-between px-4 py-4 sm:px-6">
     <div class="flex items-center gap-3">
+      <button
+        type="button"
+        class="h-8 min-w-12 rounded-lg border border-zinc-700 px-2 text-xs font-semibold text-zinc-300 transition-colors hover:border-emerald-500/60 hover:bg-zinc-800 hover:text-zinc-100"
+        title={$t.language.toggleTitle}
+        aria-label={$t.language.toggleTitle}
+        aria-pressed={$language === 'zh-CN'}
+        on:click={toggleLanguage}
+      >
+        {$t.language.button}
+      </button>
       <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-400 to-cyan-500">
         <span class="text-sm font-black text-zinc-950">I</span>
       </div>
@@ -33,12 +45,12 @@
             >
               {version}
               {#if hasVersionUpdate}
-                <span class="ml-1 rounded bg-amber-400/20 px-1 py-px text-[10px] text-amber-300">New</span>
+                <span class="ml-1 rounded bg-amber-400/20 px-1 py-px text-[10px] text-amber-300">{$t.header.newVersion}</span>
               {/if}
             </a>
           {/if}
         </div>
-        <p class="hidden text-xs text-zinc-500 sm:block">Image Generation Interface</p>
+        <p class="hidden text-xs text-zinc-500 sm:block">{$t.header.subtitle}</p>
       </div>
     </div>
 
@@ -46,11 +58,11 @@
       <button
         type="button"
         class="relative rounded-lg p-2 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
-        title="Job History"
-        aria-label="Job History"
+        title={$t.header.jobHistory}
+        aria-label={$t.header.jobHistory}
         on:click={onOpenJobs}
       >
-        <span class="text-sm font-semibold leading-none">Jobs</span>
+        <span class="text-sm font-semibold leading-none">{$t.header.jobs}</span>
         {#if activeJobsCount}
           <span class="absolute -right-1 -top-1 h-4 min-w-4 rounded-full bg-emerald-500 px-1 text-[10px] font-semibold leading-4 text-zinc-950">
             {activeJobsCount}
@@ -60,11 +72,11 @@
       <button
         type="button"
         class="rounded-lg p-2 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
-        title="Settings"
-        aria-label="Settings"
+        title={$t.common.settings}
+        aria-label={$t.common.settings}
         on:click={onOpenSettings}
       >
-        <span class="text-sm font-semibold leading-none">Set</span>
+        <span class="text-sm font-semibold leading-none">{$t.header.settingsShort}</span>
       </button>
     </div>
   </div>

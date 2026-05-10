@@ -39,3 +39,4 @@ frontend/node_modules/
 frontend/.svelte-kit/
 frontend/build/
 npm-debug.log*
+security_performance_feature_plan.md

@@ -1,0 +1,460 @@
+import { browser } from '$app/environment';
+import { derived, get, writable } from 'svelte/store';
+
+export type Language = 'en' | 'zh-CN';
+
+const STORAGE_KEY = 'gpt-image-panel-language';
+
+const en = {
+  common: {
+    active: 'Active',
+    apply: 'Apply',
+    clear: 'Clear',
+    close: 'Close',
+    copyPrompt: 'Copy prompt',
+    copyUrl: 'Copy URL',
+    delete: 'Delete',
+    download: 'Download',
+    duration: 'Duration',
+    edit: 'Edit',
+    favorite: 'Favorite',
+    model: 'Model',
+    noApiUrl: 'No API URL',
+    noKey: 'No key',
+    preset: 'Preset',
+    prompt: 'Prompt',
+    settings: 'Settings',
+    size: 'Size',
+    status: 'Status',
+    switch: 'Switch',
+    unfavorite: 'Unfavorite',
+    untitledJob: 'Untitled job',
+    untitledPreset: 'Untitled preset'
+  },
+  language: {
+    button: '中文',
+    current: 'English',
+    toggleTitle: 'Switch to Simplified Chinese'
+  },
+  header: {
+    subtitle: 'Image Generation Interface',
+    jobs: 'Jobs',
+    jobHistory: 'Job History',
+    settingsShort: 'Set',
+    newVersion: 'New',
+    versionTitle: (version: string) => `Current ${version}`,
+    versionUpdateTitle: (version: string, latestVersion: string) => `Current ${version}. Latest v${latestVersion}.`
+  },
+  access: {
+    title: 'Access Key',
+    placeholder: 'Enter access key',
+    unlock: 'Unlock',
+    unlocking: 'Unlocking...',
+    required: 'Please enter the access key'
+  },
+  settings: {
+    title: 'Settings',
+    subtitle: 'API presets and upstream path',
+    closeLabel: 'Close settings',
+    presets: 'Presets',
+    newPreset: 'New',
+    deletePreset: 'Delete',
+    presetName: 'Preset name',
+    apiUrl: 'API URL',
+    apiPath: 'API path',
+    apiKey: 'API key',
+    savePreset: 'Save Preset',
+    saving: 'Saving...'
+  },
+  jobs: {
+    title: 'Job History',
+    subtitle: 'Queued and running generation jobs',
+    closeLabel: 'Close jobs',
+    selectAll: 'Select All',
+    refresh: 'Refresh',
+    noRunning: 'No running jobs',
+    noRunningHint: 'Queued and running jobs will show here.',
+    cancelSelected: 'Cancel Selected'
+  },
+  promptForm: {
+    title: 'Prompt',
+    subtitle: 'Generation and edit requests use the same frozen API contract.',
+    responsesMode: 'Responses mode',
+    placeholder: 'Describe the image you want to create...',
+    disabledForResponses: 'Disabled for Responses',
+    disabledForPng: 'Disabled for PNG',
+    quality: 'Quality',
+    quantity: 'Quantity',
+    format: 'Format',
+    compression: 'Compression',
+    responseFormat: 'Response format',
+    defaultResponseFormat: 'default',
+    webhookUrl: 'Webhook URL',
+    uploadEditImage: 'Upload edit image',
+    previewEditLabel: (label: string) => `Preview ${label}`,
+    edits: 'Edits',
+    generate: 'Generate',
+    editSourcePreview: 'Edit Source Preview',
+    closeEditPreview: 'Close edit image preview'
+  },
+  preview: {
+    title: 'Preview',
+    subtitle: 'Latest generation or edit result',
+    regenerate: 'Regenerate',
+    working: 'Working on image',
+    queued: 'Queued',
+    generatedAlt: 'Generated preview',
+    noPreview: 'No preview yet',
+    noPreviewHint: 'Generate or edit an image to show the result.'
+  },
+  gallery: {
+    title: 'Gallery',
+    imageCount: (count: number) => `${count} image${count === 1 ? '' : 's'}`,
+    noImages: 'No images',
+    import: 'Import',
+    exportZip: 'Export ZIP',
+    deleteAll: 'Delete All',
+    filterPrompt: 'Filter prompt',
+    allModels: 'All models',
+    allPresets: 'All presets',
+    allSizes: 'All sizes',
+    favorites: 'Favorites',
+    resetFilters: 'Reset filters',
+    loading: 'Loading gallery...',
+    noMatch: 'No images match',
+    empty: 'Your gallery is empty',
+    noMatchHint: 'Adjust or reset the gallery filters.',
+    emptyHint: 'Describe an image and hit Generate.',
+    previous: 'Previous',
+    next: 'Next',
+    page: (page: number, totalPages: number) => `Page ${page} / ${totalPages}`
+  },
+  lightbox: {
+    title: 'Image Details',
+    closeLabel: 'Close lightbox'
+  },
+  sizeDialog: {
+    title: 'Image Size',
+    subtitle: 'Choose a preset or enter WIDTHxHEIGHT.'
+  },
+  messages: {
+    accessCheckFailed: 'Access check failed',
+    invalidAccessKey: 'Invalid access key',
+    apiUrlRequired: 'Please enter an API URL',
+    apiKeyRequired: 'Please enter an API Key',
+    presetSaved: 'Preset saved',
+    presetCreated: 'Preset created',
+    presetSwitched: 'Preset switched',
+    presetDeleted: 'Preset deleted',
+    deletePresetConfirm: (name: string) => `Delete preset "${name}"?`,
+    promptRequired: 'Please enter a prompt',
+    editSourceRequired: 'Please upload an image or choose one from gallery first',
+    queuedGeneration: 'Queued image generation',
+    queuedEdit: 'Queued image edit',
+    jobLoadFailed: 'Failed to load job',
+    jobFailed: 'Job failed',
+    deleteImageConfirm: 'Delete this image from gallery?',
+    imageDeleted: 'Image deleted',
+    deleteAllConfirm: 'This permanently deletes every gallery image stored on the server. Continue?',
+    allImagesDeleted: 'All server images deleted',
+    imported: (count: number) => `Imported ${count} image${count === 1 ? '' : 's'}`,
+    galleryEditLabel: (filename: string) => `Gallery: ${filename}`,
+    galleryImageReady: 'Gallery image ready for edits',
+    imageUploadRequired: 'Please upload an image file',
+    promptCopied: 'Prompt copied',
+    imageUrlCopied: 'Image URL copied',
+    sessionExpired: 'Session expired. Please enter the access key.',
+    failedToFetch: 'Failed to fetch',
+    networkError: (message: string) => `Network error: ${message}`,
+    requestFailed: 'Request failed'
+  },
+  operations: {
+    edit: 'edit',
+    generation: 'generation'
+  },
+  statuses: {
+    queued: 'queued',
+    running: 'running',
+    success: 'success',
+    error: 'error'
+  },
+  stages: {
+    queued: 'Queued',
+    starting_generation: 'Starting image generation',
+    starting_edit: 'Starting image edit',
+    building_responses_payload: 'Building Responses API payload',
+    building_generation_payload: 'Building image generation payload',
+    building_edit_form: 'Building multipart edit request',
+    waiting_for_api: 'Waiting for upstream API response',
+    uploading_edit_image: 'Uploading source image and edit parameters',
+    received_api_response: 'Received upstream API response',
+    parsing_json_response: 'Parsing JSON response',
+    extracting_response_image_output: 'Extracting image_generation_call output',
+    extracting_generation_data: 'Extracting image data array',
+    extracting_edit_data: 'Extracting edited image data array',
+    decoding_b64_json: 'Decoding b64_json image',
+    downloading_image_url: 'Downloading image URL',
+    extracting_image_bytes: 'Extracting image bytes',
+    validating_image_bytes: 'Validating decoded image',
+    saving_image_file: 'Saving image file and gallery metadata',
+    saving_images: 'Saving images',
+    finalizing_preview: 'Finalizing preview image',
+    completed: 'Completed',
+    cancelled: 'Cancelled',
+    generation_failed: 'Generation failed',
+    edit_failed: 'Edit failed'
+  }
+};
+
+type TranslationValue = string | ((...args: any[]) => string) | Record<string, unknown>;
+type TranslationSchema<T> = {
+  [K in keyof T]: T[K] extends (...args: infer Args) => string
+    ? (...args: Args) => string
+    : T[K] extends string
+      ? string
+      : T[K] extends Record<string, TranslationValue>
+        ? TranslationSchema<T[K]>
+        : never;
+};
+
+const zh: TranslationSchema<typeof en> = {
+  common: {
+    active: '启用中',
+    apply: '应用',
+    clear: '清空',
+    close: '关闭',
+    copyPrompt: '复制提示词',
+    copyUrl: '复制链接',
+    delete: '删除',
+    download: '下载',
+    duration: '耗时',
+    edit: '编辑',
+    favorite: '收藏',
+    model: '模型',
+    noApiUrl: '未配置 API URL',
+    noKey: '无密钥',
+    preset: '预设',
+    prompt: '提示词',
+    settings: '设置',
+    size: '尺寸',
+    status: '状态',
+    switch: '切换',
+    unfavorite: '取消收藏',
+    untitledJob: '未命名任务',
+    untitledPreset: '未命名预设'
+  },
+  language: {
+    button: 'EN',
+    current: '简体中文',
+    toggleTitle: '切换到英文'
+  },
+  header: {
+    subtitle: '图像生成界面',
+    jobs: '任务',
+    jobHistory: '任务历史',
+    settingsShort: '设置',
+    newVersion: '新版',
+    versionTitle: (version) => `当前 ${version}`,
+    versionUpdateTitle: (version, latestVersion) => `当前 ${version}，最新 v${latestVersion}。`
+  },
+  access: {
+    title: '访问密钥',
+    placeholder: '输入访问密钥',
+    unlock: '解锁',
+    unlocking: '解锁中...',
+    required: '请输入访问密钥'
+  },
+  settings: {
+    title: '设置',
+    subtitle: 'API 预设和上游路径',
+    closeLabel: '关闭设置',
+    presets: '预设',
+    newPreset: '新增',
+    deletePreset: '删除',
+    presetName: '预设名称',
+    apiUrl: 'API URL',
+    apiPath: 'API 路径',
+    apiKey: 'API 密钥',
+    savePreset: '保存预设',
+    saving: '保存中...'
+  },
+  jobs: {
+    title: '任务历史',
+    subtitle: '排队中和运行中的生成任务',
+    closeLabel: '关闭任务历史',
+    selectAll: '全选',
+    refresh: '刷新',
+    noRunning: '没有运行中的任务',
+    noRunningHint: '排队中和运行中的任务会显示在这里。',
+    cancelSelected: '取消所选任务'
+  },
+  promptForm: {
+    title: '提示词',
+    subtitle: '生成和编辑请求共用同一套冻结 API 契约。',
+    responsesMode: 'Responses 模式',
+    placeholder: '描述你想创建的图像...',
+    disabledForResponses: 'Responses 模式不可用',
+    disabledForPng: 'PNG 不支持压缩',
+    quality: '质量',
+    quantity: '数量',
+    format: '格式',
+    compression: '压缩率',
+    responseFormat: '响应格式',
+    defaultResponseFormat: '默认',
+    webhookUrl: 'Webhook URL',
+    uploadEditImage: '上传编辑图片',
+    previewEditLabel: (label) => `预览 ${label}`,
+    edits: '编辑',
+    generate: '生成',
+    editSourcePreview: '编辑源预览',
+    closeEditPreview: '关闭编辑图片预览'
+  },
+  preview: {
+    title: '预览',
+    subtitle: '最近一次生成或编辑结果',
+    regenerate: '重新生成',
+    working: '正在处理图像',
+    queued: '排队中',
+    generatedAlt: '生成结果预览',
+    noPreview: '暂无预览',
+    noPreviewHint: '生成或编辑一张图片后会在这里显示结果。'
+  },
+  gallery: {
+    title: '图库',
+    imageCount: (count) => `${count} 张图片`,
+    noImages: '暂无图片',
+    import: '导入',
+    exportZip: '导出 ZIP',
+    deleteAll: '全部删除',
+    filterPrompt: '筛选提示词',
+    allModels: '全部模型',
+    allPresets: '全部预设',
+    allSizes: '全部尺寸',
+    favorites: '收藏',
+    resetFilters: '重置筛选',
+    loading: '正在加载图库...',
+    noMatch: '没有匹配的图片',
+    empty: '图库为空',
+    noMatchHint: '调整或重置图库筛选条件。',
+    emptyHint: '输入图像描述并点击生成。',
+    previous: '上一页',
+    next: '下一页',
+    page: (page, totalPages) => `第 ${page} / ${totalPages} 页`
+  },
+  lightbox: {
+    title: '图片详情',
+    closeLabel: '关闭图片详情'
+  },
+  sizeDialog: {
+    title: '图像尺寸',
+    subtitle: '选择预设或输入 宽x高。'
+  },
+  messages: {
+    accessCheckFailed: '访问状态检查失败',
+    invalidAccessKey: '访问密钥无效',
+    apiUrlRequired: '请输入 API URL',
+    apiKeyRequired: '请输入 API 密钥',
+    presetSaved: '预设已保存',
+    presetCreated: '预设已创建',
+    presetSwitched: '预设已切换',
+    presetDeleted: '预设已删除',
+    deletePresetConfirm: (name) => `删除预设“${name}”？`,
+    promptRequired: '请输入提示词',
+    editSourceRequired: '请先上传图片或从图库选择一张图片',
+    queuedGeneration: '图像生成已排队',
+    queuedEdit: '图像编辑已排队',
+    jobLoadFailed: '加载任务失败',
+    jobFailed: '任务失败',
+    deleteImageConfirm: '从图库删除这张图片？',
+    imageDeleted: '图片已删除',
+    deleteAllConfirm: '这会永久删除服务器上存储的全部图库图片。继续？',
+    allImagesDeleted: '服务器图片已全部删除',
+    imported: (count) => `已导入 ${count} 张图片`,
+    galleryEditLabel: (filename) => `图库：${filename}`,
+    galleryImageReady: '图库图片已设为编辑源',
+    imageUploadRequired: '请上传图片文件',
+    promptCopied: '提示词已复制',
+    imageUrlCopied: '图片链接已复制',
+    sessionExpired: '会话已过期，请输入访问密钥。',
+    failedToFetch: '请求失败',
+    networkError: (message) => `网络错误：${message}`,
+    requestFailed: '请求失败'
+  },
+  operations: {
+    edit: '编辑',
+    generation: '生成'
+  },
+  statuses: {
+    queued: '排队中',
+    running: '运行中',
+    success: '成功',
+    error: '错误'
+  },
+  stages: {
+    queued: '排队中',
+    starting_generation: '开始生成图像',
+    starting_edit: '开始编辑图像',
+    building_responses_payload: '构建 Responses API 请求',
+    building_generation_payload: '构建图像生成请求',
+    building_edit_form: '构建 multipart 编辑请求',
+    waiting_for_api: '等待上游 API 响应',
+    uploading_edit_image: '上传源图片和编辑参数',
+    received_api_response: '已收到上游 API 响应',
+    parsing_json_response: '解析 JSON 响应',
+    extracting_response_image_output: '提取 image_generation_call 输出',
+    extracting_generation_data: '提取图像数据数组',
+    extracting_edit_data: '提取编辑后的图像数据数组',
+    decoding_b64_json: '解码 b64_json 图像',
+    downloading_image_url: '下载图像 URL',
+    extracting_image_bytes: '提取图像字节',
+    validating_image_bytes: '校验解码后的图像',
+    saving_image_file: '保存图像文件和图库元数据',
+    saving_images: '保存图像',
+    finalizing_preview: '生成预览图',
+    completed: '已完成',
+    cancelled: '已取消',
+    generation_failed: '生成失败',
+    edit_failed: '编辑失败'
+  }
+};
+
+export type Translation = TranslationSchema<typeof en>;
+
+export const translations: Record<Language, Translation> = {
+  en,
+  'zh-CN': zh
+};
+
+function normalizeLanguage(value: string | null | undefined): Language | null {
+  const normalized = String(value || '').toLowerCase();
+  if (normalized.startsWith('zh')) return 'zh-CN';
+  if (normalized.startsWith('en')) return 'en';
+  return null;
+}
+
+function getInitialLanguage(): Language {
+  if (!browser) return 'en';
+  return normalizeLanguage(localStorage.getItem(STORAGE_KEY)) || normalizeLanguage(navigator.language) || 'en';
+}
+
+export const language = writable<Language>(getInitialLanguage());
+export const t = derived(language, ($language) => translations[$language]);
+
+export function setLanguage(nextLanguage: Language) {
+  language.set(nextLanguage);
+}
+
+export function toggleLanguage() {
+  language.update((current) => (current === 'zh-CN' ? 'en' : 'zh-CN'));
+}
+
+export function translate() {
+  return translations[get(language)];
+}
+
+if (browser) {
+  language.subscribe((value) => {
+    localStorage.setItem(STORAGE_KEY, value);
+    document.documentElement.lang = value;
+  });
+}

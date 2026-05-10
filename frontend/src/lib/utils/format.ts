@@ -17,13 +17,28 @@ export function formatBytes(totalBytes: number) {
   return `${(totalBytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function stageLabel(job: GenerateJobStatus | null) {
+export function stageLabel(job: GenerateJobStatus | null, labels?: Record<string, string>) {
   if (!job?.stage) return '';
-  return job.message || job.stage.replaceAll('_', ' ');
+  if (job.status === 'error' && (job.error || job.message)) return job.error || job.message || '';
+
+  const translated = labels?.[job.stage];
+  if (!translated) return job.message || job.stage.replaceAll('_', ' ');
+
+  const progressSuffix = job.message?.match(/\(\d+\/\d+\)$/)?.[0];
+  return progressSuffix ? `${translated} ${progressSuffix}` : translated;
+}
+
+export function statusLabel(status: string | null | undefined, labels?: Record<string, string>) {
+  if (!status) return '';
+  return labels?.[status] || status;
+}
+
+export function operationLabel(operation: string | null | undefined, labels?: Record<string, string>) {
+  if (!operation) return labels?.generation || 'generation';
+  return labels?.[operation] || operation;
 }
 
 export async function copyText(text: string) {
   if (!text) return;
   await navigator.clipboard.writeText(text);
 }
-

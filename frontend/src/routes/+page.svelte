@@ -10,6 +10,7 @@
   import SizeDialog from '$lib/components/SizeDialog.svelte';
   import { apiFetch, setUnauthorizedHandler } from '$lib/api/client';
   import { openJsonEventSource } from '$lib/api/events';
+  import { t } from '$lib/i18n';
   import type {
     AccessStatus,
     ApiPath,
@@ -199,7 +200,7 @@
       accessVisible = true;
     } catch (error) {
       accessVisible = true;
-      accessError = error instanceof Error ? error.message : 'Access check failed';
+      accessError = error instanceof Error ? error.message : $t.messages.accessCheckFailed;
     }
   }
 
@@ -216,11 +217,11 @@
         },
         'unlocking access'
       );
-      if (!data.authenticated) throw new Error('Invalid access key');
+      if (!data.authenticated) throw new Error($t.messages.invalidAccessKey);
       accessVisible = false;
       await loadInitialData();
     } catch (error) {
-      accessError = error instanceof Error ? error.message : 'Invalid access key';
+      accessError = error instanceof Error ? error.message : $t.messages.invalidAccessKey;
     } finally {
       accessLoading = false;
     }
@@ -238,11 +239,11 @@
 
   async function saveSettings(body: Record<string, unknown>) {
     if (!String(body.api_url || '').trim()) {
-      showToast('Please enter an API URL');
+      showToast($t.messages.apiUrlRequired);
       return;
     }
     if (body.api_key !== null && !String(body.api_key || '').trim()) {
-      showToast('Please enter an API Key');
+      showToast($t.messages.apiKeyRequired);
       return;
     }
 
@@ -258,7 +259,7 @@
         'saving settings'
       );
       settingsOpen = false;
-      showToast('Preset saved');
+      showToast($t.messages.presetSaved);
     } finally {
       settingsSaving = false;
     }
@@ -274,7 +275,7 @@
       },
       'creating preset'
     );
-    showToast('Preset created');
+    showToast($t.messages.presetCreated);
   }
 
   async function activatePreset(presetId: string) {
@@ -284,19 +285,19 @@
       { method: 'POST' },
       'switching preset'
     );
-    showToast('Preset switched');
+    showToast($t.messages.presetSwitched);
   }
 
   async function deleteActivePreset() {
     if (!settings || settings.presets.length <= 1) return;
     const active = settings.presets.find((preset) => preset.id === settings?.active_preset_id);
-    if (!active || !confirm(`Delete preset "${active.name || 'Untitled preset'}"?`)) return;
+    if (!active || !confirm($t.messages.deletePresetConfirm(active.name || $t.common.untitledPreset))) return;
     settings = await apiFetch<SettingsResponse>(
       `/api/settings/presets/${encodeURIComponent(active.id)}`,
       { method: 'DELETE' },
       'deleting preset'
     );
-    showToast('Preset deleted');
+    showToast($t.messages.presetDeleted);
   }
 
   function buildRequestBody(): GenerateRequestBody {
@@ -322,7 +323,7 @@
   async function generateImage() {
     const body = buildRequestBody();
     if (!body.prompt) {
-      setPreviewError('Please enter a prompt');
+      setPreviewError($t.messages.promptRequired);
       return;
     }
     lastRequest = body;
@@ -344,13 +345,13 @@
 
   async function editImage() {
     if (!editFile && !selectedGalleryImageId) {
-      setPreviewError('Please upload an image or choose one from gallery first');
+      setPreviewError($t.messages.editSourceRequired);
       return;
     }
 
     const body = buildRequestBody();
     if (!body.prompt) {
-      setPreviewError('Please enter a prompt');
+      setPreviewError($t.messages.promptRequired);
       return;
     }
     lastRequest = body;
@@ -395,7 +396,7 @@
         job_id: '',
         status: 'queued',
         stage: 'queued',
-        message: operation === 'edit' ? 'Queued image edit' : 'Queued image generation',
+        message: operation === 'edit' ? $t.messages.queuedEdit : $t.messages.queuedGeneration,
         operation
       }
     };
@@ -436,7 +437,7 @@
         setTimeout(() => pollJob(jobId), 1200);
       }
     } catch (error) {
-      setPreviewError(error instanceof Error ? error.message : 'Failed to load job');
+      setPreviewError(error instanceof Error ? error.message : $t.messages.jobLoadFailed);
     }
   }
 
@@ -444,7 +445,7 @@
     const image = job.image_url || '';
     preview = {
       loading: ACTIVE_STATUSES.has(job.status),
-      error: job.status === 'error' ? job.error || job.message || 'Job failed' : '',
+      error: job.status === 'error' ? job.error || job.message || $t.messages.jobFailed : '',
       job,
       imageUrl: image || preview.imageUrl,
       filename: image ? filenameFromImageUrl(image) : preview.filename,
@@ -599,22 +600,22 @@
   }
 
   async function deleteImage(image: GalleryEntry) {
-    if (!confirm('Delete this image from gallery?')) return;
+    if (!confirm($t.messages.deleteImageConfirm)) return;
     await apiFetch(`/api/gallery/${encodeURIComponent(image.id)}`, { method: 'DELETE' }, 'deleting image');
     if (lightboxImage?.id === image.id) lightboxImage = null;
     if (selectedGalleryImageId === image.id) clearEditSource();
     await loadGallery(galleryPage);
-    showToast('Image deleted');
+    showToast($t.messages.imageDeleted);
   }
 
   async function deleteAllImages() {
-    if (!confirm('This permanently deletes every gallery image stored on the server. Continue?')) return;
+    if (!confirm($t.messages.deleteAllConfirm)) return;
     await apiFetch('/api/gallery', { method: 'DELETE' }, 'deleting all images');
     lightboxImage = null;
     clearEditSource();
     clearPreview();
     await loadGallery(1);
-    showToast('All server images deleted');
+    showToast($t.messages.allImagesDeleted);
   }
 
   async function importArchive(file: File) {
@@ -629,17 +630,17 @@
       'importing archive'
     );
     await loadGallery(1);
-    showToast(`Imported ${result.imported} image${result.imported === 1 ? '' : 's'}`);
+    showToast($t.messages.imported(result.imported));
   }
 
   function prepareGalleryImageForEdit(image: GalleryEntry) {
     editFile = null;
     selectedGalleryImageId = image.id;
-    editLabel = `Gallery: ${image.filename}`;
+    editLabel = $t.messages.galleryEditLabel(image.filename);
     setEditPreview(imageUrl(image.filename), editLabel);
     if (editInput) editInput.value = '';
     lightboxImage = null;
-    showToast('Gallery image ready for edits');
+    showToast($t.messages.galleryImageReady);
   }
 
   function handleEditFile(event: Event) {
@@ -652,7 +653,7 @@
     if (!isImageFile(file)) {
       input.value = '';
       clearEditSource();
-      setPreviewError('Please upload an image file');
+      setPreviewError($t.messages.imageUploadRequired);
       return;
     }
     editFile = file;
@@ -701,12 +702,12 @@
 
   async function copyPrompt(image: GalleryEntry) {
     await copyText(image.prompt);
-    showToast('Prompt copied');
+    showToast($t.messages.promptCopied);
   }
 
   async function copyImageUrl(image: GalleryEntry) {
     await copyText(new URL(imageUrl(image.filename), window.location.origin).href);
-    showToast('Image URL copied');
+    showToast($t.messages.imageUrlCopied);
   }
 
   function clampQuantity() {
@@ -796,11 +797,11 @@
   <section class="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 sm:p-5">
     <div class="mb-4 flex items-start justify-between gap-4">
       <div>
-        <h2 class="text-sm font-semibold text-zinc-100">Prompt</h2>
-        <p class="mt-1 text-xs text-zinc-500">Generation and edit requests use the same frozen API contract.</p>
+        <h2 class="text-sm font-semibold text-zinc-100">{$t.promptForm.title}</h2>
+        <p class="mt-1 text-xs text-zinc-500">{$t.promptForm.subtitle}</p>
       </div>
       {#if responsesMode}
-        <span class="rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-xs font-medium text-cyan-200">Responses mode</span>
+        <span class="rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-xs font-medium text-cyan-200">{$t.promptForm.responsesMode}</span>
       {/if}
     </div>
 
@@ -808,31 +809,31 @@
       bind:value={prompt}
       maxlength="4000"
       rows="5"
-      placeholder="Describe the image you want to create..."
+      placeholder={$t.promptForm.placeholder}
       class="w-full resize-y rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm leading-6 text-zinc-100 focus:border-emerald-500 focus:outline-none"
     ></textarea>
     <div class="mt-2 flex justify-end text-xs text-zinc-500">{promptLen}/4000</div>
 
     <div class="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <label class="block">
-        <span class="mb-1.5 block text-xs font-medium text-zinc-400">Model</span>
+        <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.common.model}</span>
         <input bind:value={model} class="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 font-mono text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none" />
       </label>
 
       <label class="block">
-        <span class="mb-1.5 block text-xs font-medium text-zinc-400">Size</span>
+        <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.common.size}</span>
         <button
           type="button"
           disabled={responsesMode || preview.loading}
           class="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-left font-mono text-sm text-zinc-100 hover:bg-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
           on:click={() => (sizeDialogOpen = true)}
         >
-          {responsesMode ? 'Disabled for Responses' : size}
+          {responsesMode ? $t.promptForm.disabledForResponses : size}
         </button>
       </label>
 
       <label class="block">
-        <span class="mb-1.5 block text-xs font-medium text-zinc-400">Quality</span>
+        <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.promptForm.quality}</span>
         <select bind:value={quality} disabled={responsesMode || preview.loading} class="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50">
           <option value="auto">auto</option>
           <option value="low">low</option>
@@ -842,12 +843,12 @@
       </label>
 
       <label class="block">
-        <span class="mb-1.5 block text-xs font-medium text-zinc-400">Quantity</span>
+        <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.promptForm.quantity}</span>
         <input bind:value={quantity} disabled={responsesMode || preview.loading} type="number" min="1" max="10" class="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50" on:input={clampQuantity} />
       </label>
 
       <label class="block">
-        <span class="mb-1.5 block text-xs font-medium text-zinc-400">Format</span>
+        <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.promptForm.format}</span>
         <select bind:value={outputFormat} disabled={responsesMode || preview.loading} class="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50">
           <option value="png">png</option>
           <option value="jpeg">jpeg</option>
@@ -856,21 +857,21 @@
       </label>
 
       <label class="block">
-        <span class="mb-1.5 block text-xs font-medium text-zinc-400">Compression</span>
-        <input bind:value={outputCompression} disabled={responsesMode || preview.loading || outputFormat === 'png'} type="number" min="0" max="100" placeholder={outputFormat === 'png' ? 'Disabled for PNG' : '0-100'} class="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50" on:input={clampCompression} />
+        <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.promptForm.compression}</span>
+        <input bind:value={outputCompression} disabled={responsesMode || preview.loading || outputFormat === 'png'} type="number" min="0" max="100" placeholder={outputFormat === 'png' ? $t.promptForm.disabledForPng : '0-100'} class="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50" on:input={clampCompression} />
       </label>
 
       <label class="block">
-        <span class="mb-1.5 block text-xs font-medium text-zinc-400">Response format</span>
+        <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.promptForm.responseFormat}</span>
         <select bind:value={responseFormat} disabled={responsesMode || preview.loading} class="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50">
-          <option value="">default</option>
+          <option value="">{$t.promptForm.defaultResponseFormat}</option>
           <option value="url">url</option>
           <option value="b64_json">b64_json</option>
         </select>
       </label>
 
       <label class="block">
-        <span class="mb-1.5 block text-xs font-medium text-zinc-400">Webhook URL</span>
+        <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.promptForm.webhookUrl}</span>
         <input bind:value={webhookUrl} class="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none" placeholder="https://..." />
       </label>
     </div>
@@ -879,13 +880,13 @@
       <div class="min-w-0">
         <input bind:this={editInput} type="file" accept="image/*" class="hidden" on:change={handleEditFile} />
         <button type="button" class="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800" on:click={openEditPicker}>
-          Upload edit image
+          {$t.promptForm.uploadEditImage}
         </button>
         {#if editLabel}
           <button
             type="button"
             class="ml-3 inline-block max-w-[260px] truncate align-middle text-left text-xs font-medium text-emerald-300 underline decoration-emerald-500/40 underline-offset-4 hover:text-emerald-200"
-            title={`Preview ${editLabel}`}
+            title={$t.promptForm.previewEditLabel(editLabel)}
             on:click={openEditPreview}
           >
             {editLabel}
@@ -894,10 +895,10 @@
       </div>
       <div class="flex gap-2">
         <button type="button" disabled={preview.loading} class="rounded-xl bg-zinc-700 px-4 py-3 text-sm font-semibold text-white hover:bg-zinc-600 disabled:cursor-not-allowed disabled:opacity-50" on:click={editImage}>
-          Edits
+          {$t.promptForm.edits}
         </button>
         <button type="button" disabled={preview.loading} class="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50" on:click={generateImage}>
-          Generate
+          {$t.promptForm.generate}
         </button>
       </div>
     </div>
@@ -943,14 +944,14 @@
 
 {#if editPreviewOpen && editPreviewUrl}
   <div class="fixed inset-0 z-[75] flex items-center justify-center bg-black/75 p-4">
-    <button class="absolute inset-0" type="button" aria-label="Close edit image preview" on:click={() => (editPreviewOpen = false)}></button>
+    <button class="absolute inset-0" type="button" aria-label={$t.promptForm.closeEditPreview} on:click={() => (editPreviewOpen = false)}></button>
     <div class="relative flex max-h-[calc(100vh-32px)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 shadow-2xl">
       <div class="flex items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
         <div class="min-w-0">
-          <h2 class="text-sm font-semibold text-zinc-100">Edit Source Preview</h2>
+          <h2 class="text-sm font-semibold text-zinc-100">{$t.promptForm.editSourcePreview}</h2>
           <p class="mt-1 truncate text-xs text-zinc-500">{editPreviewLabel}</p>
         </div>
-        <button type="button" class="rounded-lg px-2 py-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" on:click={() => (editPreviewOpen = false)}>x</button>
+        <button type="button" class="rounded-lg px-2 py-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" aria-label={$t.promptForm.closeEditPreview} on:click={() => (editPreviewOpen = false)}>x</button>
       </div>
       <div class="flex min-h-0 flex-1 items-center justify-center bg-zinc-950 p-4">
         <img src={editPreviewUrl} alt={editPreviewLabel} class="max-h-[calc(100vh-140px)] max-w-full rounded-lg object-contain" />

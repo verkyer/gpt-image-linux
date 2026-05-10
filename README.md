@@ -33,7 +33,8 @@ Key characteristics:
 - generation and edit options for size, quality, format, compression, quantity, and response format
 - image-to-image edits via OpenAI-compatible `/v1/images/edits`
 - auto, ratio-based, and custom image sizes
-- preview UI with prompt, parameters, elapsed time, and detailed English generation/edit stages
+- persistent top-left language switch between English and Simplified Chinese
+- preview UI with prompt, parameters, elapsed time, and localized generation/edit stages
 - SSE progress updates for preview state with a polling fallback on stream reconnect failure
 - active job history drawer backed by SSE with selectable cancellation for queued/running generation and edit jobs
 - optional per-job webhook callback (`webhook_url`) with HTTPS validation, SSRF protection, signed delivery, and retry
@@ -258,17 +259,18 @@ curl http://localhost:9090/health
 ## Usage
 
 1. open the site
-2. click the settings gear icon
-3. choose an existing preset or click New
-4. enter the API base URL
-5. choose the API path
-6. enter the API key
-7. click Save Preset
-8. enter a prompt
-9. choose generation options
-10. click Generate
-11. optionally click Upload (or pick "Edit this image" in Gallery/Lightbox), then click Edits to run image-to-image
-12. view preview and gallery
+2. optionally use the top-left language switch to toggle English / Simplified Chinese
+3. click the settings gear icon
+4. choose an existing preset or click New
+5. enter the API base URL
+6. choose the API path
+7. enter the API key
+8. click Save Preset
+9. enter a prompt
+10. choose generation options
+11. click Generate
+12. optionally click Upload (or pick "Edit this image" in Gallery/Lightbox), then click Edits to run image-to-image
+13. view preview and gallery
 
 ## API paths
 
@@ -453,7 +455,8 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 - 生成/编辑选项：尺寸、质量、格式、压缩比、数量、响应格式
 - 通过 OpenAI 兼容 `/v1/images/edits` 支持图生图编辑
 - 支持自动、比例和自定义图像尺寸
-- 预览界面：显示提示词、参数、真实图片分辨率、生成耗时，以及英文 generation/edit 细分阶段
+- 左上角语言切换按钮，可在英文和简体中文之间切换，并持久保存
+- 预览界面：显示提示词、参数、真实图片分辨率、生成耗时，以及本地化 generation/edit 细分阶段
 - 预览进度通过 SSE 实时推送，流断开时退回轮询兜底
 - 历史任务抽屉通过 SSE 更新正在排队/运行的生成和编辑任务，并支持选择后主动终止
 - 支持每个任务可选 `webhook_url` 回调：仅允许 HTTPS，带 SSRF 防护、签名投递与重试
@@ -678,17 +681,18 @@ curl http://localhost:9090/health
 ## 使用方法
 
 1. 打开网站
-2. 点击右上角齿轮图标
-3. 选择已有预设，或点击 New 新建预设
-4. 填写 API Base URL
-5. 选择 API Path
-6. 填写 API Key
-7. 点击 Save Preset
-8. 输入提示词
-9. 选择生成参数
-10. 点击 Generate
-11. 也可以点击 Upload 选择图片，再点击 Edits 执行图生图
-12. 查看预览和 Gallery
+2. 可用左上角语言按钮在英文/简体中文之间切换
+3. 点击右上角齿轮图标
+4. 选择已有预设，或点击 New 新建预设
+5. 填写 API Base URL
+6. 选择 API Path
+7. 填写 API Key
+8. 点击 Save Preset
+9. 输入提示词
+10. 选择生成参数
+11. 点击 Generate
+12. 也可以点击 Upload 选择图片，再点击 Edits 执行图生图
+13. 查看预览和 Gallery
 
 ## 支持的 API Path
 
