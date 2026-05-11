@@ -17,6 +17,7 @@ import uuid
 import zipfile
 from pathlib import Path, PurePosixPath
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 from ..core import settings as config
 from ..schemas.models import (
@@ -176,6 +177,7 @@ AUTH_EXEMPT_PREFIXES = ("/_app/",)
 NO_CACHE_PATHS = {"/"}
 NO_CACHE_PREFIXES: tuple[str, ...] = ()
 ACTIVE_JOB_STATUSES = {"queued", "running"}
+CSRF_PROTECTED_METHODS = {"POST", "PATCH", "DELETE"}
 
 
 def apply_security_headers(response: Response) -> Response:
@@ -184,6 +186,67 @@ def apply_security_headers(response: Response) -> Response:
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "same-origin"
     return response
+
+
+def normalize_origin(value: str | None) -> str | None:
+    if not value:
+        return None
+
+    parts = urlsplit(value.strip())
+    if parts.scheme not in {"http", "https"} or not parts.hostname:
+        return None
+
+    try:
+        port = parts.port
+    except ValueError:
+        return None
+
+    host = parts.hostname.lower()
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+
+    if port and not (
+        (parts.scheme == "http" and port == 80)
+        or (parts.scheme == "https" and port == 443)
+    ):
+        host = f"{host}:{port}"
+
+    return f"{parts.scheme.lower()}://{host}"
+
+
+def get_request_origin(request: Request) -> str | None:
+    scheme = request.url.scheme
+    if config.TRUST_PROXY_HEADERS:
+        forwarded_proto = request.headers.get("x-forwarded-proto")
+        if forwarded_proto:
+            trusted_scheme = forwarded_proto.split(",", 1)[0].strip().lower()
+            if trusted_scheme in {"http", "https"}:
+                scheme = trusted_scheme
+
+    host = request.headers.get("host") or request.url.netloc
+    return normalize_origin(f"{scheme}://{host}")
+
+
+def csrf_origin_allowed(request: Request) -> bool:
+    if (
+        not config.CSRF_ORIGIN_CHECK_ENABLED
+        or request.method.upper() not in CSRF_PROTECTED_METHODS
+    ):
+        return True
+
+    expected_origin = get_request_origin(request)
+    if not expected_origin:
+        return False
+
+    origin = request.headers.get("origin")
+    if origin is not None:
+        return normalize_origin(origin) == expected_origin
+
+    referer = request.headers.get("referer")
+    if referer:
+        return normalize_origin(referer) == expected_origin
+
+    return True
 
 
 @app.middleware("http")
@@ -197,6 +260,14 @@ async def access_control_middleware(request: Request, call_next):
                     content={"status": "error", "detail": "IP address is not allowed"},
                 )
             )
+
+    if not csrf_origin_allowed(request):
+        return apply_security_headers(
+            JSONResponse(
+                status_code=403,
+                content={"status": "error", "detail": "CSRF origin check failed"},
+            )
+        )
 
     if (
         config.ACCESS_KEY

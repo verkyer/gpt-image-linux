@@ -46,6 +46,7 @@ def _configure_runtime(tmp_path: Path, *, access_key: str = "", allow_unauthenti
     config.ACCESS_LOCKOUT_SECONDS = 300
     config.IP_ALLOWLIST = ""
     config.TRUST_PROXY_HEADERS = False
+    config.CSRF_ORIGIN_CHECK_ENABLED = True
     config.UPSTREAM_HOST_ALLOWLIST = ""
     config.WEBHOOK_HOST_ALLOWLIST = ""
     config.WEBHOOK_SIGNING_SECRET = "webhook-secret"
@@ -374,6 +375,95 @@ def test_ip_allowlist_blocks_api_but_not_health(tmp_path):
         blocked = client.get("/api/version")
         assert blocked.status_code == 403
         assert blocked.json()["detail"] == "IP address is not allowed"
+
+
+def test_csrf_origin_check_allows_same_origin_state_changes(client):
+    settings = client.get("/api/settings")
+    assert settings.status_code == 200
+    active_preset_id = settings.json()["active_preset_id"]
+
+    same_origin = client.post(
+        "/api/settings",
+        headers={"Origin": "http://testserver"},
+        json={
+            "active_preset_id": active_preset_id,
+            "preset_name": "Same Origin",
+            "api_url": "https://api.example.com",
+            "api_key": "same-origin-key",
+            "api_path": "/v1/images/generations",
+        },
+    )
+
+    assert same_origin.status_code == 200
+    same_origin_body = same_origin.json()
+    active_preset = next(
+        preset
+        for preset in same_origin_body["presets"]
+        if preset["id"] == same_origin_body["active_preset_id"]
+    )
+    assert active_preset["name"] == "Same Origin"
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "kwargs"),
+    [
+        (
+            "post",
+            "/api/settings",
+            {
+                "json": {
+                    "active_preset_id": "default",
+                    "preset_name": "Bad Origin",
+                    "api_url": "https://api.example.com",
+                    "api_key": "bad-origin-key",
+                    "api_path": "/v1/images/generations",
+                }
+            },
+        ),
+        ("patch", "/api/gallery/missing/favorite", {"json": {"favorite": True}}),
+        ("delete", "/api/gallery/missing", {}),
+    ],
+)
+def test_csrf_origin_check_blocks_cross_site_state_changes(client, method, path, kwargs):
+    request = getattr(client, method)
+
+    resp = request(path, headers={"Origin": "https://evil.example"}, **kwargs)
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "CSRF origin check failed"
+
+
+def test_csrf_origin_check_does_not_block_get(client):
+    resp = client.get("/api/settings", headers={"Origin": "https://evil.example"})
+
+    assert resp.status_code == 200
+
+
+def test_csrf_origin_check_uses_referer_when_origin_is_absent(client):
+    resp = client.post(
+        "/api/settings/presets",
+        headers={"Referer": "https://evil.example/settings"},
+        json={"name": "Bad Referer"},
+    )
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "CSRF origin check failed"
+
+
+def test_csrf_origin_check_respects_trusted_forwarded_proto(client):
+    config.TRUST_PROXY_HEADERS = True
+
+    resp = client.post(
+        "/api/settings/presets",
+        headers={
+            "Host": "panel.example.com",
+            "Origin": "https://panel.example.com",
+            "X-Forwarded-Proto": "https",
+        },
+        json={"name": "Proxy Preset"},
+    )
+
+    assert resp.status_code == 200
 
 
 def test_settings_and_presets(client):
