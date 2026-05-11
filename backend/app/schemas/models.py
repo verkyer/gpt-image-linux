@@ -146,6 +146,7 @@ class GalleryEntry(BaseModel):
     api_preset_name: Optional[str] = None
     duration: Optional[str] = None
     favorite: bool = False
+    bytes: Optional[int] = None
 
 
 class GalleryFavoriteRequest(BaseModel):

@@ -47,9 +47,17 @@ GALLERY_COLUMNS = (
     "api_preset_name",
     "duration",
     "favorite",
+    "bytes",
 )
 REQUIRED_GALLERY_COLUMNS = {"id", "prompt", "size", "filename", "created_at"}
-INTEGER_GALLERY_COLUMNS = {"image_width", "image_height", "output_compression", "n", "favorite"}
+INTEGER_GALLERY_COLUMNS = {
+    "image_width",
+    "image_height",
+    "output_compression",
+    "n",
+    "favorite",
+    "bytes",
+}
 GENERATE_JOB_COLUMNS = (
     "job_id",
     "status",
@@ -210,7 +218,8 @@ def _ensure_database():
                     api_path TEXT,
                     api_preset_name TEXT,
                     duration TEXT,
-                    favorite INTEGER NOT NULL DEFAULT 0
+                    favorite INTEGER NOT NULL DEFAULT 0,
+                    bytes INTEGER
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_gallery_entries_created_at
@@ -270,6 +279,8 @@ def _migrate_gallery_schema(conn: sqlite3.Connection):
         conn.execute(
             "ALTER TABLE gallery_entries ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0"
         )
+    if "bytes" not in columns:
+        conn.execute("ALTER TABLE gallery_entries ADD COLUMN bytes INTEGER")
     if "favorite" in _table_columns(conn, "gallery_entries"):
         conn.execute(
             """
@@ -777,6 +788,8 @@ def _build_gallery_entry(
     }
     if image_bytes:
         entry.update(_image_dimension_metadata(image_bytes))
+    if image_bytes is not None:
+        entry["bytes"] = len(image_bytes)
     if metadata:
         entry.update(
             {
@@ -818,6 +831,7 @@ def import_gallery_entries(
                     normalized = _normalize_gallery_entry(entry)
                     if not normalized:
                         continue
+                    normalized["bytes"] = len(image_bytes)
                     _save_image_unlocked(image_bytes, normalized["filename"])
                     _insert_gallery_entries_on_conn(conn, [normalized])
                     imported_count += 1
@@ -878,6 +892,13 @@ async def batch_save_and_update_gallery(
     return [GalleryEntry(**entry) for entry in entries_created]
 
 
+def _stat_image_bytes(filename: str) -> int | None:
+    try:
+        return get_image_path(filename).stat().st_size
+    except OSError:
+        return None
+
+
 def get_gallery_count(filters: dict[str, Any] | None = None) -> int:
     _ensure_database()
     with _connect() as conn:
@@ -891,29 +912,40 @@ def get_gallery_count(filters: dict[str, Any] | None = None) -> int:
 
 def get_gallery_total_bytes(filters: dict[str, Any] | None = None) -> int:
     _ensure_database()
-    total_bytes = 0
-    seen_filenames: set[str] = set()
     with _connect() as conn:
         where_sql, params = _build_gallery_filter_where(filters)
         rows = conn.execute(
             f"""
-            SELECT DISTINCT filename
+            SELECT filename, MAX(bytes) AS bytes
             FROM gallery_entries
             {where_sql}
+            GROUP BY filename
             """,
             params,
         ).fetchall()
 
-    for row in rows:
-        filename = row["filename"]
-        if not filename or filename in seen_filenames:
-            continue
-        seen_filenames.add(filename)
-        path = get_image_path(filename)
-        try:
-            total_bytes += path.stat().st_size
-        except OSError:
-            continue
+        total_bytes = 0
+        backfills: list[tuple[int, str]] = []
+        for row in rows:
+            filename = row["filename"]
+            if not filename:
+                continue
+            stored_bytes = row["bytes"]
+            if stored_bytes is not None:
+                total_bytes += int(stored_bytes)
+                continue
+            size = _stat_image_bytes(filename)
+            if size is None:
+                continue
+            total_bytes += size
+            backfills.append((size, filename))
+
+        if backfills:
+            with _transaction(conn):
+                conn.executemany(
+                    "UPDATE gallery_entries SET bytes = ? WHERE filename = ? AND bytes IS NULL",
+                    backfills,
+                )
 
     return total_bytes
 

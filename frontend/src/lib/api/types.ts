@@ -85,6 +85,7 @@ export type GalleryEntry = {
   api_preset_name?: string | null;
   duration?: string | null;
   favorite: boolean;
+  bytes?: number | null;
 };
 
 export type GalleryResponse = {

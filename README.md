@@ -40,7 +40,7 @@ Key characteristics:
 - configurable concurrency and queue limits shared by generation and edit jobs
 - optional per-job webhook callback (`webhook_url`) with HTTPS validation, SSRF protection, signed delivery, and retry
 - upload or gallery-based edit source selection with clickable source preview
-- gallery with pagination, prompt/model/preset/size/date/favorites filters, favorite toggles, lightbox, per-image "Edit this image" actions, download, validated ZIP export/import with `metadata.json`, delete, delete all, copy prompt, copy image URL, and total image size display
+- gallery with pagination, prompt/model/preset/size/date/favorites filters, favorite toggles, lightbox, per-image "Edit this image" actions, download, low-memory ZIP export/import with `metadata.json`, delete, delete all, copy prompt, copy image URL, and total image size display backed by persisted file-size metadata
 - optional site access key with session unlock
 - optional IP allowlist and reverse proxy header support
 - app version badge with GitHub `VERSION` update detection
@@ -91,7 +91,7 @@ npm --prefix frontend run build
 Runtime persistent storage is minimal:
 
 - generated images are saved in the `images/` directory
-- gallery metadata and API presets are stored in SQLite at `data/app.sqlite3`, including generation duration
+- gallery metadata, image byte sizes, and API presets are stored in SQLite at `data/app.sqlite3`, including generation duration
 - generation job status, errors, timing, and result metadata are stored in SQLite at `data/app.sqlite3`
 - active `asyncio.Task` handles live only in process memory; queued/running jobs from a previous process are marked interrupted on startup
 
@@ -396,6 +396,8 @@ The panel supports these upstream paths:
 - API keys are masked in the UI but stored as plain text in SQLite.
 - Existing `data/settings.json` and `data/gallery.json` files are imported once when the matching database tables are empty.
 - `/api/import` only accepts valid ZIP archives with safe paths and required `metadata.json`, and enforces archive/file-size, file-count, metadata-size, and compression-ratio limits during validation.
+- `/api/download-all` builds export ZIP files on disk in a worker thread and removes the temporary file after the response completes, so large galleries do not need to be fully buffered in memory.
+- Gallery image byte sizes are stored with each entry; `/api/gallery` uses this metadata for total-size calculations and backfills older rows from file stats when needed.
 - Uploaded edit source images must be supported raster image formats; SVG uploads are rejected.
 - On startup, the backend scans `IMAGES_DIR` and removes gallery metadata entries whose image files are missing.
 - On startup, queued/running jobs persisted by a previous process are marked as interrupted because their task handles cannot survive restart.
@@ -482,7 +484,7 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 - 生成和编辑任务共享可配置的并发上限与排队上限
 - 支持每个任务可选 `webhook_url` 回调：仅允许 HTTPS，带 SSRF 防护、签名投递与重试
 - 支持上传图片或选择 Gallery 图片作为编辑源，并可在提交前预览编辑源
-- Gallery：分页、按 prompt/model/preset/尺寸/日期/收藏筛选、收藏切换、Lightbox、卡片/Lightbox 直接 “Edit this image”、生成所用预设、下载、带 `metadata.json` 的 ZIP 导出/导入（导入含安全校验）、删除、全部删除、复制提示词、复制图片链接、耗时
+- Gallery：分页、按 prompt/model/preset/尺寸/日期/收藏筛选、收藏切换、Lightbox、卡片/Lightbox 直接 “Edit this image”、生成所用预设、下载、低内存占用的带 `metadata.json` ZIP 导出/导入（导入含安全校验）、删除、全部删除、复制提示词、复制图片链接、基于持久化文件大小元数据的总大小显示
 - 可选站点访问密钥
 - 可选 IP 白名单和反向代理头支持
 - 头部显示当前版本，并可基于 GitHub 仓库 `VERSION` 检测新版本
@@ -533,7 +535,7 @@ npm --prefix frontend run build
 运行时持久化存储非常简单：
 
 - 生成的图片保存在 `images/` 目录
-- Gallery 元数据和 API 预设保存在 SQLite：`data/app.sqlite3`，包含真实图片宽高和生成耗时
+- Gallery 元数据、图片字节数和 API 预设保存在 SQLite：`data/app.sqlite3`，包含真实图片宽高和生成耗时
 - 生成/编辑任务的状态、错误、耗时、请求参数和结果元数据保存在 SQLite：`data/app.sqlite3`
 - 运行中的 `asyncio.Task` 句柄仅保存在进程内存中；重启后，上个进程遗留的排队/运行任务会被标记为 interrupted
 
@@ -839,6 +841,8 @@ curl http://localhost:9090/health
 - API Key 在界面中掩码展示，但会以明文保存到 SQLite。
 - 旧的 `data/settings.json` 和 `data/gallery.json` 会在对应数据库表为空时导入一次。
 - `/api/import` 只接受带安全路径且包含 `metadata.json` 的有效 ZIP，并会校验归档/文件体积、文件数量、metadata 大小和压缩比。
+- `/api/download-all` 会在线程中构建磁盘临时 ZIP，并在响应结束后删除临时文件，大 Gallery 导出时无需把完整 ZIP 缓存在内存中。
+- Gallery 图片字节数会随条目持久化保存；`/api/gallery` 使用该元数据计算总大小，并在旧数据缺失时从文件 stat 回填。
 - 上传作为编辑源图的文件必须是受支持的位图图片格式；SVG 上传会被拒绝。
 - 启动时后端会扫描 `IMAGES_DIR`，并移除图片文件已不存在的 Gallery 元数据条目。
 - 启动时，上个进程遗留的排队/运行任务会被标记为 interrupted，因为 `asyncio.Task` 句柄无法跨进程恢复。

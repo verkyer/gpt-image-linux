@@ -1,5 +1,6 @@
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from starlette.background import BackgroundTask
 from contextlib import asynccontextmanager
 import asyncio
 import json
@@ -10,6 +11,7 @@ import logging
 import mimetypes
 import re
 import secrets
+import tempfile
 import time
 import uuid
 import zipfile
@@ -468,6 +470,14 @@ def dispatch_job_webhook(job: dict):
     asyncio.create_task(webhooks.deliver_webhook(webhook_url, job.copy()))
 
 
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def build_gallery_export_metadata(entries: list) -> dict:
     exported_at = datetime.now(timezone.utc).isoformat()
     images = []
@@ -477,7 +487,7 @@ def build_gallery_export_metadata(entries: list) -> dict:
         try:
             stat = path.stat()
             data["bytes"] = stat.st_size
-            data["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+            data["sha256"] = file_sha256(path)
         except OSError:
             data["bytes"] = None
         images.append(data)
@@ -491,6 +501,48 @@ def build_gallery_export_metadata(entries: list) -> dict:
         },
         "images": images,
     }
+
+
+def build_gallery_zip_file(entries: list[GalleryEntry]) -> Path:
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+    temp_path = Path(temp_file.name)
+    temp_file.close()
+    used_names: set[str] = set()
+    exported_entries = []
+
+    try:
+        with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for entry in entries:
+                path = storage.get_image_path(entry.filename)
+                if not path.exists():
+                    continue
+
+                name = path.name
+                base = path.stem
+                ext = path.suffix
+                counter = 1
+                while name in used_names:
+                    name = f"{base}_{counter}{ext}"
+                    counter += 1
+                used_names.add(name)
+
+                zf.write(path, f"images/{name}")
+                exported_entries.append(entry.model_copy(update={"filename": name}))
+
+            metadata = build_gallery_export_metadata(exported_entries)
+            zf.writestr(
+                "metadata.json",
+                json.dumps(metadata, ensure_ascii=False, indent=2),
+            )
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
+
+    return temp_path
+
+
+def remove_file(path: Path):
+    path.unlink(missing_ok=True)
 
 
 def sanitize_import_filename(filename: str, fallback_ext: str = ".png") -> str:
@@ -1771,42 +1823,13 @@ async def download_all_images():
     if not entries:
         raise HTTPException(status_code=404, detail="No images in gallery")
 
-    buf = io.BytesIO()
-    used_names: set[str] = set()
-    exported_entries = []
-
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for entry in entries:
-            path = storage.get_image_path(entry.filename)
-            if not path.exists():
-                continue
-
-            name = path.name
-            base = path.stem
-            ext = path.suffix
-            counter = 1
-            while name in used_names:
-                name = f"{base}_{counter}{ext}"
-                counter += 1
-            used_names.add(name)
-
-            zf.write(path, f"images/{name}")
-            exported_entries.append(entry.model_copy(update={"filename": name}))
-
-        metadata = build_gallery_export_metadata(exported_entries)
-        zf.writestr(
-            "metadata.json",
-            json.dumps(metadata, ensure_ascii=False, indent=2),
-        )
-
-    buf.seek(0)
+    temp_path = await asyncio.to_thread(build_gallery_zip_file, entries)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    return StreamingResponse(
-        buf,
+    return FileResponse(
+        temp_path,
         media_type="application/zip",
-        headers={
-            "Content-Disposition": f'attachment; filename="gpt-images-{timestamp}.zip"',
-        },
+        filename=f"gpt-images-{timestamp}.zip",
+        background=BackgroundTask(remove_file, temp_path),
     )
 
 

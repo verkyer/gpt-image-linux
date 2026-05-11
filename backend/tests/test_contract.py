@@ -433,7 +433,13 @@ def test_edit_upload_and_gallery_flow(client):
 
 def test_gallery_image_download_and_zip(client):
     entry = _fake_gallery_entry("gallery-zip", "zip me", "1024x1024", "gallery-zip.png")
-    assert entry is not None
+    assert entry.bytes == len(PNG_BYTES)
+
+    gallery = client.get("/api/gallery")
+    assert gallery.status_code == 200
+    gallery_data = gallery.json()
+    assert gallery_data["images"][0]["bytes"] == len(PNG_BYTES)
+    assert gallery_data["total_bytes"] == len(PNG_BYTES)
 
     image = client.get("/api/image/gallery-zip.png")
     assert image.status_code == 200
@@ -457,6 +463,10 @@ def test_import_archive(client):
     assert resp.status_code == 200
     assert resp.json()["status"] == "success"
     assert resp.json()["imported"] == 1
+
+    imported = storage.get_gallery_entry("import-1")
+    assert imported is not None
+    assert imported.bytes == len(PNG_BYTES)
 
 
 @pytest.mark.parametrize(
