@@ -217,12 +217,21 @@ export function changeGalleryPage(delta) {
   loadGallery(nextPage);
 }
 
-export async function deleteImage(id) {
-  if (!confirm('Delete this image from gallery?')) return;
+export async function deleteImage(eventOrId, maybeId) {
+  if (eventOrId?.preventDefault) {
+    eventOrId.preventDefault();
+    eventOrId.stopPropagation();
+    eventOrId.stopImmediatePropagation?.();
+  }
+
+  const id = maybeId || eventOrId;
+  if (!id || !confirm('Delete this image from gallery?')) return;
+
   try {
     await apiFetch('/api/gallery/' + encodeURIComponent(id), {
       method: 'DELETE',
     }, 'deleting image');
+    if (activeLightboxImage?.id === id) closeLightbox();
     await loadGallery(galleryPage);
     showToast('Image deleted', 'success');
   } catch (e) {
@@ -437,7 +446,13 @@ function renderFavoriteButton(button, image) {
   button.querySelector('svg')?.setAttribute('fill', favorite ? 'currentColor' : 'none');
 }
 
-export function openLightbox(imageId) {
+export function openLightbox(eventOrImageId) {
+  const clickTarget = eventOrImageId?.target;
+  if (clickTarget?.closest?.('[data-gallery-action]')) return;
+
+  const imageId = typeof eventOrImageId === 'string'
+    ? eventOrImageId
+    : eventOrImageId?.currentTarget?.dataset?.imageId;
   const image = galleryById.get(imageId);
   if (!image) return;
 
@@ -523,11 +538,12 @@ function renderGalleryCard(img) {
 
   return `
     <div class="gallery-card bg-zinc-900/60 border border-zinc-800 rounded-xl overflow-hidden">
-      <div class="relative cursor-pointer group" data-image-id="${escapedImageIdAttr}" onclick="openLightbox(this.dataset.imageId)">
+      <div class="relative cursor-pointer group" data-image-id="${escapedImageIdAttr}" onclick="openLightbox(event)">
         <img src="${imagePath}" alt="${escapedPromptAttr}"
           class="w-full aspect-square object-cover bg-zinc-800" loading="lazy">
         <button type="button"
           onclick="toggleGalleryFavorite(event, this)"
+          data-gallery-action="favorite"
           data-image-id="${escapedImageIdAttr}"
           data-favorite="${img.favorite ? 'true' : 'false'}"
           class="absolute right-2 top-2 z-10 p-1.5 rounded-lg border transition-colors ${favoriteClass}"
@@ -537,7 +553,8 @@ function renderGalleryCard(img) {
           </svg>
         </button>
         <button type="button"
-          onclick="event.stopPropagation(); prepareGalleryImageForEdit(this.dataset.imageId, this.dataset.filename)"
+          onclick="event.preventDefault(); event.stopPropagation(); prepareGalleryImageForEdit(this.dataset.imageId, this.dataset.filename)"
+          data-gallery-action="edit"
           data-image-id="${escapedImageIdAttr}"
           data-filename="${escapedFilenameAttr}"
           class="absolute left-2 bottom-2 z-10 p-1.5 rounded-lg bg-zinc-950/80 text-zinc-200 border border-zinc-700/80 hover:text-sky-300 hover:border-sky-400/40 hover:bg-zinc-900 transition-colors"
@@ -556,29 +573,33 @@ function renderGalleryCard(img) {
           <span class="text-xs text-zinc-600">${timeStr}</span>
           <div class="flex gap-1">
             <a href="${downloadPath}" download
+              data-gallery-action="download"
               class="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"
               onclick="event.stopPropagation()">
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
               </svg>
             </a>
-            <button onclick="event.stopPropagation(); deleteImage(this.dataset.imageId)"
+            <button type="button" onclick="deleteImage(event, this.dataset.imageId)"
+              data-gallery-action="delete"
               data-image-id="${escapedImageIdAttr}"
               class="p-1.5 rounded-lg text-zinc-500 hover:text-red-400 hover:bg-red-900/20 transition-colors"
-              title="Delete">
+              title="Delete" aria-label="Delete">
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
               </svg>
             </button>
-            <button onclick="copyPrompt(event, this)"
+            <button type="button" onclick="copyPrompt(event, this)"
+              data-gallery-action="copy-prompt"
               data-prompt="${escapedPromptAttr}"
               class="p-1.5 rounded-lg text-zinc-500 hover:text-emerald-400 hover:bg-emerald-900/20 transition-colors"
-              title="Copy prompt">
+              title="Copy prompt" aria-label="Copy prompt">
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
               </svg>
             </button>
-            <button onclick="copyImageUrl(event, this)"
+            <button type="button" onclick="copyImageUrl(event, this)"
+              data-gallery-action="copy-url"
               data-filename="${escapeAttribute(img.filename)}"
               class="p-1.5 rounded-lg text-zinc-500 hover:text-sky-300 hover:bg-sky-900/20 transition-colors"
               title="Copy image URL" aria-label="Copy image URL">

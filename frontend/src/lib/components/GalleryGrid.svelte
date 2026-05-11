@@ -35,6 +35,12 @@
     if (file) onImport(file);
     importInput.value = '';
   }
+
+  function handleGalleryAction(event: MouseEvent, action: () => void) {
+    event.preventDefault();
+    event.stopPropagation();
+    action();
+  }
 </script>
 
 <section class="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 sm:p-5">
@@ -115,10 +121,10 @@
               <p class="mt-1 text-xs text-zinc-500">{image.size} / {image.model || '-'}</p>
             </div>
             <div class="flex flex-wrap gap-2">
-              <button type="button" class="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800" on:click={() => onEdit(image)}>{$t.common.edit}</button>
-              <button type="button" class="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800" on:click={() => onFavorite(image)}>{image.favorite ? $t.common.unfavorite : $t.common.favorite}</button>
-              <a href={`/api/download/${encodeURIComponent(image.filename)}`} class="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800">{$t.common.download}</a>
-              <button type="button" class="rounded-md border border-red-500/40 px-2 py-1 text-xs text-red-300 hover:bg-red-500/10" on:click={() => onDelete(image)}>{$t.common.delete}</button>
+              <button type="button" class="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800" on:click={(event) => handleGalleryAction(event, () => onEdit(image))}>{$t.common.edit}</button>
+              <button type="button" class="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800" on:click={(event) => handleGalleryAction(event, () => onFavorite(image))}>{image.favorite ? $t.common.unfavorite : $t.common.favorite}</button>
+              <a href={`/api/download/${encodeURIComponent(image.filename)}`} class="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800" on:click|stopPropagation>{$t.common.download}</a>
+              <button type="button" class="rounded-md border border-red-500/40 px-2 py-1 text-xs text-red-300 hover:bg-red-500/10" on:click={(event) => handleGalleryAction(event, () => onDelete(image))}>{$t.common.delete}</button>
             </div>
           </div>
         </article>
