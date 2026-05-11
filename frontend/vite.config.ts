@@ -5,9 +5,16 @@ export default defineConfig({
   plugins: [sveltekit()],
   server: {
     proxy: {
-      '/api': 'http://127.0.0.1:9090',
-      '/health': 'http://127.0.0.1:9090'
+      '/api': {
+        target: 'http://127.0.0.1:9090',
+        changeOrigin: false,
+        xfwd: true
+      },
+      '/health': {
+        target: 'http://127.0.0.1:9090',
+        changeOrigin: false,
+        xfwd: true
+      }
     }
   }
 });
-

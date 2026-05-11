@@ -433,6 +433,24 @@ def test_csrf_origin_check_blocks_cross_site_state_changes(client, method, path,
     assert resp.json()["detail"] == "CSRF origin check failed"
 
 
+def test_csrf_origin_check_allows_same_origin_fetch_metadata_through_dev_proxy(tmp_path):
+    _configure_runtime(tmp_path, access_key="secret", allow_unauthenticated=False)
+
+    with TestClient(backend_main.app) as client:
+        resp = client.post(
+            "/api/access",
+            headers={
+                "Host": "127.0.0.1:9090",
+                "Origin": "http://localhost:5173",
+                "Sec-Fetch-Site": "same-origin",
+            },
+            json={"access_key": "secret"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["authenticated"] is True
+
+
 def test_csrf_origin_check_does_not_block_get(client):
     resp = client.get("/api/settings", headers={"Origin": "https://evil.example"})
 
@@ -456,9 +474,10 @@ def test_csrf_origin_check_respects_trusted_forwarded_proto(client):
     resp = client.post(
         "/api/settings/presets",
         headers={
-            "Host": "panel.example.com",
+            "Host": "127.0.0.1:9090",
             "Origin": "https://panel.example.com",
             "X-Forwarded-Proto": "https",
+            "X-Forwarded-Host": "panel.example.com",
         },
         json={"name": "Proxy Preset"},
     )

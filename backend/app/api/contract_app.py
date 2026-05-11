@@ -216,14 +216,17 @@ def normalize_origin(value: str | None) -> str | None:
 
 def get_request_origin(request: Request) -> str | None:
     scheme = request.url.scheme
+    host = request.headers.get("host") or request.url.netloc
     if config.TRUST_PROXY_HEADERS:
         forwarded_proto = request.headers.get("x-forwarded-proto")
         if forwarded_proto:
             trusted_scheme = forwarded_proto.split(",", 1)[0].strip().lower()
             if trusted_scheme in {"http", "https"}:
                 scheme = trusted_scheme
+        forwarded_host = request.headers.get("x-forwarded-host")
+        if forwarded_host:
+            host = forwarded_host.split(",", 1)[0].strip()
 
-    host = request.headers.get("host") or request.url.netloc
     return normalize_origin(f"{scheme}://{host}")
 
 
@@ -237,6 +240,12 @@ def csrf_origin_allowed(request: Request) -> bool:
     expected_origin = get_request_origin(request)
     if not expected_origin:
         return False
+
+    # Browser fetch metadata reflects the page-visible request target before a
+    # local/dev proxy rewrites the upstream Host header.
+    sec_fetch_site = request.headers.get("sec-fetch-site", "").strip().lower()
+    if sec_fetch_site == "same-origin":
+        return True
 
     origin = request.headers.get("origin")
     if origin is not None:
