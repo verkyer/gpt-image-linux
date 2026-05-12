@@ -510,6 +510,127 @@ def test_settings_and_presets(client):
     assert len(created.json()["presets"]) == 2
 
 
+def test_preset_health_and_env_api_key_resolution(client, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "env-secret")
+    settings = client.get("/api/settings").json()
+    active_preset_id = settings["active_preset_id"]
+    seen: dict[str, str] = {}
+
+    async def fake_probe(api_url, api_path, api_key=""):
+        seen["probe_url"] = api_url
+        seen["probe_path"] = api_path
+        seen["probe_key"] = api_key
+        return {
+            "status": "ok",
+            "message": "OPTIONS probe succeeded with HTTP 204",
+        }
+
+    async def fake_generation_api(
+        api_url,
+        api_key,
+        api_path,
+        payload,
+        api_preset_name=None,
+        progress=None,
+    ):
+        seen["generation_key"] = api_key
+        image_id = storage.generate_image_id()
+        filename = f"{image_id}.png"
+        entry = await storage.add_to_gallery_async(
+            image_bytes=PNG_BYTES,
+            image_id=image_id,
+            prompt=payload.prompt,
+            size=payload.size,
+            filename=filename,
+            metadata={
+                "model": payload.model,
+                "quality": payload.quality,
+                "output_format": payload.output_format,
+                "output_compression": payload.output_compression,
+                "response_format": payload.response_format,
+                "n": payload.n,
+                "api_path": api_path,
+                "api_preset_name": api_preset_name,
+            },
+        )
+        return [entry]
+
+    monkeypatch.setattr(backend_main.proxy, "probe_upstream_endpoint", fake_probe)
+    monkeypatch.setattr(backend_main.proxy, "call_image_generation_api", fake_generation_api)
+
+    updated = client.post(
+        "/api/settings",
+        json={
+            "active_preset_id": active_preset_id,
+            "preset_name": "Env preset",
+            "api_url": "https://api.example.com",
+            "api_key": "${OPENAI_API_KEY}",
+            "api_path": "/v1/images/generations",
+        },
+    )
+    assert updated.status_code == 200
+    updated_body = updated.json()
+    assert updated_body["api_key_source"] == "env"
+    assert updated_body["api_key_env_var"] == "OPENAI_API_KEY"
+    assert updated_body["api_key_masked"] == "${OPENAI_API_KEY}"
+    assert "env-secret" not in json.dumps(updated_body)
+
+    health = client.post(f"/api/settings/presets/{active_preset_id}/health")
+    assert health.status_code == 200
+    assert health.json()["status"] == "ok"
+    assert seen["probe_key"] == "env-secret"
+
+    resp = client.post(
+        "/api/generate",
+        json={"prompt": "uses env", "model": "gpt-image-2"},
+    )
+    assert resp.status_code == 202
+    job = _wait_for_job(client, resp.json()["job_id"])
+    assert job["status"] == "success"
+    assert seen["generation_key"] == "env-secret"
+
+
+def test_missing_env_api_key_is_reported(client, monkeypatch):
+    monkeypatch.delenv("MISSING_IMAGE_KEY", raising=False)
+    settings = client.get("/api/settings").json()
+    active_preset_id = settings["active_preset_id"]
+
+    async def fake_probe(api_url, api_path, api_key=""):
+        return {
+            "status": "ok",
+            "message": "OPTIONS probe reached upstream with HTTP 401",
+        }
+
+    monkeypatch.setattr(backend_main.proxy, "probe_upstream_endpoint", fake_probe)
+    updated = client.post(
+        "/api/settings",
+        json={
+            "active_preset_id": active_preset_id,
+            "preset_name": "Missing env",
+            "api_url": "https://api.example.com",
+            "api_key": "${MISSING_IMAGE_KEY}",
+            "api_path": "/v1/images/generations",
+        },
+    )
+    assert updated.status_code == 200
+
+    health = client.post(f"/api/settings/presets/{active_preset_id}/health")
+    assert health.status_code == 200
+    body = health.json()
+    assert body["status"] == "error"
+    assert any(
+        check["name"] == "api_key" and check["status"] == "error"
+        for check in body["checks"]
+    )
+
+    resp = client.post(
+        "/api/generate",
+        json={"prompt": "missing env", "model": "gpt-image-2"},
+    )
+    assert resp.status_code == 400
+    assert "MISSING_IMAGE_KEY" in resp.json()["detail"]
+
+
 def test_generate_and_sse_contract(client):
     resp = client.post(
         "/api/generate",

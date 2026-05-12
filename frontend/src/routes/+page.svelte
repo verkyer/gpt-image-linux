@@ -20,6 +20,7 @@
     GenerateJobResponse,
     GenerateJobStatus,
     GenerateRequestBody,
+    PresetHealthResponse,
     SettingsResponse
   } from '$lib/api/types';
   import { accessStore } from '$lib/stores/access';
@@ -43,6 +44,8 @@
   let settings: SettingsResponse | null = null;
   let settingsOpen = false;
   let settingsSaving = false;
+  let settingsHealthChecking = false;
+  let settingsHealth: PresetHealthResponse | null = null;
   let jobsOpen = false;
   let gallery: GalleryResponse | null = null;
   let galleryLoading = false;
@@ -261,6 +264,7 @@
         },
         'saving settings'
       );
+      settingsHealth = null;
       settingsOpen = false;
       showToast($t.messages.presetSaved);
     } finally {
@@ -278,6 +282,7 @@
       },
       'creating preset'
     );
+    settingsHealth = null;
     showToast($t.messages.presetCreated);
   }
 
@@ -288,6 +293,7 @@
       { method: 'POST' },
       'switching preset'
     );
+    settingsHealth = null;
     showToast($t.messages.presetSwitched);
   }
 
@@ -300,7 +306,22 @@
       { method: 'DELETE' },
       'deleting preset'
     );
+    settingsHealth = null;
     showToast($t.messages.presetDeleted);
+  }
+
+  async function checkPresetHealth(presetId: string) {
+    if (!presetId) return;
+    settingsHealthChecking = true;
+    try {
+      settingsHealth = await apiFetch<PresetHealthResponse>(
+        `/api/settings/presets/${encodeURIComponent(presetId)}/health`,
+        { method: 'POST' },
+        'checking preset health'
+      );
+    } finally {
+      settingsHealthChecking = false;
+    }
   }
 
   function buildRequestBody(): GenerateRequestBody {
@@ -859,11 +880,14 @@
   open={settingsOpen}
   {settings}
   saving={settingsSaving}
+  health={settingsHealth}
+  healthChecking={settingsHealthChecking}
   onClose={() => (settingsOpen = false)}
   onSave={saveSettings}
   onCreate={createPreset}
   onActivate={activatePreset}
   onDelete={deleteActivePreset}
+  onHealthCheck={checkPresetHealth}
 />
 
 <JobHistoryDrawer

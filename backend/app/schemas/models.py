@@ -4,6 +4,8 @@ from datetime import datetime
 from urllib.parse import urlparse
 
 ApiPath = Literal["/v1/images/generations", "/v1/responses"]
+ApiKeySource = Literal["empty", "stored", "env"]
+PresetHealthStatus = Literal["ok", "warning", "error"]
 
 
 class ApiPresetResponse(BaseModel):
@@ -13,6 +15,8 @@ class ApiPresetResponse(BaseModel):
     api_path: ApiPath
     api_key_masked: str
     has_api_key: bool
+    api_key_source: ApiKeySource = "empty"
+    api_key_env_var: Optional[str] = None
 
 
 class PresetCreateRequest(BaseModel):
@@ -29,7 +33,10 @@ class SettingsRequest(BaseModel):
     api_url: str = Field(..., description="Base API URL, e.g. https://api.example.com")
     api_key: Optional[str] = Field(
         default=None,
-        description="API key for authentication. Omit/null to keep the current key.",
+        description=(
+            "API key for authentication, or ${ENV_VAR_NAME} to resolve from "
+            "the server environment. Omit/null to keep the current key."
+        ),
     )
     api_path: ApiPath = "/v1/images/generations"
 
@@ -39,8 +46,21 @@ class SettingsResponse(BaseModel):
     api_url: str
     api_key_masked: str
     has_api_key: bool
+    api_key_source: ApiKeySource = "empty"
+    api_key_env_var: Optional[str] = None
     api_path: ApiPath
     presets: list[ApiPresetResponse]
+
+
+class PresetHealthCheck(BaseModel):
+    name: str
+    status: PresetHealthStatus
+    message: str
+
+
+class PresetHealthResponse(BaseModel):
+    status: PresetHealthStatus
+    checks: list[PresetHealthCheck]
 
 
 class AccessRequest(BaseModel):

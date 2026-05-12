@@ -1,4 +1,5 @@
 import aiohttp
+import asyncio
 import base64
 import json
 import copy
@@ -26,6 +27,12 @@ UPSTREAM_TIMEOUT = aiohttp.ClientTimeout(
     connect=30,
     sock_connect=30,
     sock_read=600,
+)
+UPSTREAM_PROBE_TIMEOUT = aiohttp.ClientTimeout(
+    total=10,
+    connect=5,
+    sock_connect=5,
+    sock_read=10,
 )
 
 
@@ -193,6 +200,71 @@ def normalize_api_path(api_path: str) -> str:
     if api_path in {"/v1/images/generations", "/v1/responses"}:
         return api_path
     return "/v1/images/generations"
+
+
+def classify_probe_status(method: str, status: int) -> tuple[str, str]:
+    if status in {200, 204}:
+        return "ok", f"{method} probe succeeded with HTTP {status}"
+    if status in {401, 403}:
+        return "ok", f"{method} probe reached the endpoint and got HTTP {status}"
+    if status in {404, 410}:
+        return "error", f"{method} probe returned HTTP {status}; check API URL/path"
+    if status in {405, 501}:
+        return "warning", f"{method} probe is not supported by upstream (HTTP {status})"
+    if 300 <= status < 400:
+        return "error", f"{method} probe returned redirect HTTP {status}; redirects are not followed"
+    if status >= 500:
+        return "warning", f"{method} probe reached upstream but got HTTP {status}"
+    return "ok", f"{method} probe reached upstream with HTTP {status}"
+
+
+async def probe_upstream_endpoint(
+    api_url: str,
+    api_path: str,
+    api_key: str = "",
+) -> dict[str, Any]:
+    upstream_url = f"{api_url.rstrip('/')}{api_path}"
+    ssrf.validate_upstream_url(upstream_url, config.UPSTREAM_HOST_ALLOWLIST)
+
+    headers = {"User-Agent": "opencode"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    probe_errors: list[str] = []
+    unsupported_method_result: dict[str, Any] | None = None
+    async with aiohttp.ClientSession(timeout=UPSTREAM_PROBE_TIMEOUT) as session:
+        for method in ("OPTIONS", "HEAD"):
+            try:
+                async with session.request(
+                    method,
+                    upstream_url,
+                    headers=headers,
+                    allow_redirects=False,
+                ) as resp:
+                    ssrf.validate_response_peer_ip(resp, "Upstream API probe")
+                    status, message = classify_probe_status(method, resp.status)
+                    result = {
+                        "status": status,
+                        "message": message,
+                        "method": method,
+                        "status_code": resp.status,
+                    }
+                    if resp.status in {405, 501}:
+                        unsupported_method_result = result
+                        continue
+                    return result
+            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
+                probe_errors.append(f"{method}: {e}")
+
+    if unsupported_method_result:
+        return unsupported_method_result
+
+    return {
+        "status": "error",
+        "message": "Upstream probe failed: " + "; ".join(probe_errors),
+        "method": None,
+        "status_code": None,
+    }
 
 
 def get_upstream_error_message(

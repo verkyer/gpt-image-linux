@@ -1,4 +1,6 @@
 export type ApiPath = '/v1/images/generations' | '/v1/responses';
+export type ApiKeySource = 'empty' | 'stored' | 'env';
+export type PresetHealthStatus = 'ok' | 'warning' | 'error';
 
 export type ApiPreset = {
   id: string;
@@ -7,6 +9,8 @@ export type ApiPreset = {
   api_path: ApiPath;
   api_key_masked: string;
   has_api_key: boolean;
+  api_key_source: ApiKeySource;
+  api_key_env_var?: string | null;
 };
 
 export type SettingsResponse = {
@@ -14,8 +18,21 @@ export type SettingsResponse = {
   api_url: string;
   api_key_masked: string;
   has_api_key: boolean;
+  api_key_source: ApiKeySource;
+  api_key_env_var?: string | null;
   api_path: ApiPath;
   presets: ApiPreset[];
+};
+
+export type PresetHealthCheck = {
+  name: string;
+  status: PresetHealthStatus;
+  message: string;
+};
+
+export type PresetHealthResponse = {
+  status: PresetHealthStatus;
+  checks: PresetHealthCheck[];
 };
 
 export type AccessStatus = {

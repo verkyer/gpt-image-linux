@@ -265,13 +265,14 @@ curl http://localhost:9090/health
 4. choose an existing preset or click New
 5. enter the API base URL
 6. choose the API path
-7. enter the API key
-8. click Save Preset
-9. enter a prompt
-10. choose generation options
-11. click Generate
-12. optionally click Upload (or pick "Edit this image" in Gallery/Lightbox), then click Edits to run image-to-image
-13. view preview and gallery
+7. enter the API key, or an env ref such as `${OPENAI_API_KEY}`
+8. optionally run Health check for the saved preset
+9. click Save Preset
+10. enter a prompt
+11. choose generation options
+12. click Generate
+13. optionally click Upload (or pick "Edit this image" in Gallery/Lightbox), then click Edits to run image-to-image
+14. view preview and gallery
 
 ## API paths
 
@@ -296,6 +297,13 @@ The panel supports these upstream paths:
 - sends multipart/form-data with `image` plus supported edit parameters (source image can come from upload or gallery file)
 - uploaded source files must be supported raster image formats; SVG uploads are rejected
 - if the upstream returns `404`, `405`, or `501`, the UI reports that `/v1/images/edits` is not supported and stops the edit request
+
+## API preset health checks
+
+- `POST /api/settings/presets/{preset_id}/health` validates the saved preset without sending a generation request
+- checks include API path allowability, HTTPS URL/hostname validation, upstream host allowlist and SSRF DNS/private-IP validation, API key/env-ref presence, and a low-cost `OPTIONS`/`HEAD` upstream probe
+- returned shape is `{ status, checks: [{ name, status, message }] }`, where each status is `ok`, `warning`, or `error`
+- API key env refs use the exact `${ENV_VAR_NAME}` form; the database stores the reference string and generation/edit calls resolve it from the server environment at request time
 
 ## Image size modes
 
@@ -324,7 +332,7 @@ The panel supports these upstream paths:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DEFAULT_API_URL` | empty | Pre-fill API base URL |
-| `DEFAULT_API_KEY` | empty | Pre-fill API key |
+| `DEFAULT_API_KEY` | empty | Pre-fill API key; may be a literal key or an env ref such as `${OPENAI_API_KEY}` |
 | `DEFAULT_API_PATH` | `/v1/images/generations` | Default upstream path |
 | `DEFAULT_RESPONSES_MODEL` | `gpt-5.4` | Top-level model used when calling `/v1/responses` |
 | `APP_VERSION` | `VERSION` file | Override the app version shown in the UI and returned by `/api/version` |
@@ -367,6 +375,7 @@ The panel supports these upstream paths:
 | `GET` | `/api/settings` | Get current settings and presets |
 | `POST` | `/api/settings/presets` | Create and activate an API preset |
 | `POST` | `/api/settings/presets/{preset_id}/activate` | Activate an API preset |
+| `POST` | `/api/settings/presets/{preset_id}/health` | Validate a saved API preset and run a low-cost upstream probe |
 | `DELETE` | `/api/settings/presets/{preset_id}` | Delete an API preset |
 | `POST` | `/api/generate` | Start an image generation job |
 | `POST` | `/api/edits` | Start an image edit job with multipart image upload |
@@ -398,7 +407,7 @@ The panel supports these upstream paths:
 - Image URLs returned by upstream APIs are downloaded without automatic redirect following; redirect targets and final peer IPs are revalidated, and downloads are bounded by `MAX_FILE_SIZE_MB` while streaming.
 - Generation and edit jobs share one queue; concurrency is limited by `MAX_ACTIVE_GENERATE_JOBS`, queued capacity is limited by `MAX_QUEUED_GENERATE_JOBS`, and overflow requests return `429`.
 - If the database has no presets, the default preset is initialized from `DEFAULT_API_URL`, `DEFAULT_API_KEY`, and `DEFAULT_API_PATH`.
-- API keys are masked in the UI but stored as plain text in SQLite.
+- API keys are masked in the UI. Presets may store `${ENV_VAR_NAME}` instead of a real key; the UI labels it as an env ref, SQLite stores only that reference, and generation/edit/health-check calls resolve the real value from the server environment. Literal keys are still stored as provided.
 - Existing `data/settings.json` and `data/gallery.json` files are imported once when the matching database tables are empty.
 - `/api/import` only accepts valid ZIP archives with safe paths and required `metadata.json`, and enforces archive/file-size, file-count, metadata-size, and compression-ratio limits during validation.
 - `/api/download-all` builds export ZIP files on disk in a worker thread and removes the temporary file after the response completes, so large galleries do not need to be fully buffered in memory.
@@ -717,13 +726,14 @@ curl http://localhost:9090/health
 4. 选择已有预设，或点击 New 新建预设
 5. 填写 API Base URL
 6. 选择 API Path
-7. 填写 API Key
-8. 点击 Save Preset
-9. 输入提示词
-10. 选择生成参数
-11. 点击 Generate
-12. 也可以点击 Upload 选择图片，再点击 Edits 执行图生图
-13. 查看预览和 Gallery
+7. 填写 API Key，或填写 `${OPENAI_API_KEY}` 这类环境变量引用
+8. 可选：对已保存预设执行 Health check
+9. 点击 Save Preset
+10. 输入提示词
+11. 选择生成参数
+12. 点击 Generate
+13. 也可以点击 Upload 选择图片，再点击 Edits 执行图生图
+14. 查看预览和 Gallery
 
 ## 支持的 API Path
 
@@ -748,6 +758,13 @@ curl http://localhost:9090/health
 - 使用 multipart/form-data 发送 `image` 和支持的编辑参数（源图片可来自上传或 Gallery）
 - 上传的源图必须是受支持的位图图片格式；SVG 上传会被拒绝
 - 如果上游返回 `404`、`405` 或 `501`，界面会提示 `/v1/images/edits` 不受支持并停止编辑请求
+
+## API 预设健康检查
+
+- `POST /api/settings/presets/{preset_id}/health` 会校验已保存预设，不会发送真实生成请求
+- 检查项包括 API Path 是否允许、HTTPS URL/hostname、上游 host allowlist、SSRF DNS/内网 IP 校验、API Key/环境变量引用是否可用，以及低成本 `OPTIONS`/`HEAD` 上游探测
+- 返回结构为 `{ status, checks: [{ name, status, message }] }`，状态值为 `ok`、`warning` 或 `error`
+- API Key 环境变量引用必须使用完整的 `${ENV_VAR_NAME}` 格式；数据库只保存引用字符串，生成/编辑请求会在执行时从服务端环境变量解析真实值
 
 ## 图像尺寸模式
 
@@ -776,7 +793,7 @@ curl http://localhost:9090/health
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `DEFAULT_API_URL` | 空 | 预填 API Base URL |
-| `DEFAULT_API_KEY` | 空 | 预填 API Key |
+| `DEFAULT_API_KEY` | 空 | 预填 API Key；可以是真实 key，也可以是 `${OPENAI_API_KEY}` 这类环境变量引用 |
 | `DEFAULT_API_PATH` | `/v1/images/generations` | 默认上游路径 |
 | `DEFAULT_RESPONSES_MODEL` | `gpt-5.4` | 调用 `/v1/responses` 时使用的顶层模型 |
 | `APP_VERSION` | `VERSION` 文件 | 覆盖界面显示和 `/api/version` 返回的当前应用版本 |
@@ -819,6 +836,7 @@ curl http://localhost:9090/health
 | `GET` | `/api/settings` | 获取当前设置和预设列表 |
 | `POST` | `/api/settings/presets` | 新建并激活 API 预设 |
 | `POST` | `/api/settings/presets/{preset_id}/activate` | 激活 API 预设 |
+| `POST` | `/api/settings/presets/{preset_id}/health` | 校验已保存 API 预设并执行低成本上游探测 |
 | `DELETE` | `/api/settings/presets/{preset_id}` | 删除 API 预设 |
 | `POST` | `/api/generate` | 创建图像生成任务 |
 | `POST` | `/api/edits` | 使用 multipart 图片上传创建图像编辑任务 |
@@ -849,7 +867,7 @@ curl http://localhost:9090/health
 - 上游返回的图片 URL 下载不会自动跟随重定向；重定向目标和最终 peer IP 会重新校验，下载流式读取且受 `MAX_FILE_SIZE_MB` 限制。
 - 生成和编辑任务共享同一个队列；并发数受 `MAX_ACTIVE_GENERATE_JOBS` 限制，排队容量受 `MAX_QUEUED_GENERATE_JOBS` 限制，超出时请求返回 `429`。
 - 如果数据库中没有 preset，默认预设会使用 `DEFAULT_API_URL`、`DEFAULT_API_KEY` 和 `DEFAULT_API_PATH` 初始化。
-- API Key 在界面中掩码展示，但会以明文保存到 SQLite。
+- API Key 在界面中掩码展示。预设可以保存 `${ENV_VAR_NAME}` 代替真实 key；界面会标记为环境变量引用，SQLite 只保存该引用，生成/编辑/健康检查会从服务端环境变量解析真实值。直接填写真实 key 时仍会按原样保存。
 - 旧的 `data/settings.json` 和 `data/gallery.json` 会在对应数据库表为空时导入一次。
 - `/api/import` 只接受带安全路径且包含 `metadata.json` 的有效 ZIP，并会校验归档/文件体积、文件数量、metadata 大小和压缩比。
 - `/api/download-all` 会在线程中构建磁盘临时 ZIP，并在响应结束后删除临时文件，大 Gallery 导出时无需把完整 ZIP 缓存在内存中。

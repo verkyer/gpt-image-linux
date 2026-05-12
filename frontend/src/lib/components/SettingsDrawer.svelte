@@ -1,32 +1,42 @@
 <script lang="ts">
   import { t } from '$lib/i18n';
-  import type { ApiPath, ApiPreset, SettingsResponse } from '$lib/api/types';
+  import type { ApiPath, ApiPreset, PresetHealthResponse, PresetHealthStatus, SettingsResponse } from '$lib/api/types';
 
   const MASKED_API_KEY_VALUE = '********';
 
   export let open = false;
   export let settings: SettingsResponse | null = null;
   export let saving = false;
+  export let health: PresetHealthResponse | null = null;
+  export let healthChecking = false;
   export let onClose: () => void = () => {};
   export let onSave: (body: Record<string, unknown>) => Promise<void> | void = () => {};
   export let onCreate: () => Promise<void> | void = () => {};
   export let onActivate: (presetId: string) => Promise<void> | void = () => {};
   export let onDelete: () => Promise<void> | void = () => {};
+  export let onHealthCheck: (presetId: string) => Promise<void> | void = () => {};
 
   let activePresetId = '';
   let presetName = '';
   let apiUrl = '';
   let apiKey = '';
   let apiPath: ApiPath = '/v1/images/generations';
+  let apiKeyInputType = 'password';
 
   $: activePreset = settings?.presets.find((preset) => preset.id === settings.active_preset_id) || settings?.presets[0] || null;
   $: if (settings && activePreset) {
     activePresetId = settings.active_preset_id;
     presetName = activePreset.name || '';
     apiUrl = activePreset.api_url || settings.api_url || '';
-    apiKey = activePreset.has_api_key || settings.has_api_key ? MASKED_API_KEY_VALUE : '';
+    apiKey =
+      activePreset.api_key_source === 'env' && activePreset.api_key_env_var
+        ? `\${${activePreset.api_key_env_var}}`
+        : activePreset.has_api_key || settings.has_api_key
+          ? MASKED_API_KEY_VALUE
+          : '';
     apiPath = activePreset.api_path || settings.api_path || '/v1/images/generations';
   }
+  $: apiKeyInputType = apiKey.trim().startsWith('${') && apiKey.trim().endsWith('}') ? 'text' : 'password';
 
   async function save() {
     await onSave({
@@ -39,7 +49,33 @@
   }
 
   function keyLabel(preset: ApiPreset) {
+    if (preset.api_key_source === 'env') {
+      return `${$t.settings.envRef}: ${preset.api_key_env_var || preset.api_key_masked}`;
+    }
     return preset.has_api_key ? preset.api_key_masked : $t.common.noKey;
+  }
+
+  async function checkHealth() {
+    if (!activePresetId) return;
+    await onHealthCheck(activePresetId);
+  }
+
+  function healthStatusLabel(status: PresetHealthStatus) {
+    if (status === 'ok') return $t.settings.healthOk;
+    if (status === 'warning') return $t.settings.healthWarning;
+    return $t.settings.healthError;
+  }
+
+  function healthPanelClass(status: PresetHealthStatus) {
+    if (status === 'ok') return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100';
+    if (status === 'warning') return 'border-amber-500/40 bg-amber-500/10 text-amber-100';
+    return 'border-red-500/40 bg-red-500/10 text-red-100';
+  }
+
+  function healthBadgeClass(status: PresetHealthStatus) {
+    if (status === 'ok') return 'border-emerald-500/40 text-emerald-300';
+    if (status === 'warning') return 'border-amber-500/40 text-amber-300';
+    return 'border-red-500/40 text-red-300';
   }
 </script>
 
@@ -119,20 +155,54 @@
           </label>
           <label class="block">
             <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.settings.apiKey}</span>
-            <input bind:value={apiKey} type="password" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 font-mono text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none" />
+            <input bind:value={apiKey} type={apiKeyInputType} class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 font-mono text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none" />
+            <span class="mt-1.5 block text-xs text-zinc-500">{$t.settings.apiKeyHint}</span>
           </label>
         </div>
       </div>
 
-      <div class="border-t border-zinc-800 p-5">
-        <button
-          type="button"
-          disabled={saving}
-          class="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
-          on:click={save}
-        >
-          {saving ? $t.settings.saving : $t.settings.savePreset}
-        </button>
+      <div class="space-y-3 border-t border-zinc-800 p-5">
+        {#if health}
+          <div class={`rounded-lg border p-3 text-xs ${healthPanelClass(health.status)}`}>
+            <div class="flex items-center justify-between gap-3">
+              <span class="font-semibold">{$t.settings.healthStatus}</span>
+              <span class={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${healthBadgeClass(health.status)}`}>
+                {healthStatusLabel(health.status)}
+              </span>
+            </div>
+            <div class="mt-2 space-y-1.5">
+              {#each health.checks as check}
+                <div class="rounded-md border border-zinc-800 bg-zinc-950/50 p-2 text-zinc-300">
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="font-mono text-[11px] text-zinc-500">{check.name}</span>
+                    <span class={`rounded border px-1.5 py-0.5 text-[10px] font-semibold ${healthBadgeClass(check.status)}`}>
+                      {healthStatusLabel(check.status)}
+                    </span>
+                  </div>
+                  <div class="mt-1 leading-relaxed text-zinc-400">{check.message}</div>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
+        <div class="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            disabled={healthChecking || !activePresetId}
+            class="rounded-xl border border-zinc-700 px-4 py-3 text-sm font-semibold text-zinc-200 transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+            on:click={checkHealth}
+          >
+            {healthChecking ? $t.settings.healthChecking : $t.settings.healthCheck}
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            class="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+            on:click={save}
+          >
+            {saving ? $t.settings.saving : $t.settings.savePreset}
+          </button>
+        </div>
       </div>
     </aside>
   </div>
