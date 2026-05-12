@@ -15,6 +15,7 @@ from typing import Any, Iterator
 from urllib.parse import quote
 
 from ..core import settings as config
+from ..core.api_paths import normalize_api_preset
 from ..schemas.models import GalleryEntry
 
 try:
@@ -400,23 +401,12 @@ def _normalize_settings(settings: dict | None) -> dict:
         if not isinstance(preset, dict):
             continue
 
-        preset_id = str(preset.get("id") or f"preset-{index + 1}")
+        normalized_preset = normalize_api_preset(preset, f"preset-{index + 1}")
+        preset_id = normalized_preset["id"]
         if preset_id in seen_ids:
             continue
         seen_ids.add(preset_id)
-
-        presets.append(
-            {
-                "id": preset_id,
-                "name": str(preset.get("name") or "Untitled preset").strip()
-                or "Untitled preset",
-                "api_url": str(preset.get("api_url") or "").rstrip("/"),
-                "api_key": str(preset.get("api_key") or ""),
-                "api_path": str(
-                    preset.get("api_path") or config.DEFAULT_API_PATH
-                ),
-            }
-        )
+        presets.append(normalized_preset)
 
     if not presets:
         return _default_settings()

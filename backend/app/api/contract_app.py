@@ -1,6 +1,7 @@
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 import asyncio
 import json
@@ -21,6 +22,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 from ..core import settings as config
+from ..core.api_paths import ALLOWED_API_PATHS, normalize_api_path, normalize_api_preset
 from ..schemas.models import (
     AccessRequest,
     AccessStatusResponse,
@@ -321,7 +323,6 @@ def mask_key(key: str) -> str:
     return key[:4] + "***" + key[-4:]
 
 
-ALLOWED_API_PATHS = {"/v1/images/generations", "/v1/responses"}
 API_KEY_ENV_REF_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 
 
@@ -396,17 +397,7 @@ def get_effective_preset_api_key(preset: dict) -> str:
 
 
 def sanitize_api_preset(preset: dict, fallback_id: str = "default") -> dict:
-    preset_id = str(preset.get("id") or fallback_id)
-    return {
-        "id": preset_id,
-        "name": str(preset.get("name") or "Untitled preset").strip()
-        or "Untitled preset",
-        "api_url": str(preset.get("api_url") or "").rstrip("/"),
-        "api_key": str(preset.get("api_key") or "").strip(),
-        "api_path": normalize_api_path(
-            str(preset.get("api_path") or "/v1/images/generations")
-        ),
-    }
+    return normalize_api_preset(preset, fallback_id)
 
 
 def persist_api_settings():
@@ -1049,12 +1040,6 @@ def set_generate_job_progress(
     )
 
 
-def normalize_api_path(api_path: str) -> str:
-    if api_path in ALLOWED_API_PATHS:
-        return api_path
-    return "/v1/images/generations"
-
-
 def is_image_upload(upload: UploadFile) -> bool:
     suffix = Path(upload.filename or "").suffix.lower()
     if suffix not in IMAGE_UPLOAD_EXTENSIONS:
@@ -1521,29 +1506,37 @@ async def check_settings_preset_health(preset_id: str):
     return PresetHealthResponse(status=health_status(checks), checks=checks)
 
 
-async def run_generate_job(
+async def _run_image_job(
+    *,
     job_id: str,
     api_url: str,
-    api_key: str,
     api_path: str,
     api_preset_name: str,
-    req: GenerateRequest,
+    req: GenerateRequest | EditRequest,
+    operation: str,
+    start_stage: str,
+    start_message: str,
+    success_message: str,
+    failed_stage: str,
+    cancel_message: str,
+    log_action: str,
+    call_upstream: Callable[[], Awaitable[list[GalleryEntry]]],
 ):
     started_at = time.monotonic()
 
     try:
         async with get_generate_job_semaphore():
             if job_id not in app.state.generate_jobs:
-                logger.info("Image generation skipped after cancellation: job_id=%s", job_id)
+                logger.info("Image %s skipped after cancellation: job_id=%s", log_action, job_id)
                 return
             started_at = time.monotonic()
             store_generate_job(
                 job_id,
                 {
                     "status": "running",
-                    "stage": "starting_generation",
-                    "message": "Starting image generation",
-                    "operation": "generation",
+                    "stage": start_stage,
+                    "message": start_message,
+                    "operation": operation,
                     "prompt": req.prompt,
                     "size": req.size,
                     "started_at": datetime.now(timezone.utc).isoformat(),
@@ -1557,19 +1550,7 @@ async def run_generate_job(
                     "api_preset_name": api_preset_name,
                 },
             )
-            entries = await proxy.call_image_generation_api(
-                api_url,
-                api_key,
-                api_path,
-                req,
-                api_preset_name,
-                lambda stage, message: set_generate_job_progress(
-                    job_id,
-                    stage,
-                    message,
-                    "generation",
-                ),
-            )
+            entries = await call_upstream()
             duration = f"{time.monotonic() - started_at:.2f}s"
     except asyncio.CancelledError:
         store_generate_job(
@@ -1577,23 +1558,24 @@ async def run_generate_job(
             {
                 "status": "error",
                 "stage": "cancelled",
-                "message": "Generation job cancelled",
-                "operation": "generation",
+                "message": cancel_message,
+                "operation": operation,
                 "completed_at": datetime.now(timezone.utc).isoformat(),
                 "duration": f"{time.monotonic() - started_at:.2f}s",
-                "error": "Generation job cancelled",
+                "error": cancel_message,
             },
         )
         trim_generate_jobs()
-        logger.info("Image generation cancelled: job_id=%s", job_id)
+        logger.info("Image %s cancelled: job_id=%s", log_action, job_id)
         raise
     except Exception as e:
         if job_id not in app.state.generate_jobs:
-            logger.info("Image generation stopped after cancellation: job_id=%s", job_id)
+            logger.info("Image %s stopped after cancellation: job_id=%s", log_action, job_id)
             return
         error_message = get_exception_message(e)
         logger.exception(
-            "Image generation failed: job_id=%s error_type=%s api_url=%s api_path=%s model=%s size=%s quality=%s output_format=%s response_format=%s n=%s",
+            "Image %s failed: job_id=%s error_type=%s api_url=%s api_path=%s model=%s size=%s quality=%s output_format=%s response_format=%s n=%s",
+            log_action,
             job_id,
             e.__class__.__name__,
             api_url,
@@ -1609,9 +1591,9 @@ async def run_generate_job(
             job_id,
             {
                 "status": "error",
-                "stage": "generation_failed",
+                "stage": failed_stage,
                 "message": error_message,
-                "operation": "generation",
+                "operation": operation,
                 "completed_at": datetime.now(timezone.utc).isoformat(),
                 "duration": f"{time.monotonic() - started_at:.2f}s",
                 "error": error_message,
@@ -1621,14 +1603,14 @@ async def run_generate_job(
         return
 
     if job_id not in app.state.generate_jobs:
-        logger.info("Image generation result discarded after cancellation: job_id=%s", job_id)
+        logger.info("Image %s result discarded after cancellation: job_id=%s", log_action, job_id)
         return
 
     set_generate_job_progress(
         job_id,
         "finalizing_preview",
         "Finalizing preview image",
-        "generation",
+        operation,
     )
     first_entry = entries[0]
     storage.update_gallery_entry(first_entry.id, {"duration": duration})
@@ -1637,8 +1619,8 @@ async def run_generate_job(
         {
             "status": "success",
             "stage": "completed",
-            "message": "Image generation completed",
-            "operation": "generation",
+            "message": success_message,
+            "operation": operation,
             "image_id": first_entry.id,
             "image_url": f"/api/image/{first_entry.filename}",
             "prompt": first_entry.prompt,
@@ -1658,6 +1640,43 @@ async def run_generate_job(
         },
     )
     trim_generate_jobs()
+
+
+async def run_generate_job(
+    job_id: str,
+    api_url: str,
+    api_key: str,
+    api_path: str,
+    api_preset_name: str,
+    req: GenerateRequest,
+):
+    await _run_image_job(
+        job_id=job_id,
+        api_url=api_url,
+        api_path=api_path,
+        api_preset_name=api_preset_name,
+        req=req,
+        operation="generation",
+        start_stage="starting_generation",
+        start_message="Starting image generation",
+        success_message="Image generation completed",
+        failed_stage="generation_failed",
+        cancel_message="Generation job cancelled",
+        log_action="generation",
+        call_upstream=lambda: proxy.call_image_generation_api(
+            api_url,
+            api_key,
+            api_path,
+            req,
+            api_preset_name,
+            lambda stage, message: set_generate_job_progress(
+                job_id,
+                stage,
+                message,
+                "generation",
+            ),
+        ),
+    )
 
 
 async def run_edit_job(
@@ -1670,137 +1689,35 @@ async def run_edit_job(
     image_filename: str,
     image_content_type: str,
 ):
-    started_at = time.monotonic()
-
-    try:
-        async with get_generate_job_semaphore():
-            if job_id not in app.state.generate_jobs:
-                logger.info("Image edit skipped after cancellation: job_id=%s", job_id)
-                return
-            started_at = time.monotonic()
-            store_generate_job(
-                job_id,
-                {
-                    "status": "running",
-                    "stage": "starting_edit",
-                    "message": "Starting image edit",
-                    "operation": "edit",
-                    "prompt": req.prompt,
-                    "size": req.size,
-                    "started_at": datetime.now(timezone.utc).isoformat(),
-                    "model": req.model,
-                    "quality": req.quality,
-                    "output_format": req.output_format,
-                    "output_compression": req.output_compression,
-                    "response_format": req.response_format,
-                    "n": req.n,
-                    "api_path": "/v1/images/edits",
-                    "api_preset_name": api_preset_name,
-                },
-            )
-            entries = await proxy.call_image_edit_api(
-                api_url,
-                api_key,
-                req,
-                image_bytes,
-                image_filename,
-                image_content_type,
-                api_preset_name,
-                lambda stage, message: set_generate_job_progress(
-                    job_id,
-                    stage,
-                    message,
-                    "edit",
-                ),
-            )
-            duration = f"{time.monotonic() - started_at:.2f}s"
-    except asyncio.CancelledError:
-        store_generate_job(
-            job_id,
-            {
-                "status": "error",
-                "stage": "cancelled",
-                "message": "Image edit job cancelled",
-                "operation": "edit",
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-                "duration": f"{time.monotonic() - started_at:.2f}s",
-                "error": "Image edit job cancelled",
-            },
-        )
-        trim_generate_jobs()
-        logger.info("Image edit cancelled: job_id=%s", job_id)
-        raise
-    except Exception as e:
-        if job_id not in app.state.generate_jobs:
-            logger.info("Image edit stopped after cancellation: job_id=%s", job_id)
-            return
-        error_message = get_exception_message(e)
-        logger.exception(
-            "Image edit failed: job_id=%s error_type=%s api_url=%s api_path=%s model=%s size=%s quality=%s output_format=%s response_format=%s n=%s",
-            job_id,
-            e.__class__.__name__,
+    await _run_image_job(
+        job_id=job_id,
+        api_url=api_url,
+        api_path="/v1/images/edits",
+        api_preset_name=api_preset_name,
+        req=req,
+        operation="edit",
+        start_stage="starting_edit",
+        start_message="Starting image edit",
+        success_message="Image edit completed",
+        failed_stage="edit_failed",
+        cancel_message="Image edit job cancelled",
+        log_action="edit",
+        call_upstream=lambda: proxy.call_image_edit_api(
             api_url,
-            "/v1/images/edits",
-            req.model,
-            req.size,
-            req.quality,
-            req.output_format,
-            req.response_format,
-            req.n,
-        )
-        store_generate_job(
-            job_id,
-            {
-                "status": "error",
-                "stage": "edit_failed",
-                "message": error_message,
-                "operation": "edit",
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-                "duration": f"{time.monotonic() - started_at:.2f}s",
-                "error": error_message,
-            },
-        )
-        trim_generate_jobs()
-        return
-
-    if job_id not in app.state.generate_jobs:
-        logger.info("Image edit result discarded after cancellation: job_id=%s", job_id)
-        return
-
-    set_generate_job_progress(
-        job_id,
-        "finalizing_preview",
-        "Finalizing preview image",
-        "edit",
+            api_key,
+            req,
+            image_bytes,
+            image_filename,
+            image_content_type,
+            api_preset_name,
+            lambda stage, message: set_generate_job_progress(
+                job_id,
+                stage,
+                message,
+                "edit",
+            ),
+        ),
     )
-    first_entry = entries[0]
-    storage.update_gallery_entry(first_entry.id, {"duration": duration})
-    store_generate_job(
-        job_id,
-        {
-            "status": "success",
-            "stage": "completed",
-            "message": "Image edit completed",
-            "operation": "edit",
-            "image_id": first_entry.id,
-            "image_url": f"/api/image/{first_entry.filename}",
-            "prompt": first_entry.prompt,
-            "size": first_entry.size,
-            "image_width": first_entry.image_width,
-            "image_height": first_entry.image_height,
-            "model": first_entry.model,
-            "quality": first_entry.quality,
-            "output_format": first_entry.output_format,
-            "output_compression": first_entry.output_compression,
-            "response_format": first_entry.response_format,
-            "n": first_entry.n,
-            "api_path": first_entry.api_path,
-            "api_preset_name": first_entry.api_preset_name,
-            "duration": duration,
-            "completed_at": datetime.now(timezone.utc).isoformat(),
-        },
-    )
-    trim_generate_jobs()
 
 
 @app.post("/api/generate", response_model=GenerateJobResponse, status_code=202)

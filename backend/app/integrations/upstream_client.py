@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import urljoin
 
 from ..core import settings as config
+from ..core.api_paths import normalize_api_path
 from ..core import validators as ssrf
 from ..repositories import storage
 from ..schemas.models import EditRequest, GenerateRequest
@@ -161,6 +162,10 @@ def validate_generated_image_bytes(image_bytes: bytes, filename: str) -> None:
 
 
 def build_images_request_data(payload: GenerateRequest) -> dict[str, Any]:
+    return _build_image_params(payload)
+
+
+def _build_image_params(payload: GenerateRequest) -> dict[str, Any]:
     request_data: dict[str, Any] = {
         "model": payload.model,
         "prompt": payload.prompt,
@@ -177,29 +182,90 @@ def build_images_request_data(payload: GenerateRequest) -> dict[str, Any]:
 
 
 def build_images_edit_form_data(payload: EditRequest) -> dict[str, Any]:
-    form_data: dict[str, Any] = {
+    return _build_image_params(payload)
+
+
+def build_gallery_metadata(
+    payload: GenerateRequest,
+    api_path: str,
+    api_preset_name: str | None,
+) -> dict[str, Any]:
+    return {
         "model": payload.model,
-        "prompt": payload.prompt,
-        "size": payload.size,
-        "n": payload.n,
         "quality": payload.quality,
         "output_format": payload.output_format,
+        "output_compression": payload.output_compression,
+        "response_format": payload.response_format,
+        "n": payload.n,
+        "api_path": api_path,
+        "api_preset_name": api_preset_name,
     }
-    if payload.response_format is not None:
-        form_data["response_format"] = payload.response_format
-    if payload.output_format != "png" and payload.output_compression is not None:
-        form_data["output_compression"] = payload.output_compression
-    return form_data
 
 
 def build_responses_request_data(payload: GenerateRequest) -> dict[str, Any]:
     return {"prompt": payload.prompt, "model": payload.model}
 
 
-def normalize_api_path(api_path: str) -> str:
-    if api_path in {"/v1/images/generations", "/v1/responses"}:
-        return api_path
-    return "/v1/images/generations"
+async def collect_gallery_entries_data(
+    *,
+    session: aiohttp.ClientSession,
+    data: list[dict[str, Any]],
+    response_text: str,
+    payload: GenerateRequest,
+    format_extension: str,
+    gallery_metadata: dict[str, Any],
+    progress: ProgressCallback | None,
+) -> list[tuple[bytes, str, str, str, str, dict[str, Any]]]:
+    entries_data: list[tuple[bytes, str, str, str, str, dict[str, Any]]] = []
+    max_bytes = config.MAX_FILE_SIZE_MB * 1024 * 1024
+    for image_index, image_data in enumerate(data):
+        transfer_stage, transfer_message = get_image_transfer_stage(image_data)
+        if progress:
+            progress(
+                transfer_stage,
+                f"{transfer_message} ({image_index + 1}/{len(data)})",
+            )
+        image_bytes = await extract_image_bytes(session, image_data, response_text)
+        if progress:
+            progress(
+                "validating_image_bytes",
+                f"Validating decoded image ({image_index + 1}/{len(data)})",
+            )
+        if len(image_bytes) > max_bytes:
+            raise Exception(f"Image too large: {len(image_bytes)} bytes (max {max_bytes})")
+
+        image_id = storage.generate_image_id()
+        filename = f"{image_id}.{format_extension}"
+        validate_generated_image_bytes(image_bytes, filename)
+        entries_data.append(
+            (image_bytes, image_id, payload.prompt, payload.size, filename, gallery_metadata)
+        )
+    return entries_data
+
+
+async def save_gallery_entries_from_upstream_data(
+    *,
+    session: aiohttp.ClientSession,
+    data: list[dict[str, Any]],
+    response_text: str,
+    payload: GenerateRequest,
+    format_extension: str,
+    gallery_metadata: dict[str, Any],
+    save_message: str,
+    progress: ProgressCallback | None,
+) -> list[storage.GalleryEntry]:
+    entries_data = await collect_gallery_entries_data(
+        session=session,
+        data=data,
+        response_text=response_text,
+        payload=payload,
+        format_extension=format_extension,
+        gallery_metadata=gallery_metadata,
+        progress=progress,
+    )
+    if progress:
+        progress("saving_images", save_message)
+    return await storage.batch_save_and_update_gallery(entries_data)
 
 
 def classify_probe_status(method: str, status: int) -> tuple[str, str]:
@@ -338,16 +404,7 @@ async def call_image_generation_api(
 
     format_info = get_output_format_info(payload.output_format)
     entries: list[storage.GalleryEntry] = []
-    gallery_metadata = {
-        "model": payload.model,
-        "quality": payload.quality,
-        "output_format": payload.output_format,
-        "output_compression": payload.output_compression,
-        "response_format": payload.response_format,
-        "n": payload.n,
-        "api_path": api_path,
-        "api_preset_name": api_preset_name,
-    }
+    gallery_metadata = build_gallery_metadata(payload, api_path, api_preset_name)
 
     async with aiohttp.ClientSession(timeout=UPSTREAM_TIMEOUT) as session:
         for request_index in range(request_count):
@@ -400,75 +457,17 @@ async def call_image_generation_api(
                     text_preview = response_text[:200] if isinstance(response_text, str) else str(response_text)[:200]
                     raise Exception(f"No image data in upstream response: {text_preview}")
 
-                if api_path == "/v1/responses" and len(data) > 1:
-                    entries_data: list[tuple] = []
-                    for image_index, image_data in enumerate(data):
-                        transfer_stage, transfer_message = get_image_transfer_stage(image_data)
-                        if progress:
-                            progress(
-                                transfer_stage,
-                                f"{transfer_message} ({image_index + 1}/{len(data)})",
-                            )
-                        image_bytes = await extract_image_bytes(session, image_data, response_text)
-                        if progress:
-                            progress(
-                                "validating_image_bytes",
-                                f"Validating decoded image ({image_index + 1}/{len(data)})",
-                            )
-                        max_bytes = config.MAX_FILE_SIZE_MB * 1024 * 1024
-                        if len(image_bytes) > max_bytes:
-                            raise Exception(
-                                f"Image too large: {len(image_bytes)} bytes (max {max_bytes})"
-                            )
-                        image_id = storage.generate_image_id()
-                        filename = f"{image_id}.{format_info['extension']}"
-                        validate_generated_image_bytes(image_bytes, filename)
-                        entries_data.append(
-                            (image_bytes, image_id, payload.prompt, payload.size, filename, gallery_metadata)
-                        )
-                    if progress:
-                        progress("saving_images", "Saving generated images")
-                    batch_entries = await storage.batch_save_and_update_gallery(entries_data)
-                    entries.extend(batch_entries)
-                else:
-                    for image_index, image_data in enumerate(data):
-                        transfer_stage, transfer_message = get_image_transfer_stage(image_data)
-                        if progress:
-                            progress(
-                                transfer_stage,
-                                f"{transfer_message} ({image_index + 1}/{len(data)})",
-                            )
-                        image_bytes = await extract_image_bytes(session, image_data, response_text)
-
-                        if progress:
-                            progress(
-                                "validating_image_bytes",
-                                f"Validating decoded image ({image_index + 1}/{len(data)})",
-                            )
-                        max_bytes = config.MAX_FILE_SIZE_MB * 1024 * 1024
-                        if len(image_bytes) > max_bytes:
-                            raise Exception(
-                                f"Image too large: {len(image_bytes)} bytes (max {max_bytes})"
-                            )
-
-                        image_id = storage.generate_image_id()
-                        filename = f"{image_id}.{format_info['extension']}"
-                        validate_generated_image_bytes(image_bytes, filename)
-                        if progress:
-                            progress(
-                                "saving_image_file",
-                                "Saving image file and gallery metadata "
-                                f"({image_index + 1}/{len(data)})",
-                            )
-                        entry = await storage.add_to_gallery_async(
-                            image_bytes=image_bytes,
-                            image_id=image_id,
-                            prompt=payload.prompt,
-                            size=payload.size,
-                            filename=filename,
-                            metadata=gallery_metadata,
-                        )
-                        entries.append(entry)
+                batch_entries = await save_gallery_entries_from_upstream_data(
+                    session=session,
+                    data=data,
+                    response_text=response_text,
+                    payload=payload,
+                    format_extension=format_info["extension"],
+                    gallery_metadata=gallery_metadata,
+                    save_message="Saving generated images",
+                    progress=progress,
+                )
+                entries.extend(batch_entries)
 
     return entries
 
@@ -506,16 +505,7 @@ async def call_image_edit_api(
         "User-Agent": "opencode",
     }
     format_info = get_output_format_info(payload.output_format)
-    gallery_metadata = {
-        "model": payload.model,
-        "quality": payload.quality,
-        "output_format": payload.output_format,
-        "output_compression": payload.output_compression,
-        "response_format": payload.response_format,
-        "n": payload.n,
-        "api_path": api_path,
-        "api_preset_name": api_preset_name,
-    }
+    gallery_metadata = build_gallery_metadata(payload, api_path, api_preset_name)
 
     if progress:
         progress("building_edit_form", "Building multipart edit request")
@@ -570,44 +560,13 @@ async def call_image_edit_api(
             if not data:
                 raise Exception(f"No image data in upstream response: {response_text[:200]}")
 
-            entries_data: list[tuple] = []
-            max_bytes = config.MAX_FILE_SIZE_MB * 1024 * 1024
-            for image_index, image_data in enumerate(data):
-                transfer_stage, transfer_message = get_image_transfer_stage(image_data)
-                if progress:
-                    progress(
-                        transfer_stage,
-                        f"{transfer_message} ({image_index + 1}/{len(data)})",
-                    )
-                edited_image_bytes = await extract_image_bytes(
-                    session,
-                    image_data,
-                    response_text,
-                )
-                if progress:
-                    progress(
-                        "validating_image_bytes",
-                        f"Validating decoded image ({image_index + 1}/{len(data)})",
-                    )
-                if len(edited_image_bytes) > max_bytes:
-                    raise Exception(
-                        f"Image too large: {len(edited_image_bytes)} bytes (max {max_bytes})"
-                    )
-
-                image_id = storage.generate_image_id()
-                filename = f"{image_id}.{format_info['extension']}"
-                validate_generated_image_bytes(edited_image_bytes, filename)
-                entries_data.append(
-                    (
-                        edited_image_bytes,
-                        image_id,
-                        payload.prompt,
-                        payload.size,
-                        filename,
-                        gallery_metadata,
-                    )
-                )
-
-            if progress:
-                progress("saving_images", "Saving edited images")
-            return await storage.batch_save_and_update_gallery(entries_data)
+            return await save_gallery_entries_from_upstream_data(
+                session=session,
+                data=data,
+                response_text=response_text,
+                payload=payload,
+                format_extension=format_info["extension"],
+                gallery_metadata=gallery_metadata,
+                save_message="Saving edited images",
+                progress=progress,
+            )
