@@ -29,7 +29,7 @@ Key characteristics:
 
 ## Features
 
-- settings UI for API presets, API base URL, API path, API key, and model
+- settings UI for API presets, API base URL, API path, API key, global SOCKS5 upstream proxy, and model
 - generation and edit options for size, quality, format, compression, quantity, and response format
 - image-to-image edits via OpenAI-compatible `/v1/images/edits`
 - auto, ratio-based, and custom image sizes
@@ -259,11 +259,12 @@ curl http://localhost:9090/health
 5. enter the API base URL
 6. choose the API path
 7. enter the API key, or an env ref such as `${OPENAI_API_KEY}`
-8. optionally run Health check for the saved preset
-9. click Save Preset
-10. enter a prompt
-11. choose generation options
-12. click Generate
+8. optionally enter a global SOCKS5 proxy such as `socks5://127.0.0.1:1080`
+9. optionally run Health check for the saved preset
+10. click Save Preset
+11. enter a prompt
+12. choose generation options
+13. click Generate
 13. optionally click Upload (or pick "Edit this image" in Gallery/Lightbox), then click Edits to run image-to-image
 14. view preview and gallery
 
@@ -298,6 +299,13 @@ The panel supports these upstream paths:
 - returned shape is `{ status, checks: [{ name, status, message }] }`, where each status is `ok`, `warning`, or `error`
 - API key env refs use the exact `${ENV_VAR_NAME}` form; the database stores the reference string and generation/edit calls resolve it from the server environment at request time
 
+## Upstream SOCKS5 proxy
+
+- The Settings drawer has one global `SOCKS5 proxy` field, independent of API presets.
+- Leave it empty for direct upstream API calls.
+- Use `socks5://host:port` or `socks5://user:pass@host:port`; stored proxy passwords are masked in API responses and the UI.
+- The proxy boundary is intentionally narrow: only generation/edit upstream API `POST` calls use it. Preset health checks, webhooks, version checks, frontend `/api/*` requests, and image URL downloads stay direct.
+
 ## Image size modes
 
 - `auto` — default; let the model choose the output size
@@ -328,6 +336,7 @@ The panel supports these upstream paths:
 | `DEFAULT_API_KEY` | empty | Pre-fill API key; may be a literal key or an env ref such as `${OPENAI_API_KEY}` |
 | `DEFAULT_API_PATH` | `/v1/images/generations` | Default upstream path |
 | `DEFAULT_RESPONSES_MODEL` | `gpt-5.4` | Top-level model used when calling `/v1/responses` |
+| `DEFAULT_UPSTREAM_SOCKS5_PROXY` | empty | Optional default global SOCKS5 proxy for generation/edit upstream API calls |
 | `APP_VERSION` | `VERSION` file | Override the app version shown in the UI and returned by `/api/version` |
 | `GITHUB_REPO` | `Z1rconium/gpt-image-linux` | GitHub `owner/repo` used for release update detection; set empty to disable latest-version checks |
 | `ACCESS_KEY` | empty | Required by default; all non-health routes require unlock when set |
@@ -481,7 +490,7 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 
 ## 功能
 
-- 设置界面：API 预设、API Base URL、API Path、API Key、Model
+- 设置界面：API 预设、API Base URL、API Path、API Key、全局 SOCKS5 上游代理、Model
 - 生成/编辑选项：尺寸、质量、格式、压缩比、数量、响应格式
 - 通过 OpenAI 兼容 `/v1/images/edits` 支持图生图编辑
 - 支持自动、比例和自定义图像尺寸
@@ -713,13 +722,14 @@ curl http://localhost:9090/health
 5. 填写 API Base URL
 6. 选择 API Path
 7. 填写 API Key，或填写 `${OPENAI_API_KEY}` 这类环境变量引用
-8. 可选：对已保存预设执行 Health check
-9. 点击 Save Preset
-10. 输入提示词
-11. 选择生成参数
-12. 点击 Generate
-13. 也可以点击 Upload 选择图片，再点击 Edits 执行图生图
-14. 查看预览和 Gallery
+8. 可选：填写全局 SOCKS5 代理，例如 `socks5://127.0.0.1:1080`
+9. 可选：对已保存预设执行 Health check
+10. 点击 Save Preset
+11. 输入提示词
+12. 选择生成参数
+13. 点击 Generate
+14. 也可以点击 Upload 选择图片，再点击 Edits 执行图生图
+15. 查看预览和 Gallery
 
 ## 支持的 API Path
 
@@ -752,6 +762,13 @@ curl http://localhost:9090/health
 - 返回结构为 `{ status, checks: [{ name, status, message }] }`，状态值为 `ok`、`warning` 或 `error`
 - API Key 环境变量引用必须使用完整的 `${ENV_VAR_NAME}` 格式；数据库只保存引用字符串，生成/编辑请求会在执行时从服务端环境变量解析真实值
 
+## 上游 SOCKS5 代理
+
+- Settings 抽屉提供一个全局 `SOCKS5 代理` 字段，不跟随 API 预设切换。
+- 留空时生成/编辑上游 API 请求保持直连。
+- 支持 `socks5://host:port` 或 `socks5://user:pass@host:port`；保存后的代理密码会在 API 响应和 UI 中打码。
+- 代理边界刻意收窄：只有生成/编辑的上游 API `POST` 请求会使用 SOCKS5。Preset health check、Webhook、版本检查、前端 `/api/*` 请求和上游返回的图片 URL 下载都保持直连。
+
 ## 图像尺寸模式
 
 - `auto` — 默认值；让模型自动选择输出尺寸
@@ -782,6 +799,7 @@ curl http://localhost:9090/health
 | `DEFAULT_API_KEY` | 空 | 预填 API Key；可以是真实 key，也可以是 `${OPENAI_API_KEY}` 这类环境变量引用 |
 | `DEFAULT_API_PATH` | `/v1/images/generations` | 默认上游路径 |
 | `DEFAULT_RESPONSES_MODEL` | `gpt-5.4` | 调用 `/v1/responses` 时使用的顶层模型 |
+| `DEFAULT_UPSTREAM_SOCKS5_PROXY` | 空 | 可选的全局 SOCKS5 代理默认值，仅用于生成/编辑的上游 API 请求 |
 | `APP_VERSION` | `VERSION` 文件 | 覆盖界面显示和 `/api/version` 返回的当前应用版本 |
 | `GITHUB_REPO` | `Z1rconium/gpt-image-linux` | 用于检测新版本的 GitHub `owner/repo`；设为空可禁用最新版本检查 |
 | `ACCESS_KEY` | 空 | 默认要求设置；设置后每个非健康路由均需解锁 |

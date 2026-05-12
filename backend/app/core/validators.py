@@ -1,6 +1,6 @@
 import ipaddress
 import socket
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 
 def _get_private_ip_ranges() -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
@@ -161,3 +161,55 @@ def validate_webhook_url(url: str, allowlist: str = "") -> None:
         allowlist=allowlist,
         allowlist_error_prefix="Webhook hostname",
     )
+
+
+def normalize_socks5_proxy_url(url: str | None) -> str:
+    value = str(url or "").strip()
+    if not value:
+        return ""
+
+    parsed = urlsplit(value)
+    if parsed.scheme.lower() != "socks5":
+        raise ValueError("SOCKS5 proxy URL must use socks5://")
+    if not parsed.hostname:
+        raise ValueError("SOCKS5 proxy URL must include a hostname")
+
+    try:
+        port = parsed.port
+    except ValueError as e:
+        raise ValueError("SOCKS5 proxy URL must include a valid port") from e
+    if port is None:
+        raise ValueError("SOCKS5 proxy URL must include a port")
+
+    if parsed.query or parsed.fragment:
+        raise ValueError("SOCKS5 proxy URL must not include query strings or fragments")
+    if parsed.path not in {"", "/"}:
+        raise ValueError("SOCKS5 proxy URL must not include a path")
+
+    return urlunsplit(("socks5", parsed.netloc, "", "", ""))
+
+
+def mask_socks5_proxy_url(url: str | None) -> str:
+    value = str(url or "").strip()
+    if not value:
+        return ""
+
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError:
+        return value
+
+    if parsed.scheme.lower() != "socks5" or not parsed.hostname or port is None:
+        return value
+
+    hostname = parsed.hostname
+    host = f"[{hostname}]" if ":" in hostname and not hostname.startswith("[") else hostname
+    user_info = ""
+    if parsed.username is not None:
+        user_info = parsed.username
+        if parsed.password is not None:
+            user_info += ":***"
+        user_info += "@"
+
+    return f"socks5://{user_info}{host}:{port}"

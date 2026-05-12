@@ -3,6 +3,8 @@ from typing import Literal, Optional
 from datetime import datetime
 from urllib.parse import urlparse
 
+from ..core.validators import normalize_socks5_proxy_url
+
 ApiPath = Literal["/v1/images/generations", "/v1/responses"]
 ApiKeySource = Literal["empty", "stored", "env"]
 PresetHealthStatus = Literal["ok", "warning", "error"]
@@ -39,6 +41,20 @@ class SettingsRequest(BaseModel):
         ),
     )
     api_path: ApiPath = "/v1/images/generations"
+    upstream_socks5_proxy: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional global SOCKS5 proxy for upstream generation/edit API calls. "
+            "Null keeps the current value; an empty string clears it."
+        ),
+    )
+
+    @field_validator("upstream_socks5_proxy")
+    @classmethod
+    def validate_upstream_socks5_proxy(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return normalize_socks5_proxy_url(value)
 
 
 class SettingsResponse(BaseModel):
@@ -49,6 +65,8 @@ class SettingsResponse(BaseModel):
     api_key_source: ApiKeySource = "empty"
     api_key_env_var: Optional[str] = None
     api_path: ApiPath
+    has_upstream_socks5_proxy: bool = False
+    upstream_socks5_proxy_masked: str = ""
     presets: list[ApiPresetResponse]
 
 

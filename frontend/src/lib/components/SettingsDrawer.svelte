@@ -21,6 +21,7 @@
   let apiUrl = '';
   let apiKey = '';
   let apiPath: ApiPath = '/v1/images/generations';
+  let upstreamSocks5Proxy = '';
   let apiKeyInputType = 'password';
 
   $: activePreset = settings?.presets.find((preset) => preset.id === settings.active_preset_id) || settings?.presets[0] || null;
@@ -35,16 +36,20 @@
           ? MASKED_API_KEY_VALUE
           : '';
     apiPath = activePreset.api_path || settings.api_path || '/v1/images/generations';
+    upstreamSocks5Proxy = settings.has_upstream_socks5_proxy ? settings.upstream_socks5_proxy_masked : '';
   }
   $: apiKeyInputType = apiKey.trim().startsWith('${') && apiKey.trim().endsWith('}') ? 'text' : 'password';
 
   async function save() {
+    const proxyValue = upstreamSocks5Proxy.trim();
+    const currentProxyMask = settings?.upstream_socks5_proxy_masked || '';
     await onSave({
       active_preset_id: activePresetId,
       preset_name: presetName.trim(),
       api_url: apiUrl.trim(),
       api_key: apiKey.trim() === MASKED_API_KEY_VALUE ? null : apiKey.trim(),
-      api_path: apiPath
+      api_path: apiPath,
+      upstream_socks5_proxy: proxyValue === currentProxyMask ? null : proxyValue
     });
   }
 
@@ -157,6 +162,11 @@
             <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.settings.apiKey}</span>
             <input bind:value={apiKey} type={apiKeyInputType} class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 font-mono text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none" />
             <span class="mt-1.5 block text-xs text-zinc-500">{$t.settings.apiKeyHint}</span>
+          </label>
+          <label class="block">
+            <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.settings.upstreamSocks5Proxy}</span>
+            <input bind:value={upstreamSocks5Proxy} class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 font-mono text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none" placeholder="socks5://127.0.0.1:1080" />
+            <span class="mt-1.5 block text-xs text-zinc-500">{$t.settings.upstreamSocks5ProxyHint}</span>
           </label>
         </div>
       </div>

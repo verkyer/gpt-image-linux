@@ -21,6 +21,8 @@ export type SettingsResponse = {
   api_key_source: ApiKeySource;
   api_key_env_var?: string | null;
   api_path: ApiPath;
+  has_upstream_socks5_proxy: boolean;
+  upstream_socks5_proxy_masked: string;
   presets: ApiPreset[];
 };
 

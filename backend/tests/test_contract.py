@@ -37,6 +37,7 @@ def _configure_runtime(tmp_path: Path, *, access_key: str = "", allow_unauthenti
     config.DEFAULT_API_KEY = "default-key"
     config.DEFAULT_API_PATH = "/v1/images/generations"
     config.DEFAULT_RESPONSES_MODEL = "gpt-5.4"
+    config.DEFAULT_UPSTREAM_SOCKS5_PROXY = ""
     config.ACCESS_KEY = access_key
     config.ALLOW_UNAUTHENTICATED = allow_unauthenticated
     config.ACCESS_KEY_COOKIE_NAME = "gpt_image_access"
@@ -214,7 +215,15 @@ async def _download_with_fake_session(session: _FakeSession, image_url: str):
 
 @pytest.fixture(autouse=True)
 def patch_upstream(monkeypatch):
-    async def fake_generation_api(api_url, api_key, api_path, payload, api_preset_name=None, progress=None):
+    async def fake_generation_api(
+        api_url,
+        api_key,
+        api_path,
+        payload,
+        api_preset_name=None,
+        progress=None,
+        socks5_proxy=None,
+    ):
         if progress:
             progress("building_generation_payload", "Building generation payload")
             progress("waiting_for_api", "Waiting for upstream API response")
@@ -244,7 +253,17 @@ def patch_upstream(monkeypatch):
         )
         return [entry]
 
-    async def fake_edit_api(api_url, api_key, payload, image_bytes, image_filename, image_content_type, api_preset_name=None, progress=None):
+    async def fake_edit_api(
+        api_url,
+        api_key,
+        payload,
+        image_bytes,
+        image_filename,
+        image_content_type,
+        api_preset_name=None,
+        progress=None,
+        socks5_proxy=None,
+    ):
         if progress:
             progress("building_edit_form", "Building multipart edit request")
             progress("uploading_edit_image", "Uploading source image and edit parameters")
@@ -510,6 +529,185 @@ def test_settings_and_presets(client):
     assert len(created.json()["presets"]) == 2
 
 
+def test_settings_global_socks5_proxy_save_mask_preserve_and_clear(client):
+    settings = client.get("/api/settings").json()
+    active_preset_id = settings["active_preset_id"]
+    base_payload = {
+        "active_preset_id": active_preset_id,
+        "preset_name": "Proxy preset",
+        "api_url": "https://api.example.com",
+        "api_key": None,
+        "api_path": "/v1/images/generations",
+    }
+
+    updated = client.post(
+        "/api/settings",
+        json={
+            **base_payload,
+            "upstream_socks5_proxy": "socks5://user:secret@127.0.0.1:1080/",
+        },
+    )
+
+    assert updated.status_code == 200
+    updated_body = updated.json()
+    assert updated_body["has_upstream_socks5_proxy"] is True
+    assert (
+        updated_body["upstream_socks5_proxy_masked"]
+        == "socks5://user:***@127.0.0.1:1080"
+    )
+    assert "secret" not in json.dumps(updated_body)
+    assert (
+        storage.load_settings()["upstream_socks5_proxy"]
+        == "socks5://user:secret@127.0.0.1:1080"
+    )
+
+    preserved = client.post(
+        "/api/settings",
+        json={
+            **base_payload,
+            "upstream_socks5_proxy": updated_body["upstream_socks5_proxy_masked"],
+        },
+    )
+    assert preserved.status_code == 200
+    assert (
+        storage.load_settings()["upstream_socks5_proxy"]
+        == "socks5://user:secret@127.0.0.1:1080"
+    )
+
+    cleared = client.post(
+        "/api/settings",
+        json={**base_payload, "upstream_socks5_proxy": ""},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["has_upstream_socks5_proxy"] is False
+    assert cleared.json()["upstream_socks5_proxy_masked"] == ""
+    assert storage.load_settings()["upstream_socks5_proxy"] == ""
+
+
+def test_settings_rejects_invalid_socks5_proxy(client):
+    settings = client.get("/api/settings").json()
+
+    resp = client.post(
+        "/api/settings",
+        json={
+            "active_preset_id": settings["active_preset_id"],
+            "preset_name": "Bad proxy",
+            "api_url": "https://api.example.com",
+            "api_key": None,
+            "api_path": "/v1/images/generations",
+            "upstream_socks5_proxy": "http://127.0.0.1:1080",
+        },
+    )
+
+    assert resp.status_code == 422
+    assert "socks5://" in json.dumps(resp.json())
+
+
+def test_socks5_proxy_only_flows_to_generation_and_edit(client, monkeypatch):
+    settings = client.get("/api/settings").json()
+    active_preset_id = settings["active_preset_id"]
+    seen: dict[str, str | bool] = {}
+
+    updated = client.post(
+        "/api/settings",
+        json={
+            "active_preset_id": active_preset_id,
+            "preset_name": "Proxy preset",
+            "api_url": "https://api.example.com",
+            "api_key": None,
+            "api_path": "/v1/images/generations",
+            "upstream_socks5_proxy": "socks5://127.0.0.1:1080",
+        },
+    )
+    assert updated.status_code == 200
+
+    async def fake_probe(api_url, api_path, api_key=""):
+        seen["health_probe"] = True
+        return {
+            "status": "ok",
+            "message": "OPTIONS probe succeeded with HTTP 204",
+        }
+
+    async def fake_generation_api(
+        api_url,
+        api_key,
+        api_path,
+        payload,
+        api_preset_name=None,
+        progress=None,
+        socks5_proxy=None,
+    ):
+        seen["generation_proxy"] = socks5_proxy or ""
+        image_id = storage.generate_image_id()
+        filename = f"{image_id}.png"
+        entry = await storage.add_to_gallery_async(
+            image_bytes=PNG_BYTES,
+            image_id=image_id,
+            prompt=payload.prompt,
+            size=payload.size,
+            filename=filename,
+            metadata={"api_path": api_path, "api_preset_name": api_preset_name},
+        )
+        return [entry]
+
+    async def fake_edit_api(
+        api_url,
+        api_key,
+        payload,
+        image_bytes,
+        image_filename,
+        image_content_type,
+        api_preset_name=None,
+        progress=None,
+        socks5_proxy=None,
+    ):
+        seen["edit_proxy"] = socks5_proxy or ""
+        image_id = storage.generate_image_id()
+        filename = f"{image_id}.png"
+        entry = await storage.add_to_gallery_async(
+            image_bytes=PNG_BYTES,
+            image_id=image_id,
+            prompt=payload.prompt,
+            size=payload.size,
+            filename=filename,
+            metadata={"api_path": "/v1/images/edits", "api_preset_name": api_preset_name},
+        )
+        return [entry]
+
+    monkeypatch.setattr(backend_main.proxy, "probe_upstream_endpoint", fake_probe)
+    monkeypatch.setattr(backend_main.proxy, "call_image_generation_api", fake_generation_api)
+    monkeypatch.setattr(backend_main.proxy, "call_image_edit_api", fake_edit_api)
+
+    health = client.post(f"/api/settings/presets/{active_preset_id}/health")
+    assert health.status_code == 200
+    assert health.json()["status"] == "ok"
+    assert seen["health_probe"] is True
+
+    generate = client.post(
+        "/api/generate",
+        json={"prompt": "uses socks5", "model": "gpt-image-2"},
+    )
+    assert generate.status_code == 202
+    assert _wait_for_job(client, generate.json()["job_id"])["status"] == "success"
+
+    edit = client.post(
+        "/api/edits",
+        data={
+            "prompt": "edit through socks5",
+            "model": "gpt-image-2",
+            "n": 1,
+            "quality": "auto",
+            "output_format": "png",
+        },
+        files={"image": ("input.png", PNG_BYTES, "image/png")},
+    )
+    assert edit.status_code == 202
+    assert _wait_for_job(client, edit.json()["job_id"])["status"] == "success"
+
+    assert seen["generation_proxy"] == "socks5://127.0.0.1:1080"
+    assert seen["edit_proxy"] == "socks5://127.0.0.1:1080"
+
+
 def test_preset_health_and_env_api_key_resolution(client, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "env-secret")
     settings = client.get("/api/settings").json()
@@ -532,6 +730,7 @@ def test_preset_health_and_env_api_key_resolution(client, monkeypatch):
         payload,
         api_preset_name=None,
         progress=None,
+        socks5_proxy=None,
     ):
         seen["generation_key"] = api_key
         image_id = storage.generate_image_id()
@@ -1255,6 +1454,85 @@ def test_image_url_download_rejects_private_peer_ip(client):
         asyncio.run(_download_with_fake_session(session, "https://example.com/image.png"))
 
 
+def test_upstream_returned_image_url_download_stays_direct(tmp_path, monkeypatch):
+    _configure_runtime(tmp_path)
+    import importlib
+    from backend.app.integrations import upstream_client as upstream_client_module
+    from backend.app.schemas.models import GenerateRequest
+
+    upstream_client = importlib.reload(upstream_client_module)
+    created_sessions: list[str] = []
+    session_events: list[tuple[str, str, str]] = []
+
+    class FakeJsonResponse:
+        status = 200
+        headers = {"Content-Type": "application/json"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def text(self):
+            return json.dumps(
+                {"data": [{"url": "https://example.com/generated.png"}]}
+            )
+
+    class FakeApiSession:
+        def __init__(self, proxy_url: str):
+            self.proxy_url = proxy_url
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, **kwargs):
+            session_events.append(("post", self.proxy_url, url))
+            return FakeJsonResponse()
+
+    class FakeDownloadSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url, **kwargs):
+            session_events.append(("get", "", url))
+            return _FakeResponse(200, {}, [PNG_BYTES], peer_ip="93.184.216.34")
+
+    def fake_create_client_session(timeout, socks5_proxy=None):
+        proxy_url = socks5_proxy or ""
+        created_sessions.append(proxy_url)
+        if proxy_url:
+            return FakeApiSession(proxy_url)
+        return FakeDownloadSession()
+
+    monkeypatch.setattr(upstream_client, "create_client_session", fake_create_client_session)
+
+    entries = asyncio.run(
+        upstream_client.call_image_generation_api(
+            "https://api.example.com",
+            "key",
+            "/v1/images/generations",
+            GenerateRequest(prompt="url result"),
+            socks5_proxy="socks5://127.0.0.1:1080",
+        )
+    )
+
+    assert entries
+    assert created_sessions == ["socks5://127.0.0.1:1080", ""]
+    assert session_events[0] == (
+        "post",
+        "socks5://127.0.0.1:1080",
+        "https://api.example.com/v1/images/generations",
+    )
+    assert session_events[1] == ("get", "", "https://example.com/generated.png")
+
+
 def test_running_progress_persists_only_terminal_states(tmp_path, monkeypatch):
     _configure_runtime(tmp_path)
     upserted: list[dict] = []
@@ -1264,7 +1542,15 @@ def test_running_progress_persists_only_terminal_states(tmp_path, monkeypatch):
         upserted.append(job.copy())
         return real_upsert(job)
 
-    async def noisy_generation_api(api_url, api_key, api_path, payload, api_preset_name=None, progress=None):
+    async def noisy_generation_api(
+        api_url,
+        api_key,
+        api_path,
+        payload,
+        api_preset_name=None,
+        progress=None,
+        socks5_proxy=None,
+    ):
         if progress:
             for index in range(5):
                 progress(f"stage_{index}", f"Stage {index}")

@@ -37,6 +37,32 @@ UPSTREAM_PROBE_TIMEOUT = aiohttp.ClientTimeout(
 )
 
 
+def build_socks5_connector(socks5_proxy: str | None):
+    proxy_url = str(socks5_proxy or "").strip()
+    if not proxy_url:
+        return None
+
+    try:
+        from aiohttp_socks import ProxyConnector
+    except ImportError as e:
+        raise RuntimeError(
+            "SOCKS5 proxy support requires aiohttp-socks. "
+            "Install backend requirements and restart the server."
+        ) from e
+
+    return ProxyConnector.from_url(proxy_url)
+
+
+def create_client_session(
+    timeout: aiohttp.ClientTimeout,
+    socks5_proxy: str | None = None,
+) -> aiohttp.ClientSession:
+    return aiohttp.ClientSession(
+        timeout=timeout,
+        connector=build_socks5_connector(socks5_proxy),
+    )
+
+
 def get_output_format_info(output_format: str) -> dict[str, str]:
     return OUTPUT_FORMATS.get(output_format, OUTPUT_FORMATS["png"])
 
@@ -142,7 +168,7 @@ async def download_image_url(
 
 
 async def extract_image_bytes(
-    session: aiohttp.ClientSession,
+    download_session: aiohttp.ClientSession,
     image_data: dict,
     response_text: str,
 ) -> bytes:
@@ -150,7 +176,7 @@ async def extract_image_bytes(
         return base64.b64decode(image_data["b64_json"])
 
     if "url" in image_data and image_data["url"]:
-        return await download_image_url(session, image_data["url"])
+        return await download_image_url(download_session, image_data["url"])
 
     raise Exception(
         f"No image data (b64_json or url) in upstream response: {response_text}"
@@ -208,7 +234,7 @@ def build_responses_request_data(payload: GenerateRequest) -> dict[str, Any]:
 
 async def collect_gallery_entries_data(
     *,
-    session: aiohttp.ClientSession,
+    download_session: aiohttp.ClientSession,
     data: list[dict[str, Any]],
     response_text: str,
     payload: GenerateRequest,
@@ -225,7 +251,11 @@ async def collect_gallery_entries_data(
                 transfer_stage,
                 f"{transfer_message} ({image_index + 1}/{len(data)})",
             )
-        image_bytes = await extract_image_bytes(session, image_data, response_text)
+        image_bytes = await extract_image_bytes(
+            download_session,
+            image_data,
+            response_text,
+        )
         if progress:
             progress(
                 "validating_image_bytes",
@@ -245,7 +275,7 @@ async def collect_gallery_entries_data(
 
 async def save_gallery_entries_from_upstream_data(
     *,
-    session: aiohttp.ClientSession,
+    download_session: aiohttp.ClientSession,
     data: list[dict[str, Any]],
     response_text: str,
     payload: GenerateRequest,
@@ -255,7 +285,7 @@ async def save_gallery_entries_from_upstream_data(
     progress: ProgressCallback | None,
 ) -> list[storage.GalleryEntry]:
     entries_data = await collect_gallery_entries_data(
-        session=session,
+        download_session=download_session,
         data=data,
         response_text=response_text,
         payload=payload,
@@ -298,7 +328,7 @@ async def probe_upstream_endpoint(
 
     probe_errors: list[str] = []
     unsupported_method_result: dict[str, Any] | None = None
-    async with aiohttp.ClientSession(timeout=UPSTREAM_PROBE_TIMEOUT) as session:
+    async with create_client_session(UPSTREAM_PROBE_TIMEOUT) as session:
         for method in ("OPTIONS", "HEAD"):
             try:
                 async with session.request(
@@ -379,6 +409,7 @@ async def call_image_generation_api(
     payload: GenerateRequest,
     api_preset_name: str | None = None,
     progress: ProgressCallback | None = None,
+    socks5_proxy: str | None = None,
 ) -> list[storage.GalleryEntry]:
     api_path = normalize_api_path(api_path)
     upstream_url = f"{api_url.rstrip('/')}{api_path}"
@@ -406,68 +437,77 @@ async def call_image_generation_api(
     entries: list[storage.GalleryEntry] = []
     gallery_metadata = build_gallery_metadata(payload, api_path, api_preset_name)
 
-    async with aiohttp.ClientSession(timeout=UPSTREAM_TIMEOUT) as session:
-        for request_index in range(request_count):
-            if progress:
-                progress(
-                    "waiting_for_api",
-                    f"Waiting for upstream API response ({request_index + 1}/{request_count})",
-                )
-            request_body = copy.deepcopy(request_data)
-            async with session.post(
-                upstream_url,
-                json=request_body,
-                headers=headers,
-                allow_redirects=False,
-            ) as resp:
-                ssrf.validate_response_peer_ip(resp, "Upstream API")
-                status = resp.status
-                response_text = await resp.text()
+    async with create_client_session(
+        UPSTREAM_TIMEOUT,
+        socks5_proxy=socks5_proxy,
+    ) as upstream_session:
+        async with create_client_session(UPSTREAM_TIMEOUT) as download_session:
+            for request_index in range(request_count):
                 if progress:
-                    progress("received_api_response", "Received upstream API response")
-
-                content_type = resp.headers.get("Content-Type", "")
-                is_json_response = "application/json" in content_type
-
-                if status >= 400:
-                    raise_upstream_error(status, response_text, is_json_response, api_path)
-
-                if is_json_response:
+                    progress(
+                        "waiting_for_api",
+                        f"Waiting for upstream API response ({request_index + 1}/{request_count})",
+                    )
+                request_body = copy.deepcopy(request_data)
+                async with upstream_session.post(
+                    upstream_url,
+                    json=request_body,
+                    headers=headers,
+                    allow_redirects=False,
+                ) as resp:
+                    if not socks5_proxy:
+                        ssrf.validate_response_peer_ip(resp, "Upstream API")
+                    status = resp.status
+                    response_text = await resp.text()
                     if progress:
-                        progress("parsing_json_response", "Parsing JSON response")
-                    try:
-                        result = json.loads(response_text)
-                    except json.JSONDecodeError:
-                        raise Exception(f"Upstream returned non-JSON ({status}): {response_text[:200]}")
-                else:
-                    raise Exception(f"Upstream returned non-JSON content-type ({status}): {response_text[:200]}")
+                        progress("received_api_response", "Received upstream API response")
 
-                if api_path == "/v1/responses":
-                    if progress:
-                        progress(
-                            "extracting_response_image_output",
-                            "Extracting image_generation_call output",
+                    content_type = resp.headers.get("Content-Type", "")
+                    is_json_response = "application/json" in content_type
+
+                    if status >= 400:
+                        raise_upstream_error(status, response_text, is_json_response, api_path)
+
+                    if is_json_response:
+                        if progress:
+                            progress("parsing_json_response", "Parsing JSON response")
+                        try:
+                            result = json.loads(response_text)
+                        except json.JSONDecodeError:
+                            raise Exception(
+                                f"Upstream returned non-JSON ({status}): {response_text[:200]}"
+                            )
+                    else:
+                        raise Exception(
+                            f"Upstream returned non-JSON content-type ({status}): {response_text[:200]}"
                         )
-                    data = extract_response_image_results(result)
-                else:
-                    if progress:
-                        progress("extracting_generation_data", "Extracting image data array")
-                    data = result.get("data", [])
-                if not data:
-                    text_preview = response_text[:200] if isinstance(response_text, str) else str(response_text)[:200]
-                    raise Exception(f"No image data in upstream response: {text_preview}")
 
-                batch_entries = await save_gallery_entries_from_upstream_data(
-                    session=session,
-                    data=data,
-                    response_text=response_text,
-                    payload=payload,
-                    format_extension=format_info["extension"],
-                    gallery_metadata=gallery_metadata,
-                    save_message="Saving generated images",
-                    progress=progress,
-                )
-                entries.extend(batch_entries)
+                    if api_path == "/v1/responses":
+                        if progress:
+                            progress(
+                                "extracting_response_image_output",
+                                "Extracting image_generation_call output",
+                            )
+                        data = extract_response_image_results(result)
+                    else:
+                        if progress:
+                            progress("extracting_generation_data", "Extracting image data array")
+                        data = result.get("data", [])
+                    if not data:
+                        text_preview = response_text[:200] if isinstance(response_text, str) else str(response_text)[:200]
+                        raise Exception(f"No image data in upstream response: {text_preview}")
+
+                    batch_entries = await save_gallery_entries_from_upstream_data(
+                        download_session=download_session,
+                        data=data,
+                        response_text=response_text,
+                        payload=payload,
+                        format_extension=format_info["extension"],
+                        gallery_metadata=gallery_metadata,
+                        save_message="Saving generated images",
+                        progress=progress,
+                    )
+                    entries.extend(batch_entries)
 
     return entries
 
@@ -476,12 +516,14 @@ async def call_images_api(
     api_url: str,
     api_key: str,
     payload: GenerateRequest,
+    socks5_proxy: str | None = None,
 ) -> list[storage.GalleryEntry]:
     return await call_image_generation_api(
         api_url,
         api_key,
         "/v1/images/generations",
         payload,
+        socks5_proxy=socks5_proxy,
     )
 
 
@@ -494,6 +536,7 @@ async def call_image_edit_api(
     image_content_type: str,
     api_preset_name: str | None = None,
     progress: ProgressCallback | None = None,
+    socks5_proxy: str | None = None,
 ) -> list[storage.GalleryEntry]:
     api_path = "/v1/images/edits"
     upstream_url = f"{api_url.rstrip('/')}{api_path}"
@@ -519,16 +562,20 @@ async def call_image_edit_api(
     for key, value in build_images_edit_form_data(payload).items():
         form.add_field(key, str(value))
 
-    async with aiohttp.ClientSession(timeout=UPSTREAM_TIMEOUT) as session:
+    async with create_client_session(
+        UPSTREAM_TIMEOUT,
+        socks5_proxy=socks5_proxy,
+    ) as upstream_session:
         if progress:
             progress("uploading_edit_image", "Uploading source image and edit parameters")
-        async with session.post(
+        async with upstream_session.post(
             upstream_url,
             data=form,
             headers=headers,
             allow_redirects=False,
         ) as resp:
-            ssrf.validate_response_peer_ip(resp, "Upstream API")
+            if not socks5_proxy:
+                ssrf.validate_response_peer_ip(resp, "Upstream API")
             status = resp.status
             response_text = await resp.text()
             if progress:
@@ -560,13 +607,14 @@ async def call_image_edit_api(
             if not data:
                 raise Exception(f"No image data in upstream response: {response_text[:200]}")
 
-            return await save_gallery_entries_from_upstream_data(
-                session=session,
-                data=data,
-                response_text=response_text,
-                payload=payload,
-                format_extension=format_info["extension"],
-                gallery_metadata=gallery_metadata,
-                save_message="Saving edited images",
-                progress=progress,
-            )
+            async with create_client_session(UPSTREAM_TIMEOUT) as download_session:
+                return await save_gallery_entries_from_upstream_data(
+                    download_session=download_session,
+                    data=data,
+                    response_text=response_text,
+                    payload=payload,
+                    format_extension=format_info["extension"],
+                    gallery_metadata=gallery_metadata,
+                    save_message="Saving edited images",
+                    progress=progress,
+                )

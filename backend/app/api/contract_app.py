@@ -32,6 +32,7 @@ from .uploads import (
 )
 from ..core import settings as config
 from ..core.api_paths import ALLOWED_API_PATHS, normalize_api_path, normalize_api_preset
+from ..core.validators import mask_socks5_proxy_url, normalize_socks5_proxy_url
 from ..schemas.models import (
     AccessRequest,
     AccessStatusResponse,
@@ -396,6 +397,7 @@ def persist_api_settings():
     storage.save_settings(
         {
             "active_preset_id": getattr(app.state, "active_preset_id", "default"),
+            "upstream_socks5_proxy": get_upstream_socks5_proxy(),
             "presets": get_api_presets(),
         }
     )
@@ -432,6 +434,7 @@ def load_api_settings():
     if not any(preset["id"] == active_id for preset in presets):
         active_id = presets[0]["id"]
     app.state.active_preset_id = active_id
+    apply_upstream_socks5_proxy(data.get("upstream_socks5_proxy"))
     apply_api_preset(get_active_preset())
     persist_api_settings()
 
@@ -482,6 +485,22 @@ def apply_api_preset(preset: dict):
     app.state.active_preset_id = preset["id"]
 
 
+def get_upstream_socks5_proxy() -> str:
+    return str(getattr(app.state, "upstream_socks5_proxy", "") or "").strip()
+
+
+def apply_upstream_socks5_proxy(value: str | None):
+    app.state.upstream_socks5_proxy = normalize_socks5_proxy_url(value)
+
+
+def upstream_socks5_proxy_response_fields() -> dict:
+    value = get_upstream_socks5_proxy()
+    return {
+        "has_upstream_socks5_proxy": bool(value),
+        "upstream_socks5_proxy_masked": mask_socks5_proxy_url(value),
+    }
+
+
 def serialize_api_preset(preset: dict) -> ApiPresetResponse:
     key_fields = api_key_response_fields(preset.get("api_key", ""))
     return ApiPresetResponse(
@@ -505,6 +524,7 @@ def build_settings_response() -> SettingsResponse:
         api_path=normalize_api_path(
             active_preset.get("api_path", "/v1/images/generations")
         ),
+        **upstream_socks5_proxy_response_fields(),
         presets=[serialize_api_preset(preset) for preset in get_api_presets()],
     )
 
@@ -841,6 +861,7 @@ def queue_edit_job(
             detail="API URL not configured. Please set it in Settings.",
         )
     api_key = get_effective_preset_api_key(active_preset)
+    socks5_proxy = get_upstream_socks5_proxy()
 
     webhook_url = validate_job_webhook_url(req.webhook_url)
     ensure_job_queue_capacity()
@@ -868,6 +889,7 @@ def queue_edit_job(
                 image_bytes,
                 image_filename,
                 image_content_type,
+                socks5_proxy,
             )
         ),
     )
@@ -995,6 +1017,13 @@ async def update_settings(req: SettingsRequest):
     if req.api_key is not None:
         preset["api_key"] = req.api_key.strip()
     preset["api_path"] = normalize_api_path(req.api_path)
+    if req.upstream_socks5_proxy is not None:
+        current_proxy = get_upstream_socks5_proxy()
+        requested_proxy = req.upstream_socks5_proxy.strip()
+        if current_proxy and requested_proxy == mask_socks5_proxy_url(current_proxy):
+            app.state.upstream_socks5_proxy = current_proxy
+        else:
+            apply_upstream_socks5_proxy(requested_proxy)
     apply_api_preset(preset)
     persist_api_settings()
     return build_settings_response()
@@ -1367,6 +1396,7 @@ async def run_generate_job(
     api_path: str,
     api_preset_name: str,
     req: GenerateRequest,
+    socks5_proxy: str = "",
 ):
     await _run_image_job(
         job_id=job_id,
@@ -1393,6 +1423,7 @@ async def run_generate_job(
                 message,
                 "generation",
             ),
+            socks5_proxy=socks5_proxy,
         ),
     )
 
@@ -1406,6 +1437,7 @@ async def run_edit_job(
     image_bytes: bytes,
     image_filename: str,
     image_content_type: str,
+    socks5_proxy: str = "",
 ):
     await _run_image_job(
         job_id=job_id,
@@ -1434,6 +1466,7 @@ async def run_edit_job(
                 message,
                 "edit",
             ),
+            socks5_proxy=socks5_proxy,
         ),
     )
 
@@ -1450,6 +1483,7 @@ async def generate(req: GenerateRequest):
     if not api_url:
         raise HTTPException(status_code=400, detail="API URL not configured. Please set it in Settings.")
     api_key = get_effective_preset_api_key(active_preset)
+    socks5_proxy = get_upstream_socks5_proxy()
 
     webhook_url = validate_job_webhook_url(req.webhook_url)
     ensure_job_queue_capacity()
@@ -1468,7 +1502,15 @@ async def generate(req: GenerateRequest):
     track_generate_job_task(
         job_id,
         asyncio.create_task(
-            run_generate_job(job_id, api_url, api_key, api_path, api_preset_name, req)
+            run_generate_job(
+                job_id,
+                api_url,
+                api_key,
+                api_path,
+                api_preset_name,
+                req,
+                socks5_proxy,
+            )
         ),
     )
 

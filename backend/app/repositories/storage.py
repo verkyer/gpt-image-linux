@@ -151,6 +151,7 @@ INTEGER_GENERATE_JOB_COLUMNS = {
 }
 ACTIVE_GENERATE_JOB_STATUSES = {"queued", "running"}
 SETTINGS_ACTIVE_PRESET_KEY = "active_preset_id"
+UPSTREAM_SOCKS5_PROXY_KEY = "upstream_socks5_proxy"
 LEGACY_SETTINGS_IMPORTED_KEY = "legacy_settings_json_imported"
 LEGACY_GALLERY_IMPORTED_KEY = "legacy_gallery_json_imported"
 SQLITE_TIMEOUT_SECONDS = 30.0
@@ -163,6 +164,7 @@ _storage_lock = threading.RLock()
 def _default_settings() -> dict:
     return {
         "active_preset_id": "default",
+        "upstream_socks5_proxy": config.DEFAULT_UPSTREAM_SOCKS5_PROXY,
         "presets": [
             {
                 "id": "default",
@@ -391,9 +393,17 @@ def _normalize_settings(settings: dict | None) -> dict:
     if not isinstance(settings, dict):
         return _default_settings()
 
+    upstream_socks5_proxy = (
+        str(settings.get("upstream_socks5_proxy")).strip()
+        if settings.get("upstream_socks5_proxy") is not None
+        else config.DEFAULT_UPSTREAM_SOCKS5_PROXY
+    )
+
     raw_presets = settings.get("presets")
     if not isinstance(raw_presets, list):
-        return _default_settings()
+        default_settings = _default_settings()
+        default_settings["upstream_socks5_proxy"] = upstream_socks5_proxy
+        return default_settings
 
     presets: list[dict] = []
     seen_ids: set[str] = set()
@@ -409,7 +419,9 @@ def _normalize_settings(settings: dict | None) -> dict:
         presets.append(normalized_preset)
 
     if not presets:
-        return _default_settings()
+        default_settings = _default_settings()
+        default_settings["upstream_socks5_proxy"] = upstream_socks5_proxy
+        return default_settings
 
     active_preset_id = str(settings.get("active_preset_id") or presets[0]["id"])
     if not any(preset["id"] == active_preset_id for preset in presets):
@@ -417,6 +429,7 @@ def _normalize_settings(settings: dict | None) -> dict:
 
     return {
         "active_preset_id": active_preset_id,
+        "upstream_socks5_proxy": upstream_socks5_proxy,
         "presets": presets,
     }
 
@@ -458,6 +471,11 @@ def _replace_settings_on_conn(conn: sqlite3.Connection, settings: dict):
         SETTINGS_ACTIVE_PRESET_KEY,
         normalized["active_preset_id"],
     )
+    _set_setting_value(
+        conn,
+        UPSTREAM_SOCKS5_PROXY_KEY,
+        normalized.get("upstream_socks5_proxy", ""),
+    )
 
 
 def _load_settings_from_conn(conn: sqlite3.Connection) -> dict | None:
@@ -484,9 +502,13 @@ def _load_settings_from_conn(conn: sqlite3.Connection) -> dict | None:
     active_preset_id = _get_setting_value(conn, SETTINGS_ACTIVE_PRESET_KEY)
     if not active_preset_id:
         active_preset_id = presets[0]["id"]
+    upstream_socks5_proxy = _get_setting_value(conn, UPSTREAM_SOCKS5_PROXY_KEY)
+    if upstream_socks5_proxy is None:
+        upstream_socks5_proxy = config.DEFAULT_UPSTREAM_SOCKS5_PROXY
 
     return {
         "active_preset_id": active_preset_id,
+        "upstream_socks5_proxy": upstream_socks5_proxy,
         "presets": presets,
     }
 
