@@ -24,7 +24,6 @@ RUN mkdir images data && \
 COPY --from=python-builder --chown=appuser:appgroup /install /usr/local
 COPY --chown=appuser:appgroup VERSION .
 COPY --chown=appuser:appgroup backend/ ./backend/
-COPY --chown=appuser:appgroup app/ ./app/
 COPY --from=frontend-builder --chown=appuser:appgroup /frontend/build ./frontend/build
 
 EXPOSE 9090

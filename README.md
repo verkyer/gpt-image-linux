@@ -17,7 +17,7 @@ GPT Image Panel is a lightweight FastAPI web UI for image generation and image e
 Key characteristics:
 
 - SvelteKit + TypeScript frontend in `frontend/`
-- FastAPI backend in `backend/app/`; root `app/` remains as a compatibility import wrapper
+- FastAPI backend in `backend/app/`; use `backend.app.main:app` as the ASGI entrypoint
 - public API paths, methods, status codes, SSE event names, cookies, and response shapes are contract-tested and kept stable
 - API presets persisted to SQLite at `data/app.sqlite3`
 - background image-generation jobs executed with `asyncio.create_task`
@@ -61,8 +61,6 @@ Responsibilities are split into a few modules:
 - `backend/app/integrations/` — upstream GPT-compatible image API client
 - `backend/app/core/` — settings, access tokens, IP allowlist, proxy headers, and URL validators
 - `backend/app/services/` — webhook signing, retry, and async delivery
-
-The compatibility `app/` package re-exports the new backend modules so old imports like `uvicorn app.main:app` still work in local environments where the full repository is present.
 
 When serving the static frontend, the backend injects a per-response script nonce into `frontend/build/index.html` and sends a matching Content Security Policy. Asset and index serving are covered by the backend contract tests.
 
@@ -142,9 +140,6 @@ docker-compose.yml
 VERSION
 requirements.txt
 package.json
-app/
-  __init__.py
-  main.py              # compatibility wrapper
 backend/
   requirements.txt
   requirements-dev.txt
@@ -474,7 +469,7 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 主要特点：
 
 - SvelteKit + TypeScript 前端位于 `frontend/`
-- FastAPI 后端位于 `backend/app/`；根目录 `app/` 保留为兼容导入 wrapper
+- FastAPI 后端位于 `backend/app/`；ASGI 入口使用 `backend.app.main:app`
 - 公共 API 路径、方法、状态码、SSE 事件名、cookie 和响应结构通过契约测试冻结
 - API 预设持久化保存在 SQLite：`data/app.sqlite3`
 - 图像生成任务通过 `asyncio.create_task` 异步执行
@@ -518,8 +513,6 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 - `backend/app/integrations/` — 上游 GPT 兼容图片 API 调用
 - `backend/app/core/` — settings、访问 token、IP allowlist、proxy header 和 URL 校验
 - `backend/app/services/` — webhook 签名、重试和异步投递
-
-根目录 `app/` 兼容包会 re-export 新后端模块，所以在完整仓库环境里旧命令 `uvicorn app.main:app` 仍可运行。
 
 后端服务静态前端时，会为 `frontend/build/index.html` 注入每次响应不同的 script nonce，并发送匹配的 Content Security Policy。前端入口和静态资源访问已纳入后端契约测试。
 
@@ -601,9 +594,6 @@ docker-compose.yml
 VERSION
 requirements.txt
 package.json
-app/
-  __init__.py
-  main.py              # 兼容 wrapper
 backend/
   requirements.txt
   requirements-dev.txt

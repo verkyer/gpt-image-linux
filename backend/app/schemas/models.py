@@ -205,26 +205,6 @@ class GalleryFilterOptions(BaseModel):
     sizes: list[str] = Field(default_factory=list)
 
 
-class GenerateResponse(BaseModel):
-    id: str
-    status: str = "success"
-    image_url: str
-    prompt: str
-    size: str
-    created_at: str
-    image_width: Optional[int] = None
-    image_height: Optional[int] = None
-    model: Optional[str] = None
-    quality: Optional[str] = None
-    output_format: Optional[str] = None
-    output_compression: Optional[int] = None
-    response_format: Optional[str] = None
-    n: Optional[int] = None
-    api_path: Optional[str] = None
-    api_preset_name: Optional[str] = None
-    duration: Optional[str] = None
-
-
 class GenerateJobResponse(BaseModel):
     job_id: str
     status: Literal["queued", "running", "success", "error"]
@@ -272,11 +252,6 @@ class GalleryResponse(BaseModel):
     has_next: bool
     images: list[GalleryEntry]
     filter_options: GalleryFilterOptions = Field(default_factory=GalleryFilterOptions)
-
-
-class ErrorResponse(BaseModel):
-    status: str = "error"
-    error: str
 
 
 class MessageResponse(BaseModel):

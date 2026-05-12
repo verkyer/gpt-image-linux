@@ -161,10 +161,6 @@ def validate_generated_image_bytes(image_bytes: bytes, filename: str) -> None:
     storage.validate_image_bytes(image_bytes, filename=filename)
 
 
-def build_images_request_data(payload: GenerateRequest) -> dict[str, Any]:
-    return _build_image_params(payload)
-
-
 def _build_image_params(payload: GenerateRequest) -> dict[str, Any]:
     request_data: dict[str, Any] = {
         "model": payload.model,
@@ -179,6 +175,10 @@ def _build_image_params(payload: GenerateRequest) -> dict[str, Any]:
     if payload.output_format != "png" and payload.output_compression is not None:
         request_data["output_compression"] = payload.output_compression
     return request_data
+
+
+def build_images_request_data(payload: GenerateRequest) -> dict[str, Any]:
+    return _build_image_params(payload)
 
 
 def build_images_edit_form_data(payload: EditRequest) -> dict[str, Any]:

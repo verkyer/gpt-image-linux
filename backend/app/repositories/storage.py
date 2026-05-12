@@ -845,27 +845,27 @@ def _thumbnail_filename_for_image(filename: str) -> str | None:
     return f"{safe_stem}-{digest}{THUMBNAIL_EXTENSION}"
 
 
-def get_thumbnail_filename(filename: str) -> str | None:
-    return _thumbnail_filename_for_image(filename)
-
-
-def _safe_image_path(filename: str) -> Path | None:
+def _safe_path(filename: str, base_dir: str, allowed_suffixes: set[str]) -> Path | None:
     if not filename or "\x00" in filename or "/" in filename or "\\" in filename:
         return None
     if filename in {".", ".."}:
         return None
 
     path_name = Path(filename)
-    if path_name.name != filename or path_name.suffix.lower() not in IMAGE_FILE_EXTENSIONS:
+    if path_name.name != filename or path_name.suffix.lower() not in allowed_suffixes:
         return None
 
-    images_dir = Path(config.IMAGES_DIR).resolve()
-    path = (images_dir / filename).resolve()
+    root = Path(base_dir).resolve()
+    path = (root / filename).resolve()
     try:
-        path.relative_to(images_dir)
+        path.relative_to(root)
     except ValueError:
         return None
     return path
+
+
+def _safe_image_path(filename: str) -> Path | None:
+    return _safe_path(filename, config.IMAGES_DIR, IMAGE_FILE_EXTENSIONS)
 
 
 def get_safe_image_path(filename: str) -> Path | None:
@@ -873,22 +873,7 @@ def get_safe_image_path(filename: str) -> Path | None:
 
 
 def _safe_thumbnail_path(filename: str) -> Path | None:
-    if not filename or "\x00" in filename or "/" in filename or "\\" in filename:
-        return None
-    if filename in {".", ".."}:
-        return None
-
-    path_name = Path(filename)
-    if path_name.name != filename or path_name.suffix.lower() != THUMBNAIL_EXTENSION:
-        return None
-
-    thumbnails_dir = Path(config.THUMBNAILS_DIR).resolve()
-    path = (thumbnails_dir / filename).resolve()
-    try:
-        path.relative_to(thumbnails_dir)
-    except ValueError:
-        return None
-    return path
+    return _safe_path(filename, config.THUMBNAILS_DIR, {THUMBNAIL_EXTENSION})
 
 
 def get_safe_thumbnail_path(filename: str) -> Path | None:
@@ -1030,27 +1015,6 @@ def _delete_image_unlocked(filename: str) -> bool:
         path.unlink()
         return True
     return False
-
-
-async def save_image_async(image_bytes: bytes, filename: str) -> Path:
-    return await asyncio.to_thread(save_image, image_bytes, filename)
-
-
-def save_image(image_bytes: bytes, filename: str) -> Path:
-    with _storage_lock:
-        return _save_image_unlocked(image_bytes, filename)
-
-
-def get_image_path(filename: str) -> Path:
-    path = get_safe_image_path(filename)
-    if not path:
-        raise ValueError(f"Invalid image filename: {filename}")
-    return path
-
-
-def delete_image(filename: str) -> bool:
-    with _storage_lock:
-        return _delete_image_unlocked(filename)
 
 
 def _scan_image_files() -> set[str]:
@@ -1572,11 +1536,6 @@ def sync_gallery_with_image_files() -> int:
                         [(entry_id,) for entry_id in stale_ids],
                     )
                 return len(stale_ids)
-
-
-def delete_from_gallery(image_id: str) -> bool:
-    deleted_entry, _ = delete_gallery_image(image_id)
-    return deleted_entry
 
 
 def delete_gallery_image(image_id: str) -> tuple[bool, int]:
