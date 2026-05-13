@@ -393,6 +393,38 @@ def raise_upstream_error(
     raise Exception(f"Upstream API error ({status}): {error_msg}")
 
 
+async def parse_upstream_json_response(
+    resp: aiohttp.ClientResponse,
+    api_path: str,
+    progress: ProgressCallback | None,
+) -> tuple[dict[str, Any], str]:
+    status = resp.status
+    response_text = await resp.text()
+    if progress:
+        progress("received_api_response", "Received upstream API response")
+
+    content_type = resp.headers.get("Content-Type", "")
+    is_json_response = "application/json" in content_type
+
+    if status >= 400:
+        raise_upstream_error(status, response_text, is_json_response, api_path)
+
+    if not is_json_response:
+        raise Exception(
+            f"Upstream returned non-JSON content-type ({status}): {response_text[:200]}"
+        )
+
+    if progress:
+        progress("parsing_json_response", "Parsing JSON response")
+    try:
+        result = json.loads(response_text)
+    except json.JSONDecodeError:
+        raise Exception(
+            f"Upstream returned non-JSON ({status}): {response_text[:200]}"
+        )
+    return result, response_text
+
+
 async def call_image_generation_api(
     api_url: str,
     api_key: str,
@@ -440,30 +472,9 @@ async def call_image_generation_api(
             ) as resp:
                 if not socks5_proxy:
                     ssrf.validate_response_peer_ip(resp, "Upstream API")
-                status = resp.status
-                response_text = await resp.text()
-                if progress:
-                    progress("received_api_response", "Received upstream API response")
-
-                content_type = resp.headers.get("Content-Type", "")
-                is_json_response = "application/json" in content_type
-
-                if status >= 400:
-                    raise_upstream_error(status, response_text, is_json_response, api_path)
-
-                if is_json_response:
-                    if progress:
-                        progress("parsing_json_response", "Parsing JSON response")
-                    try:
-                        result = json.loads(response_text)
-                    except json.JSONDecodeError:
-                        raise Exception(
-                            f"Upstream returned non-JSON ({status}): {response_text[:200]}"
-                        )
-                else:
-                    raise Exception(
-                        f"Upstream returned non-JSON content-type ({status}): {response_text[:200]}"
-                    )
+                result, response_text = await parse_upstream_json_response(
+                    resp, api_path, progress
+                )
 
                 if api_path == "/v1/responses":
                     if progress:
@@ -543,30 +554,9 @@ async def call_image_edit_api(
         ) as resp:
             if not socks5_proxy:
                 ssrf.validate_response_peer_ip(resp, "Upstream API")
-            status = resp.status
-            response_text = await resp.text()
-            if progress:
-                progress("received_api_response", "Received upstream API response")
-
-            content_type = resp.headers.get("Content-Type", "")
-            is_json_response = "application/json" in content_type
-
-            if status >= 400:
-                raise_upstream_error(status, response_text, is_json_response, api_path)
-
-            if is_json_response:
-                if progress:
-                    progress("parsing_json_response", "Parsing JSON response")
-                try:
-                    result = json.loads(response_text)
-                except json.JSONDecodeError:
-                    raise Exception(
-                        f"Upstream returned non-JSON ({status}): {response_text[:200]}"
-                    )
-            else:
-                raise Exception(
-                    f"Upstream returned non-JSON content-type ({status}): {response_text[:200]}"
-                )
+            result, response_text = await parse_upstream_json_response(
+                resp, api_path, progress
+            )
 
             if progress:
                 progress("extracting_edit_data", "Extracting edited image data array")

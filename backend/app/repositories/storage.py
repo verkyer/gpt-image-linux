@@ -15,6 +15,7 @@ from urllib.parse import quote
 
 from ..core import settings as config
 from ..core.api_paths import normalize_api_preset
+from ..core.constants import ACTIVE_GENERATE_JOB_STATUSES
 from ..core.utils import utc_now
 from ..schemas.models import GalleryEntry
 
@@ -149,7 +150,6 @@ INTEGER_GENERATE_JOB_COLUMNS = {
     "image_width",
     "image_height",
 }
-ACTIVE_GENERATE_JOB_STATUSES = {"queued", "running"}
 SETTINGS_ACTIVE_PRESET_KEY = "active_preset_id"
 UPSTREAM_SOCKS5_PROXY_KEY = "upstream_socks5_proxy"
 LEGACY_SETTINGS_IMPORTED_KEY = "legacy_settings_json_imported"

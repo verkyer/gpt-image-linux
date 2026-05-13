@@ -156,7 +156,7 @@ async def stream_generate_job(job_id: str, request: Request):
 
                 data = item["data"]
                 yield serialize_sse_event(item["event"], data)
-                if data.get("status") not in ACTIVE_JOB_STATUSES:
+                if data.get("status") not in ACTIVE_GENERATE_JOB_STATUSES:
                     break
         finally:
             subscribers.discard(queue)

@@ -15,6 +15,7 @@ from .presets import get_active_preset, get_effective_preset_api_key, get_except
 from ..core import settings as config
 from ..core import validators as ssrf
 from ..core.api_paths import normalize_api_path
+from ..core.constants import ACTIVE_GENERATE_JOB_STATUSES
 from ..core.utils import utc_now
 from ..integrations import upstream_client as proxy
 from ..repositories import storage
@@ -23,7 +24,6 @@ from ..services import webhook_service as webhooks
 
 
 logger = logging.getLogger(__name__)
-ACTIVE_JOB_STATUSES = {"queued", "running"}
 
 
 def get_job_subscribers() -> dict[str, set[asyncio.Queue]]:
@@ -189,7 +189,7 @@ def should_persist_generate_job(job_id: str, job: dict, persist: bool) -> bool:
 def store_generate_job(job_id: str, updates: dict, *, persist: bool = True) -> dict:
     job = build_job_update(job_id, updates)
     status = job.get("status")
-    if status in ACTIVE_JOB_STATUSES:
+    if status in ACTIVE_GENERATE_JOB_STATUSES:
         app.state.generate_jobs[job_id] = job
     else:
         app.state.generate_jobs.pop(job_id, None)
@@ -199,7 +199,7 @@ def store_generate_job(job_id: str, updates: dict, *, persist: bool = True) -> d
     if should_persist_generate_job(job_id, job, persist):
         storage.upsert_generate_job(job)
     publish_generate_job(job)
-    if status not in ACTIVE_JOB_STATUSES:
+    if status not in ACTIVE_GENERATE_JOB_STATUSES:
         dispatch_job_webhook(job)
     return job
 
@@ -207,10 +207,10 @@ def store_generate_job(job_id: str, updates: dict, *, persist: bool = True) -> d
 def list_active_generate_jobs() -> list[dict]:
     jobs_by_id = {
         job["job_id"]: job
-        for job in storage.list_generate_jobs(statuses=ACTIVE_JOB_STATUSES)
+        for job in storage.list_generate_jobs(statuses=ACTIVE_GENERATE_JOB_STATUSES)
     }
     for job_id, job in app.state.generate_jobs.items():
-        if job.get("status") in ACTIVE_JOB_STATUSES:
+        if job.get("status") in ACTIVE_GENERATE_JOB_STATUSES:
             jobs_by_id[job_id] = job
     jobs = list(jobs_by_id.values())
     jobs.sort(key=lambda job: job.get("updated_at") or job.get("created_at", ""), reverse=True)
@@ -242,7 +242,7 @@ def count_active_jobs() -> int:
     return sum(
         1
         for job in jobs.values()
-        if job.get("status") in ACTIVE_JOB_STATUSES
+        if job.get("status") in ACTIVE_GENERATE_JOB_STATUSES
     )
 
 

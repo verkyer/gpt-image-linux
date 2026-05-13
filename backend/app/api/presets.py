@@ -106,38 +106,11 @@ def persist_api_settings():
 
 def load_api_settings():
     data = storage.load_settings()
-    raw_presets = data.get("presets", [])
-    seen_ids = set()
-    presets = [
-        preset
-        for preset in (
-            normalize_api_preset(preset, f"preset-{index + 1}")
-            for index, preset in enumerate(raw_presets)
-            if isinstance(preset, dict)
-        )
-        if not (preset["id"] in seen_ids or seen_ids.add(preset["id"]))
-    ]
-    if not presets:
-        presets = [
-            normalize_api_preset(
-                {
-                    "id": "default",
-                    "name": "Default",
-                    "api_url": config.DEFAULT_API_URL,
-                    "api_key": config.DEFAULT_API_KEY,
-                    "api_path": config.DEFAULT_API_PATH,
-                }
-            )
-        ]
-
+    presets = data["presets"]
     app.state.api_presets = presets
-    active_id = str(data.get("active_preset_id") or presets[0]["id"])
-    if not any(preset["id"] == active_id for preset in presets):
-        active_id = presets[0]["id"]
-    app.state.active_preset_id = active_id
+    app.state.active_preset_id = data["active_preset_id"]
     apply_upstream_socks5_proxy(data.get("upstream_socks5_proxy"))
     apply_api_preset(get_active_preset())
-    persist_api_settings()
 
 
 def get_api_presets() -> list[dict]:
