@@ -29,7 +29,7 @@
   import { previewStore, type PreviewState } from '$lib/stores/preview';
   import { settingsStore } from '$lib/stores/settings';
   import { uiStore } from '$lib/stores/ui';
-  import { copyText, filenameFromImageUrl, imageUrl } from '$lib/utils/format';
+  import { copyText, filenameFromImageUrl, galleryImageSize, imageUrl } from '$lib/utils/format';
 
   const ACTIVE_STATUSES = new Set(['queued', 'running']);
   const VERSION_BRANCH = 'main';
@@ -749,6 +749,7 @@
     selectedGalleryImageId = image.id;
     editLabel = $t.messages.galleryEditLabel(image.filename);
     setEditPreview(imageUrl(image.filename), editLabel);
+    size = galleryImageSize(image);
     if (editInput) editInput.value = '';
     lightboxImage = null;
     showToast($t.messages.galleryImageReady);

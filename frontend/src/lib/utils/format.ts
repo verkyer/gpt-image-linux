@@ -1,4 +1,5 @@
 import type { GenerateJobStatus } from '$lib/api/types';
+import type { GalleryEntry } from '$lib/api/types';
 
 export function imageUrl(filename: string) {
   return `/api/image/${encodeURIComponent(filename)}`;
@@ -19,6 +20,12 @@ export function filenameFromImageUrl(url: string) {
 export function formatBytes(totalBytes: number) {
   if (!Number.isFinite(totalBytes) || totalBytes <= 0) return '';
   return `${(totalBytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export function galleryImageSize(image: Pick<GalleryEntry, 'size' | 'image_width' | 'image_height'>) {
+  if (image.size && image.size !== 'auto') return image.size;
+  if (image.image_width && image.image_height) return `${image.image_width}x${image.image_height}`;
+  return image.size || '-';
 }
 
 export function stageLabel(job: GenerateJobStatus | null, labels?: Record<string, string>) {

@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { GalleryEntry } from '$lib/api/types';
   import { t } from '$lib/i18n';
-  import { downloadUrl, imageUrl } from '$lib/utils/format';
+  import { downloadUrl, galleryImageSize, imageUrl } from '$lib/utils/format';
 
   export let open = false;
   export let image: GalleryEntry | null = null;
@@ -36,7 +36,7 @@
           <div class="grid grid-cols-2 gap-2 text-xs">
             <div class="rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2">
               <div class="text-zinc-600">{$t.common.size}</div>
-              <div class="mt-1 text-zinc-300">{image.size}</div>
+              <div class="mt-1 text-zinc-300">{galleryImageSize(image)}</div>
             </div>
             <div class="rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2">
               <div class="text-zinc-600">{$t.common.model}</div>
