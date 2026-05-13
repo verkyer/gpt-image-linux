@@ -9,13 +9,13 @@ import struct
 import threading
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 from urllib.parse import quote
 
 from ..core import settings as config
 from ..core.api_paths import normalize_api_preset
+from ..core.utils import utc_now
 from ..schemas.models import GalleryEntry
 
 try:
@@ -175,10 +175,6 @@ def _default_settings() -> dict:
             }
         ],
     }
-
-
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _ensure_directories():
@@ -436,7 +432,7 @@ def _normalize_settings(settings: dict | None) -> dict:
 
 def _replace_settings_on_conn(conn: sqlite3.Connection, settings: dict):
     normalized = _normalize_settings(settings)
-    now = _utc_now()
+    now = utc_now()
 
     conn.execute("DELETE FROM api_presets")
     for position, preset in enumerate(normalized["presets"]):
@@ -527,7 +523,7 @@ def _normalize_gallery_entry(entry: dict[str, Any]) -> dict[str, Any] | None:
         "prompt": str(entry.get("prompt") or ""),
         "size": str(entry.get("size") or ""),
         "filename": str(filename),
-        "created_at": str(entry.get("created_at") or _utc_now()),
+        "created_at": str(entry.get("created_at") or utc_now()),
         "favorite": _normalize_gallery_favorite(entry.get("favorite")),
     }
 
@@ -544,7 +540,7 @@ def _normalize_gallery_entry(entry: dict[str, Any]) -> dict[str, Any] | None:
                 continue
         elif column == "thumbnail_filename":
             thumbnail_filename = str(value)
-            if _safe_thumbnail_path(thumbnail_filename):
+            if safe_thumbnail_path(thumbnail_filename):
                 normalized[column] = thumbnail_filename
         else:
             normalized[column] = str(value)
@@ -572,7 +568,7 @@ def _gallery_entry_from_row(row: sqlite3.Row) -> dict[str, Any]:
         if column in REQUIRED_GALLERY_COLUMNS or row[column] is not None
     }
     entry["favorite"] = bool(entry.get("favorite"))
-    if entry.get("thumbnail_filename") and not _safe_thumbnail_path(
+    if entry.get("thumbnail_filename") and not safe_thumbnail_path(
         str(entry["thumbnail_filename"])
     ):
         entry.pop("thumbnail_filename", None)
@@ -625,7 +621,7 @@ def _build_gallery_filter_where(filters: dict[str, Any] | None) -> tuple[str, li
 
 
 def _normalize_generate_job(job: dict[str, Any]) -> dict[str, Any]:
-    now = _utc_now()
+    now = utc_now()
     normalized: dict[str, Any] = {
         "job_id": str(job["job_id"]),
         "status": str(job.get("status") or "queued"),
@@ -886,24 +882,16 @@ def _safe_path(filename: str, base_dir: str, allowed_suffixes: set[str]) -> Path
     return path
 
 
-def _safe_image_path(filename: str) -> Path | None:
+def safe_image_path(filename: str) -> Path | None:
     return _safe_path(filename, config.IMAGES_DIR, IMAGE_FILE_EXTENSIONS)
 
 
-def get_safe_image_path(filename: str) -> Path | None:
-    return _safe_image_path(filename)
-
-
-def _safe_thumbnail_path(filename: str) -> Path | None:
+def safe_thumbnail_path(filename: str) -> Path | None:
     return _safe_path(filename, config.THUMBNAILS_DIR, {THUMBNAIL_EXTENSION})
 
 
-def get_safe_thumbnail_path(filename: str) -> Path | None:
-    return _safe_thumbnail_path(filename)
-
-
 def _thumbnail_url_for_filename(filename: str) -> str | None:
-    if not _safe_image_path(filename):
+    if not safe_image_path(filename):
         return None
     if not _thumbnail_filename_for_image(filename):
         return None
@@ -933,7 +921,7 @@ def _create_thumbnail_unlocked(image_bytes: bytes, filename: str) -> str | None:
     if not thumbnail_filename:
         return None
 
-    thumbnail_path = _safe_thumbnail_path(thumbnail_filename)
+    thumbnail_path = safe_thumbnail_path(thumbnail_filename)
     if not thumbnail_path:
         return None
 
@@ -965,11 +953,11 @@ def ensure_thumbnail_for_image(filename: str) -> str | None:
     if not thumbnail_filename:
         return None
 
-    thumbnail_path = _safe_thumbnail_path(thumbnail_filename)
+    thumbnail_path = safe_thumbnail_path(thumbnail_filename)
     if thumbnail_path and thumbnail_path.is_file():
         return thumbnail_filename
 
-    image_path = _safe_image_path(filename)
+    image_path = safe_image_path(filename)
     if not image_path or not image_path.is_file():
         return None
 
@@ -1006,7 +994,7 @@ def _delete_thumbnail_unlocked(filename: str):
     thumbnail_filename = _thumbnail_filename_for_image(filename)
     if not thumbnail_filename:
         return
-    thumbnail_path = _safe_thumbnail_path(thumbnail_filename)
+    thumbnail_path = safe_thumbnail_path(thumbnail_filename)
     if thumbnail_path and thumbnail_path.is_file():
         thumbnail_path.unlink()
 
@@ -1023,7 +1011,7 @@ def _delete_all_thumbnails_unlocked():
 def _save_image_unlocked(image_bytes: bytes, filename: str) -> Path:
     _ensure_directories()
     validate_image_bytes(image_bytes, filename=filename)
-    path = _safe_image_path(filename)
+    path = safe_image_path(filename)
     if not path:
         raise ValueError(f"Invalid image filename: {filename}")
     with open(path, "wb") as f:
@@ -1032,7 +1020,7 @@ def _save_image_unlocked(image_bytes: bytes, filename: str) -> Path:
 
 
 def _delete_image_unlocked(filename: str) -> bool:
-    path = _safe_image_path(filename)
+    path = safe_image_path(filename)
     if path and path.is_file():
         path.unlink()
         return True
@@ -1064,7 +1052,7 @@ def _build_gallery_entry(
         "prompt": prompt,
         "size": size,
         "filename": filename,
-        "created_at": _utc_now(),
+        "created_at": utc_now(),
     }
     if image_bytes:
         entry.update(_image_dimension_metadata(image_bytes))
@@ -1186,7 +1174,7 @@ async def batch_save_and_update_gallery(
 
 
 def _stat_image_bytes(filename: str) -> int | None:
-    path = get_safe_image_path(filename)
+    path = getsafe_image_path(filename)
     if not path:
         return None
     try:
@@ -1481,7 +1469,7 @@ def list_generate_jobs(
 
 def mark_active_generate_jobs_interrupted() -> int:
     _ensure_database()
-    now = _utc_now()
+    now = utc_now()
     with _connect() as conn:
         with _transaction(conn):
             placeholders = ", ".join("?" for _ in ACTIVE_GENERATE_JOB_STATUSES)

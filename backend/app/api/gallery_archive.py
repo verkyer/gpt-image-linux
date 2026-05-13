@@ -5,21 +5,15 @@ import re
 import tempfile
 import uuid
 import zipfile
-from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from fastapi import HTTPException
 
 from ..core import settings as config
+from ..core.utils import utc_now
 from ..repositories import storage
 from ..schemas.models import GalleryEntry
-
-
-IMAGE_UPLOAD_EXTENSIONS = storage.IMAGE_FILE_EXTENSIONS
-IMAGE_UPLOAD_CONTENT_TYPES = {
-    extension: storage.IMAGE_FORMAT_CONTENT_TYPES[image_format]
-    for extension, image_format in storage.IMAGE_EXTENSION_FORMATS.items()
-}
+from .uploads import IMAGE_UPLOAD_CONTENT_TYPES, IMAGE_UPLOAD_EXTENSIONS
 
 
 def max_upload_bytes() -> int:
@@ -43,10 +37,10 @@ def file_sha256(path: Path) -> str:
 
 
 def build_gallery_export_metadata(entries: list[GalleryEntry]) -> dict:
-    exported_at = datetime.now(timezone.utc).isoformat()
+    exported_at = utc_now()
     images = []
     for entry in entries:
-        path = storage.get_safe_image_path(entry.filename)
+        path = storage.safe_image_path(entry.filename)
         data = entry.model_dump(exclude={"thumbnail_filename", "thumbnail_url"})
         if path and path.exists():
             try:
@@ -78,7 +72,7 @@ def build_gallery_zip_file(entries: list[GalleryEntry]) -> Path:
     try:
         with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for entry in entries:
-                path = storage.get_safe_image_path(entry.filename)
+                path = storage.safe_image_path(entry.filename)
                 if not path or not path.exists():
                     continue
 
@@ -258,7 +252,7 @@ def build_import_gallery_entries(zip_bytes: bytes) -> list[tuple[bytes, dict]]:
                 **raw_entry,
                 "id": image_id,
                 "filename": filename,
-                "created_at": str(raw_entry.get("created_at") or datetime.now(timezone.utc).isoformat()),
+                "created_at": str(raw_entry.get("created_at") or utc_now()),
             }
             imports.append((image_bytes, entry))
 

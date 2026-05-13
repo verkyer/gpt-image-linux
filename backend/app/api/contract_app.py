@@ -32,6 +32,7 @@ from .uploads import (
 )
 from ..core import settings as config
 from ..core.api_paths import ALLOWED_API_PATHS, normalize_api_path, normalize_api_preset
+from ..core.utils import utc_now
 from ..core.validators import mask_socks5_proxy_url, normalize_socks5_proxy_url
 from ..schemas.models import (
     AccessRequest,
@@ -389,10 +390,6 @@ def get_effective_preset_api_key(preset: dict) -> str:
     )
 
 
-def sanitize_api_preset(preset: dict, fallback_id: str = "default") -> dict:
-    return normalize_api_preset(preset, fallback_id)
-
-
 def persist_api_settings():
     storage.save_settings(
         {
@@ -410,7 +407,7 @@ def load_api_settings():
     presets = [
         preset
         for preset in (
-            sanitize_api_preset(preset, f"preset-{index + 1}")
+            normalize_api_preset(preset, f"preset-{index + 1}")
             for index, preset in enumerate(raw_presets)
             if isinstance(preset, dict)
         )
@@ -418,7 +415,7 @@ def load_api_settings():
     ]
     if not presets:
         presets = [
-            sanitize_api_preset(
+            normalize_api_preset(
                 {
                     "id": "default",
                     "name": "Default",
@@ -444,7 +441,7 @@ def get_api_presets() -> list[dict]:
     if presets:
         return presets
 
-    preset = sanitize_api_preset(
+    preset = normalize_api_preset(
         {
             "id": "default",
             "name": "Default",
@@ -655,7 +652,7 @@ def build_gallery_filters(
 
 
 def build_job_update(job_id: str, updates: dict) -> dict:
-    now = datetime.now(timezone.utc).isoformat()
+    now = utc_now()
     existing = app.state.generate_jobs.get(job_id) or storage.get_generate_job(job_id) or {}
     job = {
         **existing,
@@ -774,7 +771,7 @@ def build_pending_job(
     api_path: str | None = None,
     api_preset_name: str | None = None,
 ) -> dict:
-    now = datetime.now(timezone.utc).isoformat()
+    now = utc_now()
     return {
         "job_id": job_id,
         "status": "queued",
@@ -924,7 +921,7 @@ async def index():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "time": datetime.now(timezone.utc).isoformat()}
+    return {"status": "ok", "time": utc_now()}
 
 
 @app.get("/api/version", response_model=VersionResponse)
@@ -1286,7 +1283,7 @@ async def _run_image_job(
                     "operation": operation,
                     "prompt": req.prompt,
                     "size": req.size,
-                    "started_at": datetime.now(timezone.utc).isoformat(),
+                    "started_at": utc_now(),
                     "model": req.model,
                     "quality": req.quality,
                     "output_format": req.output_format,
@@ -1307,7 +1304,7 @@ async def _run_image_job(
                 "stage": "cancelled",
                 "message": cancel_message,
                 "operation": operation,
-                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "completed_at": utc_now(),
                 "duration": f"{time.monotonic() - started_at:.2f}s",
                 "error": cancel_message,
             },
@@ -1341,7 +1338,7 @@ async def _run_image_job(
                 "stage": failed_stage,
                 "message": error_message,
                 "operation": operation,
-                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "completed_at": utc_now(),
                 "duration": f"{time.monotonic() - started_at:.2f}s",
                 "error": error_message,
             },
@@ -1383,7 +1380,7 @@ async def _run_image_job(
             "api_path": first_entry.api_path,
             "api_preset_name": first_entry.api_preset_name,
             "duration": duration,
-            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "completed_at": utc_now(),
         },
     )
     trim_generate_jobs()
@@ -1595,7 +1592,7 @@ async def edit_image_from_gallery(
     if not entry:
         raise HTTPException(status_code=404, detail="Gallery entry not found")
 
-    path = storage.get_safe_image_path(entry.filename)
+    path = storage.safe_image_path(entry.filename)
     if not path or not path.exists():
         raise HTTPException(status_code=404, detail="Gallery image file not found")
 
@@ -1751,7 +1748,7 @@ async def cancel_generate_job(job_id: str):
             "stage": "cancelled",
             "message": cancel_message,
             "operation": job.get("operation"),
-            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "completed_at": utc_now(),
             "error": cancel_message,
         },
     )
@@ -1849,7 +1846,7 @@ async def update_gallery_favorite(
 
 
 async def _image_file_response(filename: str, *, download: bool = False):
-    path = storage.get_safe_image_path(filename)
+    path = storage.safe_image_path(filename)
     if not path or not path.exists():
         raise HTTPException(status_code=404, detail="Image not found")
 
@@ -1883,7 +1880,7 @@ async def serve_thumbnail(filename: str):
     if not thumbnail_filename:
         raise HTTPException(status_code=404, detail="Thumbnail not found")
 
-    path = storage.get_safe_thumbnail_path(thumbnail_filename)
+    path = storage.safe_thumbnail_path(thumbnail_filename)
     if not path or not path.exists():
         raise HTTPException(status_code=404, detail="Thumbnail not found")
 

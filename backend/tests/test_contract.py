@@ -977,8 +977,8 @@ def test_gallery_batch_delete_only_selected_entries(client):
     assert storage.get_gallery_entry("batch-delete-1") is None
     assert storage.get_gallery_entry("batch-delete-2") is not None
     assert storage.get_gallery_entry("batch-delete-3") is None
-    assert not storage.get_safe_image_path("batch-delete-1.png").exists()
-    assert storage.get_safe_image_path("batch-delete-2.png").exists()
+    assert not storage.safe_image_path("batch-delete-1.png").exists()
+    assert storage.safe_image_path("batch-delete-2.png").exists()
 
 
 def test_gallery_batch_delete_preserves_shared_filename(client):
@@ -995,12 +995,12 @@ def test_gallery_batch_delete_preserves_shared_filename(client):
     assert first.status_code == 200
     assert first.json()["count"] == 1
     assert first.json()["file_count"] == 0
-    assert storage.get_safe_image_path("shared.png") is not None
+    assert storage.safe_image_path("shared.png") is not None
 
     second = client.post("/api/gallery/batch/delete", json={"ids": ["shared-2"]})
     assert second.status_code == 200
     assert second.json()["file_count"] == 1
-    assert not storage.get_safe_image_path("shared.png").exists()
+    assert not storage.safe_image_path("shared.png").exists()
 
 
 def test_gallery_batch_favorite_and_download(client):
@@ -1053,7 +1053,7 @@ def test_import_archive(client):
 def test_thumbnail_endpoint_lazily_rebuilds_missing_file(client):
     entry = _fake_gallery_entry("lazy-thumb", "lazy", "1024x1024", "lazy-thumb.png")
     assert entry.thumbnail_filename
-    thumbnail_path = storage.get_safe_thumbnail_path(entry.thumbnail_filename)
+    thumbnail_path = storage.safe_thumbnail_path(entry.thumbnail_filename)
     assert thumbnail_path is not None
     thumbnail_path.unlink()
 
@@ -1204,9 +1204,9 @@ def test_import_archive_skips_mismatched_png_content(client):
 
 
 def test_safe_image_paths_reject_traversal(client):
-    assert storage.get_safe_image_path("gallery-zip.png") is not None
-    assert storage.get_safe_image_path("../secret.png") is None
-    assert storage.get_safe_image_path("nested/secret.png") is None
+    assert storage.safe_image_path("gallery-zip.png") is not None
+    assert storage.safe_image_path("../secret.png") is None
+    assert storage.safe_image_path("nested/secret.png") is None
 
     image = client.get("/api/image/..%2Fsecret.png")
     thumb = client.get("/api/thumb/..%2Fsecret.png")

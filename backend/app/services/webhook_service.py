@@ -10,6 +10,7 @@ import aiohttp
 
 from ..core import settings as config
 from ..core import validators as ssrf
+from ..core.utils import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ def build_webhook_payload(job: dict[str, Any]) -> dict[str, Any]:
     }
     payload = {key: job[key] for key in allowed_fields if key in job and job[key] is not None}
     payload["event"] = "image.job.finished"
-    payload["delivered_at"] = datetime.now(timezone.utc).isoformat()
+    payload["delivered_at"] = utc_now()
     return payload
 
 
