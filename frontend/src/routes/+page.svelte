@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import AccessGate from '$lib/components/AccessGate.svelte';
+  import EditPreviewModal from '$lib/components/EditPreviewModal.svelte';
   import GalleryGrid from '$lib/components/GalleryGrid.svelte';
   import Header from '$lib/components/Header.svelte';
   import JobHistoryDrawer from '$lib/components/JobHistoryDrawer.svelte';
@@ -18,6 +19,7 @@
   import { settingsStore } from '$lib/stores/settings';
   import { uiStore } from '$lib/stores/ui';
   import { copyText, galleryImageSize, imageUrl } from '$lib/utils/format';
+  import { compareVersions, normalizeVersion } from '$lib/utils/version';
 
   const VERSION_BRANCH = 'main';
 
@@ -67,32 +69,6 @@
     const res = await fetch(url, { cache: 'no-store' });
     if (!res.ok) throw new Error(`Version check failed: ${res.status}`);
     return normalizeVersion(await res.text());
-  }
-
-  function compareVersions(a: string, b: string) {
-    const left = versionParts(a);
-    const right = versionParts(b);
-    const length = Math.max(left.length, right.length);
-    for (let i = 0; i < length; i += 1) {
-      const l = left[i] || 0;
-      const r = right[i] || 0;
-      if (l > r) return 1;
-      if (l < r) return -1;
-    }
-    return 0;
-  }
-
-  function versionParts(value: string) {
-    return normalizeVersion(value)
-      .split('.')
-      .map((part) => Number.parseInt(part, 10))
-      .map((part) => (Number.isFinite(part) ? part : 0));
-  }
-
-  function normalizeVersion(value: string) {
-    return String(value || '')
-      .trim()
-      .replace(/^v/i, '');
   }
 
   async function loadInitialData() {
@@ -474,22 +450,11 @@
   onCopyUrl={copyImageUrl}
 />
 
-{#if $uiStore.editPreviewOpen && $editSourceStore.previewUrl}
-  <div class="fixed inset-0 z-[75] flex items-center justify-center bg-black/75 p-4">
-    <button class="absolute inset-0" type="button" aria-label={$t.promptForm.closeEditPreview} on:click={() => setUi('editPreviewOpen', false)}></button>
-    <div class="relative flex max-h-[calc(100vh-32px)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 shadow-2xl">
-      <div class="flex items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
-        <div class="min-w-0">
-          <h2 class="text-sm font-semibold text-zinc-100">{$t.promptForm.editSourcePreview}</h2>
-          <p class="mt-1 truncate text-xs text-zinc-500">{$editSourceStore.previewLabel}</p>
-        </div>
-        <button type="button" class="rounded-lg px-2 py-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" aria-label={$t.promptForm.closeEditPreview} on:click={() => setUi('editPreviewOpen', false)}>x</button>
-      </div>
-      <div class="flex min-h-0 flex-1 items-center justify-center bg-zinc-950 p-4">
-        <img src={$editSourceStore.previewUrl} alt={$editSourceStore.previewLabel} class="max-h-[calc(100vh-140px)] max-w-full rounded-lg object-contain" />
-      </div>
-    </div>
-  </div>
-{/if}
+<EditPreviewModal
+  open={$uiStore.editPreviewOpen}
+  url={$editSourceStore.previewUrl}
+  label={$editSourceStore.previewLabel}
+  onClose={() => setUi('editPreviewOpen', false)}
+/>
 
 <SizeDialog open={$uiStore.sizeDialogOpen} value={form.size} onApply={(nextSize) => (form = { ...form, size: nextSize })} onClose={() => setUi('sizeDialogOpen', false)} />

@@ -231,12 +231,7 @@ class GenerateJobResponse(BaseModel):
     operation: Optional[Literal["generation", "edit"]] = None
 
 
-class GenerateJobStatus(BaseModel):
-    job_id: str
-    status: Literal["queued", "running", "success", "error"]
-    message: Optional[str] = None
-    stage: Optional[str] = None
-    operation: Optional[Literal["generation", "edit"]] = None
+class GenerateJobStatus(GenerateJobResponse):
     id: Optional[str] = None
     image_id: Optional[str] = None
     image_url: Optional[str] = None

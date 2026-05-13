@@ -92,7 +92,6 @@ declare module '$env/static/private' {
 	export const ANTHROPIC_BASE_URL: string;
 	export const TERMINFO: string;
 	export const CLAUDE_CODE_EXECPATH: string;
-	export const CLAUDE_CODE_ATTRIBUTION_HEADER: string;
 	export const npm_config_cache: string;
 	export const ANTHROPIC_AUTH_TOKEN: string;
 	export const CONDA_PYTHON_EXE: string;
@@ -250,7 +249,6 @@ declare module '$env/dynamic/private' {
 		ANTHROPIC_BASE_URL: string;
 		TERMINFO: string;
 		CLAUDE_CODE_EXECPATH: string;
-		CLAUDE_CODE_ATTRIBUTION_HEADER: string;
 		npm_config_cache: string;
 		ANTHROPIC_AUTH_TOKEN: string;
 		CONDA_PYTHON_EXE: string;

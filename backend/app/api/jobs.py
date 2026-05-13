@@ -27,19 +27,11 @@ logger = logging.getLogger(__name__)
 
 
 def get_job_subscribers() -> dict[str, set[asyncio.Queue]]:
-    subscribers = getattr(app.state, "generate_job_subscribers", None)
-    if subscribers is None:
-        subscribers = {}
-        app.state.generate_job_subscribers = subscribers
-    return subscribers
+    return app.state.generate_job_subscribers
 
 
 def get_jobs_subscribers() -> set[asyncio.Queue]:
-    subscribers = getattr(app.state, "generate_jobs_subscribers", None)
-    if subscribers is None:
-        subscribers = set()
-        app.state.generate_jobs_subscribers = subscribers
-    return subscribers
+    return app.state.generate_jobs_subscribers
 
 
 def serialize_sse_event(event: str, data: dict | list) -> str:
@@ -76,11 +68,7 @@ def publish_generate_jobs():
 
 
 def get_generate_job_webhooks() -> dict[str, str]:
-    webhooks_by_job = getattr(app.state, "generate_job_webhooks", None)
-    if webhooks_by_job is None:
-        webhooks_by_job = {}
-        app.state.generate_job_webhooks = webhooks_by_job
-    return webhooks_by_job
+    return app.state.generate_job_webhooks
 
 
 def validate_job_webhook_url(webhook_url: str | None) -> str | None:
@@ -173,11 +161,7 @@ def should_persist_generate_job(job_id: str, job: dict, persist: bool) -> bool:
     if job.get("status") != "running":
         return True
 
-    last_persist_at = getattr(app.state, "generate_job_last_persist_at", None)
-    if last_persist_at is None:
-        last_persist_at = {}
-        app.state.generate_job_last_persist_at = last_persist_at
-
+    last_persist_at = app.state.generate_job_last_persist_at
     now = time.monotonic()
     previous = last_persist_at.get(job_id)
     if previous is None or now - previous >= GENERATE_JOB_PERSIST_INTERVAL_SECONDS:
@@ -193,9 +177,7 @@ def store_generate_job(job_id: str, updates: dict, *, persist: bool = True) -> d
         app.state.generate_jobs[job_id] = job
     else:
         app.state.generate_jobs.pop(job_id, None)
-        last_persist_at = getattr(app.state, "generate_job_last_persist_at", None)
-        if last_persist_at is not None:
-            last_persist_at.pop(job_id, None)
+        app.state.generate_job_last_persist_at.pop(job_id, None)
     if should_persist_generate_job(job_id, job, persist):
         storage.upsert_generate_job(job)
     publish_generate_job(job)
@@ -222,23 +204,15 @@ def trim_generate_jobs():
 
 
 def get_generate_job_tasks() -> dict[str, asyncio.Task]:
-    tasks = getattr(app.state, "generate_job_tasks", None)
-    if tasks is None:
-        tasks = {}
-        app.state.generate_job_tasks = tasks
-    return tasks
+    return app.state.generate_job_tasks
 
 
 def get_generate_job_semaphore() -> asyncio.Semaphore:
-    semaphore = getattr(app.state, "generate_job_semaphore", None)
-    if semaphore is None:
-        semaphore = asyncio.Semaphore(config.MAX_ACTIVE_GENERATE_JOBS)
-        app.state.generate_job_semaphore = semaphore
-    return semaphore
+    return app.state.generate_job_semaphore
 
 
 def count_active_jobs() -> int:
-    jobs = getattr(app.state, "generate_jobs", {}) or {}
+    jobs = app.state.generate_jobs or {}
     return sum(
         1
         for job in jobs.values()

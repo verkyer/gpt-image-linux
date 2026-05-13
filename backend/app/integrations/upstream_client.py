@@ -15,6 +15,14 @@ from ..schemas.models import EditRequest, GenerateRequest
 ProgressCallback = Callable[[str, str], None]
 
 
+class UpstreamApiError(Exception):
+    pass
+
+
+class UpstreamImageDownloadError(UpstreamApiError):
+    pass
+
+
 OUTPUT_FORMATS = {
     "png": {"extension": "png", "media_type": "image/png"},
     "jpeg": {"extension": "jpg", "media_type": "image/jpeg"},
@@ -118,7 +126,7 @@ async def read_limited_response(response: aiohttp.ClientResponse, max_bytes: int
     if content_length:
         try:
             if int(content_length) > max_bytes:
-                raise Exception(
+                raise UpstreamImageDownloadError(
                     f"Image too large: {content_length} bytes (max {max_bytes})"
                 )
         except ValueError:
@@ -129,7 +137,7 @@ async def read_limited_response(response: aiohttp.ClientResponse, max_bytes: int
     async for chunk in response.content.iter_chunked(IMAGE_DOWNLOAD_CHUNK_SIZE):
         total += len(chunk)
         if total > max_bytes:
-            raise Exception(f"Image too large: {total} bytes (max {max_bytes})")
+            raise UpstreamImageDownloadError(f"Image too large: {total} bytes (max {max_bytes})")
         chunks.append(chunk)
     return b"".join(chunks)
 
@@ -153,17 +161,17 @@ async def download_image_url(
             if 300 <= img_resp.status < 400:
                 location = img_resp.headers.get("Location")
                 if not location:
-                    raise Exception(f"Image URL redirect missing Location: {current_url}")
+                    raise UpstreamImageDownloadError(f"Image URL redirect missing Location: {current_url}")
                 current_url = urljoin(current_url, location)
                 continue
             if img_resp.status != 200:
-                raise Exception(
+                raise UpstreamImageDownloadError(
                     f"Failed to download image from {current_url}: {img_resp.status}"
                 )
             ssrf.validate_response_peer_ip(img_resp, "Image URL")
             return await read_limited_response(img_resp, max_bytes)
 
-    raise Exception("Image URL redirected too many times")
+    raise UpstreamImageDownloadError("Image URL redirected too many times")
 
 
 async def extract_image_bytes(
@@ -177,7 +185,7 @@ async def extract_image_bytes(
     if "url" in image_data and image_data["url"]:
         return await download_image_url(download_session, image_data["url"])
 
-    raise Exception(
+    raise UpstreamImageDownloadError(
         f"No image data (b64_json or url) in upstream response: {response_text}"
     )
 
@@ -253,7 +261,7 @@ async def collect_gallery_entries_data(
                 f"Validating decoded image ({image_index + 1}/{len(data)})",
             )
         if len(image_bytes) > max_bytes:
-            raise Exception(f"Image too large: {len(image_bytes)} bytes (max {max_bytes})")
+            raise UpstreamImageDownloadError(f"Image too large: {len(image_bytes)} bytes (max {max_bytes})")
 
         image_id = storage.generate_image_id()
         filename = f"{image_id}.{format_extension}"
@@ -387,10 +395,10 @@ def raise_upstream_error(
         status in {404, 405, 501}
         or any(marker in error_msg.lower() for marker in unsupported_markers)
     ):
-        raise Exception(
+        raise UpstreamApiError(
             f"Upstream API does not support /v1/images/edits ({status}): {error_msg}"
         )
-    raise Exception(f"Upstream API error ({status}): {error_msg}")
+    raise UpstreamApiError(f"Upstream API error ({status}): {error_msg}")
 
 
 async def parse_upstream_json_response(
@@ -410,7 +418,7 @@ async def parse_upstream_json_response(
         raise_upstream_error(status, response_text, is_json_response, api_path)
 
     if not is_json_response:
-        raise Exception(
+        raise UpstreamApiError(
             f"Upstream returned non-JSON content-type ({status}): {response_text[:200]}"
         )
 
@@ -419,7 +427,7 @@ async def parse_upstream_json_response(
     try:
         result = json.loads(response_text)
     except json.JSONDecodeError:
-        raise Exception(
+        raise UpstreamApiError(
             f"Upstream returned non-JSON ({status}): {response_text[:200]}"
         )
     return result, response_text
@@ -489,7 +497,7 @@ async def call_image_generation_api(
                     data = result.get("data", [])
                 if not data:
                     text_preview = response_text[:200] if isinstance(response_text, str) else str(response_text)[:200]
-                    raise Exception(f"No image data in upstream response: {text_preview}")
+                    raise UpstreamApiError(f"No image data in upstream response: {text_preview}")
 
                 entries = await save_gallery_entries_from_upstream_data(
                     download_session=download_session,
@@ -562,7 +570,7 @@ async def call_image_edit_api(
                 progress("extracting_edit_data", "Extracting edited image data array")
             data = result.get("data", [])
             if not data:
-                raise Exception(f"No image data in upstream response: {response_text[:200]}")
+                raise UpstreamApiError(f"No image data in upstream response: {response_text[:200]}")
 
             async with create_client_session(UPSTREAM_TIMEOUT) as download_session:
                 return await save_gallery_entries_from_upstream_data(

@@ -44,6 +44,7 @@ async def lifespan(app: FastAPI):
     app.state.generate_job_semaphore = asyncio.Semaphore(config.MAX_ACTIVE_GENERATE_JOBS)
     app.state.generate_job_subscribers = {}
     app.state.generate_jobs_subscribers = set()
+    app.state.generate_job_webhooks = {}
     app.state.generate_job_last_persist_at = {}
     app.state.access_failures: dict[str, tuple[int, float]] = {}
     try:

@@ -17,7 +17,7 @@ from ..core import settings as config
 from ..core.api_paths import normalize_api_preset
 from ..core.constants import ACTIVE_GENERATE_JOB_STATUSES
 from ..core.utils import utc_now
-from ..schemas.models import GalleryEntry
+from ..schemas.models import GalleryEntry, GalleryFilterOptions
 
 try:
     from PIL import Image, ImageOps, UnidentifiedImageError
@@ -159,6 +159,8 @@ SQLITE_TIMEOUT_SECONDS = 30.0
 _db_initialized = False
 _db_init_lock = threading.RLock()
 _storage_lock = threading.RLock()
+_dirs_initialized = False
+_thread_local = threading.local()
 
 
 def _default_settings() -> dict:
@@ -178,10 +180,14 @@ def _default_settings() -> dict:
 
 
 def _ensure_directories():
+    global _dirs_initialized
+    if _dirs_initialized:
+        return
     Path(config.IMAGES_DIR).mkdir(parents=True, exist_ok=True)
     Path(config.THUMBNAILS_DIR).mkdir(parents=True, exist_ok=True)
     Path(config.DATA_DIR).mkdir(parents=True, exist_ok=True)
     Path(config.DATABASE_FILE).parent.mkdir(parents=True, exist_ok=True)
+    _dirs_initialized = True
 
 
 def _check_directory_writable(path: Path):
@@ -210,10 +216,22 @@ def verify_storage_writable():
 
 def _connect() -> sqlite3.Connection:
     _ensure_directories()
-    conn = sqlite3.connect(config.DATABASE_FILE, timeout=SQLITE_TIMEOUT_SECONDS)
+    db_path = config.DATABASE_FILE
+    cached = getattr(_thread_local, "conn", None)
+    cached_path = getattr(_thread_local, "conn_path", None)
+    if cached is not None and cached_path == db_path:
+        return cached
+    if cached is not None:
+        try:
+            cached.close()
+        except Exception:
+            pass
+    conn = sqlite3.connect(db_path, timeout=SQLITE_TIMEOUT_SECONDS)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 30000")
+    _thread_local.conn = conn
+    _thread_local.conn_path = db_path
     return conn
 
 
@@ -1009,7 +1027,6 @@ def _delete_all_thumbnails_unlocked():
 
 
 def _save_image_unlocked(image_bytes: bytes, filename: str) -> Path:
-    _ensure_directories()
     validate_image_bytes(image_bytes, filename=filename)
     path = safe_image_path(filename)
     if not path:
@@ -1259,7 +1276,7 @@ def get_gallery(
     return [GalleryEntry(**_gallery_entry_from_row(row)) for row in rows]
 
 
-def get_gallery_filter_options() -> dict[str, list[str]]:
+def get_gallery_filter_options() -> GalleryFilterOptions:
     _ensure_database()
     options: dict[str, list[str]] = {}
     with _connect() as conn:
@@ -1277,7 +1294,7 @@ def get_gallery_filter_options() -> dict[str, list[str]]:
                 """
             ).fetchall()
             options[key] = [row["value"] for row in rows if row["value"]]
-    return options
+    return GalleryFilterOptions(**options)
 
 
 def get_gallery_entry(image_id: str) -> GalleryEntry | None:
@@ -1321,6 +1338,7 @@ def add_to_gallery_sync(
     metadata: dict[str, Any] | None = None,
     image_bytes: bytes | None = None,
 ) -> GalleryEntry:
+    """Synchronous gallery insert — used only in tests."""
     entry = _build_gallery_entry(
         image_id=image_id,
         prompt=prompt,

@@ -65,6 +65,7 @@ def _configure_runtime(tmp_path: Path, *, access_key: str = "", allow_unauthenti
     config.THUMBNAIL_MAX_SIDE = 512
 
     storage._db_initialized = False
+    storage._dirs_initialized = False
     backend_main.app.state._state.clear()
 
 
