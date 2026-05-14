@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { GenerateJobStatus } from '$lib/api/types';
   import { t } from '$lib/i18n';
-  import { downloadUrl, stageLabel, statusLabel } from '$lib/utils/format';
+  import { downloadUrl, formatBeijingTime, stageLabel, statusLabel } from '$lib/utils/format';
 
   export let loading = false;
   export let error = '';
@@ -54,10 +54,14 @@
   </div>
 
   {#if job}
-    <div class="mt-4 grid grid-cols-2 gap-2 text-xs text-zinc-500 sm:grid-cols-4">
+    <div class="mt-4 grid grid-cols-2 gap-2 text-xs text-zinc-500 sm:grid-cols-5">
       <div class="rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2">
         <div class="text-zinc-600">{$t.common.status}</div>
         <div class="mt-1 text-zinc-300">{statusLabel(job.status, $t.statuses)}</div>
+      </div>
+      <div class="rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2">
+        <div class="text-zinc-600">{$t.common.completedAt}</div>
+        <div class="mt-1 whitespace-nowrap text-zinc-300">{formatBeijingTime(job.completed_at)}</div>
       </div>
       <div class="rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2">
         <div class="text-zinc-600">{$t.common.size}</div>

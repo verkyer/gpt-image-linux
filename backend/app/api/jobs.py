@@ -16,7 +16,7 @@ from ..core import settings as config
 from ..core import validators as ssrf
 from ..core.api_paths import normalize_api_path
 from ..core.constants import ACTIVE_GENERATE_JOB_STATUSES
-from ..core.utils import utc_now
+from ..core.utils import beijing_now, utc_now
 from ..integrations import upstream_client as proxy
 from ..repositories import storage
 from ..schemas.models import EditRequest, GenerateRequest, GenerateJobResponse, GalleryEntry
@@ -479,7 +479,11 @@ async def _run_image_job(
         operation,
     )
     first_entry = entries[0]
-    storage.update_gallery_entry(first_entry.id, {"duration": duration})
+    completed_at = beijing_now()
+    first_entry = storage.update_gallery_entry(
+        first_entry.id,
+        {"duration": duration, "completed_at": completed_at},
+    ) or first_entry
     store_generate_job(
         job_id,
         {
@@ -502,7 +506,7 @@ async def _run_image_job(
             "api_path": first_entry.api_path,
             "api_preset_name": first_entry.api_preset_name,
             "duration": duration,
-            "completed_at": utc_now(),
+            "completed_at": completed_at,
         },
     )
     trim_generate_jobs()
@@ -588,4 +592,3 @@ async def run_edit_job(
             socks5_proxy=socks5_proxy,
         ),
     )
-

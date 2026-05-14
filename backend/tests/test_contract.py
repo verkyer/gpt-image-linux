@@ -871,6 +871,10 @@ def test_generate_and_edit_default_size_is_auto(client):
     assert generate.status_code == 202
     generate_job = _wait_for_job(client, generate.json()["job_id"])
     assert generate_job["size"] == "auto"
+    assert generate_job["completed_at"].endswith("+08:00")
+    generated_entry = storage.get_gallery_entry(generate_job["image_id"])
+    assert generated_entry is not None
+    assert generated_entry.completed_at == generate_job["completed_at"]
 
     edit = client.post(
         "/api/edits",

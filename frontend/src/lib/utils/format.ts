@@ -22,6 +22,26 @@ export function formatBytes(totalBytes: number) {
   return `${(totalBytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+export function formatBeijingTime(value: string | null | undefined) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value || '';
+
+  return `${part('year')}-${part('month')}-${part('day')} ${part('hour')}:${part('minute')}:${part('second')}`;
+}
+
 export function galleryImageSize(image: Pick<GalleryEntry, 'size' | 'image_width' | 'image_height'>) {
   if (image.size && image.size !== 'auto') return image.size;
   if (image.image_width && image.image_height) return `${image.image_width}x${image.image_height}`;

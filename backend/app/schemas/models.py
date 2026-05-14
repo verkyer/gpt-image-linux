@@ -174,6 +174,7 @@ class GalleryEntry(BaseModel):
     thumbnail_filename: Optional[str] = None
     thumbnail_url: Optional[str] = None
     created_at: str
+    completed_at: Optional[str] = None
     image_width: Optional[int] = None
     image_height: Optional[int] = None
     model: Optional[str] = None

@@ -34,7 +34,7 @@ Key characteristics:
 - image-to-image edits via OpenAI-compatible `/v1/images/edits`
 - auto, ratio-based, and custom image sizes
 - persistent top-left language switch between English and Simplified Chinese
-- preview UI with prompt, parameters, elapsed time, and localized generation/edit stages
+- preview UI with prompt, parameters, Beijing completion time, elapsed time, and localized generation/edit stages
 - SSE progress updates for preview state with a polling fallback on stream reconnect failure
 - active job history drawer backed by SSE with selectable cancellation for queued/running generation and edit jobs
 - configurable concurrency and queue limits shared by generation and edit jobs
@@ -89,7 +89,7 @@ npm --prefix frontend run build
 Runtime persistent storage is minimal:
 
 - generated images are saved in the `images/` directory
-- gallery metadata, image byte sizes, and API presets are stored in SQLite at `data/app.sqlite3`, including generation duration
+- gallery metadata, image byte sizes, and API presets are stored in SQLite at `data/app.sqlite3`, including Beijing completion time and generation duration
 - generation job status, errors, timing, and result metadata are stored in SQLite at `data/app.sqlite3`
 - active `asyncio.Task` handles live only in process memory; queued/running jobs from a previous process are marked interrupted on startup
 
@@ -495,7 +495,7 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 - 通过 OpenAI 兼容 `/v1/images/edits` 支持图生图编辑
 - 支持自动、比例和自定义图像尺寸
 - 左上角语言切换按钮，可在英文和简体中文之间切换，并持久保存
-- 预览界面：显示提示词、参数、真实图片分辨率、生成耗时，以及本地化 generation/edit 细分阶段
+- 预览界面：显示提示词、参数、真实图片分辨率、北京时间生成完成时间、生成耗时，以及本地化 generation/edit 细分阶段
 - 预览进度通过 SSE 实时推送，流断开时退回轮询兜底
 - 历史任务抽屉通过 SSE 更新正在排队/运行的生成和编辑任务，并支持选择后主动终止
 - 生成和编辑任务共享可配置的并发上限与排队上限
@@ -550,7 +550,7 @@ npm --prefix frontend run build
 运行时持久化存储非常简单：
 
 - 生成的图片保存在 `images/` 目录
-- Gallery 元数据、图片字节数和 API 预设保存在 SQLite：`data/app.sqlite3`，包含真实图片宽高和生成耗时
+- Gallery 元数据、图片字节数和 API 预设保存在 SQLite：`data/app.sqlite3`，包含真实图片宽高、北京时间生成完成时间和生成耗时
 - 生成/编辑任务的状态、错误、耗时、请求参数和结果元数据保存在 SQLite：`data/app.sqlite3`
 - 运行中的 `asyncio.Task` 句柄仅保存在进程内存中；重启后，上个进程遗留的排队/运行任务会被标记为 interrupted
 

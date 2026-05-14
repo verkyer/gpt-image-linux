@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { GalleryEntry } from '$lib/api/types';
   import { t } from '$lib/i18n';
-  import { downloadUrl, galleryImageSize, imageUrl } from '$lib/utils/format';
+  import { downloadUrl, formatBeijingTime, galleryImageSize, imageUrl } from '$lib/utils/format';
 
   export let open = false;
   export let image: GalleryEntry | null = null;
@@ -41,6 +41,10 @@
             <div class="rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2">
               <div class="text-zinc-600">{$t.common.model}</div>
               <div class="mt-1 truncate text-zinc-300">{image.model || '-'}</div>
+            </div>
+            <div class="rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2">
+              <div class="text-zinc-600">{$t.common.completedAt}</div>
+              <div class="mt-1 whitespace-nowrap text-zinc-300">{formatBeijingTime(image.completed_at)}</div>
             </div>
             <div class="rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2">
               <div class="text-zinc-600">{$t.common.preset}</div>

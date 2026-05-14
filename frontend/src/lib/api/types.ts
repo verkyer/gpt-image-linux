@@ -94,6 +94,7 @@ export type GalleryEntry = {
   thumbnail_filename?: string | null;
   thumbnail_url?: string | null;
   created_at: string;
+  completed_at?: string | null;
   image_width?: number | null;
   image_height?: number | null;
   model?: string | null;

@@ -94,6 +94,7 @@ GALLERY_COLUMNS = (
     "filename",
     "thumbnail_filename",
     "created_at",
+    "completed_at",
     "image_width",
     "image_height",
     "model",
@@ -284,6 +285,7 @@ def _ensure_database():
                     filename TEXT NOT NULL,
                     thumbnail_filename TEXT,
                     created_at TEXT NOT NULL,
+                    completed_at TEXT,
                     image_width INTEGER,
                     image_height INTEGER,
                     model TEXT,
@@ -360,6 +362,8 @@ def _migrate_gallery_schema(conn: sqlite3.Connection):
         conn.execute("ALTER TABLE gallery_entries ADD COLUMN bytes INTEGER")
     if "thumbnail_filename" not in columns:
         conn.execute("ALTER TABLE gallery_entries ADD COLUMN thumbnail_filename TEXT")
+    if "completed_at" not in columns:
+        conn.execute("ALTER TABLE gallery_entries ADD COLUMN completed_at TEXT")
     if "favorite" in _table_columns(conn, "gallery_entries"):
         conn.execute(
             """
