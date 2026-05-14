@@ -90,9 +90,9 @@ async def deliver_webhook(webhook_url: str, job: dict[str, Any]):
     timeout = aiohttp.ClientTimeout(total=config.WEBHOOK_TIMEOUT_SECONDS)
     last_error = None
 
-    for attempt in range(1, attempts + 1):
-        try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        for attempt in range(1, attempts + 1):
+            try:
                 async with session.post(
                     webhook_url,
                     data=body,
@@ -110,11 +110,11 @@ async def deliver_webhook(webhook_url: str, job: dict[str, Any]):
                         )
                         return
                     last_error = f"HTTP {response.status}"
-        except Exception as error:
-            last_error = str(error) or error.__class__.__name__
+            except Exception as error:
+                last_error = str(error) or error.__class__.__name__
 
-        if attempt < attempts:
-            await asyncio.sleep(min(2 ** (attempt - 1), 4))
+            if attempt < attempts:
+                await asyncio.sleep(min(2 ** (attempt - 1), 4))
 
     logger.warning(
         "Webhook delivery failed: job_id=%s attempts=%s error=%s",

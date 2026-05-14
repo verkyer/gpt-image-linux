@@ -1,91 +1,87 @@
 import asyncio
-import hashlib
-import io
 import json
 import logging
 import os
 import sqlite3
-import struct
 import threading
-import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable, Iterator
-from urllib.parse import quote
 
 from ..core import settings as config
 from ..core.api_paths import normalize_api_preset
 from ..core.constants import ACTIVE_GENERATE_JOB_STATUSES
 from ..core.utils import utc_now
 from ..schemas.models import GalleryEntry, GalleryFilterOptions
-
-try:
-    from PIL import Image, ImageOps, UnidentifiedImageError
-except ImportError:  # pragma: no cover - exercised only in incomplete installs
-    Image = None
-    ImageOps = None
-    UnidentifiedImageError = OSError
+from .image_files import (
+    IMAGE_CONTENT_TYPE_FORMATS,
+    IMAGE_EXTENSION_FORMATS,
+    IMAGE_FILE_EXTENSIONS,
+    IMAGE_FORMAT_CONTENT_TYPES,
+    THUMBNAIL_CONTENT_TYPE,
+    THUMBNAIL_EXTENSION,
+    delete_image_from_disk as _delete_image_unlocked,
+    detect_image_format,
+    generate_image_id,
+    get_image_dimensions,
+    image_dimension_metadata as _image_dimension_metadata,
+    safe_image_path,
+    safe_thumbnail_path,
+    save_image_to_disk as _save_image_unlocked,
+    scan_image_files as _scan_image_files,
+    validate_image_bytes,
+)
+from .thumbnails import (
+    create_thumbnail as _create_thumbnail_unlocked,
+    delete_all_thumbnails as _delete_all_thumbnails_unlocked,
+    delete_thumbnail as _delete_thumbnail_unlocked,
+    thumbnail_filename_for_image as _thumbnail_filename_for_image,
+    thumbnail_url_for_filename as _thumbnail_url_for_filename,
+)
 
 logger = logging.getLogger(__name__)
 
-IMAGE_FILE_EXTENSIONS = {
-    ".avif",
-    ".bmp",
-    ".gif",
-    ".heic",
-    ".heif",
-    ".ico",
-    ".jpg",
-    ".jpeg",
-    ".png",
-    ".tif",
-    ".tiff",
-    ".webp",
-}
-
-IMAGE_EXTENSION_FORMATS = {
-    ".avif": "avif",
-    ".bmp": "bmp",
-    ".gif": "gif",
-    ".heic": "heif",
-    ".heif": "heif",
-    ".ico": "ico",
-    ".jpg": "jpeg",
-    ".jpeg": "jpeg",
-    ".png": "png",
-    ".tif": "tiff",
-    ".tiff": "tiff",
-    ".webp": "webp",
-}
-IMAGE_CONTENT_TYPE_FORMATS = {
-    "image/avif": "avif",
-    "image/bmp": "bmp",
-    "image/gif": "gif",
-    "image/heic": "heif",
-    "image/heif": "heif",
-    "image/ico": "ico",
-    "image/icon": "ico",
-    "image/jpeg": "jpeg",
-    "image/pjpeg": "jpeg",
-    "image/png": "png",
-    "image/tiff": "tiff",
-    "image/vnd.microsoft.icon": "ico",
-    "image/webp": "webp",
-    "image/x-icon": "ico",
-}
-IMAGE_FORMAT_CONTENT_TYPES = {
-    "avif": "image/avif",
-    "bmp": "image/bmp",
-    "gif": "image/gif",
-    "heif": "image/heif",
-    "ico": "image/x-icon",
-    "jpeg": "image/jpeg",
-    "png": "image/png",
-    "tiff": "image/tiff",
-    "webp": "image/webp",
-}
-THUMBNAIL_EXTENSION = ".webp"
-THUMBNAIL_CONTENT_TYPE = "image/webp"
+__all__ = [
+    "IMAGE_CONTENT_TYPE_FORMATS",
+    "IMAGE_EXTENSION_FORMATS",
+    "IMAGE_FILE_EXTENSIONS",
+    "IMAGE_FORMAT_CONTENT_TYPES",
+    "THUMBNAIL_CONTENT_TYPE",
+    "THUMBNAIL_EXTENSION",
+    "GalleryEntry",
+    "GalleryFilterOptions",
+    "add_to_gallery_async",
+    "add_to_gallery_sync",
+    "delete_all_gallery_images",
+    "delete_gallery_image",
+    "delete_gallery_images",
+    "detect_image_format",
+    "ensure_thumbnail_for_image",
+    "generate_image_id",
+    "get_all_filenames",
+    "get_all_gallery_ids",
+    "get_gallery",
+    "get_gallery_count",
+    "get_gallery_entry",
+    "get_gallery_filter_options",
+    "get_gallery_total_bytes",
+    "get_generate_job",
+    "get_image_dimensions",
+    "import_gallery_entries",
+    "list_generate_jobs",
+    "load_settings",
+    "mark_active_generate_jobs_interrupted",
+    "safe_image_path",
+    "safe_thumbnail_path",
+    "save_settings",
+    "sync_gallery_with_image_files",
+    "trim_generate_jobs",
+    "update_gallery_entries_favorite",
+    "update_gallery_entry",
+    "upsert_generate_job",
+    "validate_image_bytes",
+    "verify_storage_writable",
+]
 
 GALLERY_COLUMNS = (
     "id",
@@ -776,232 +772,12 @@ def save_settings(settings: dict):
             _replace_settings_on_conn(conn, settings)
 
 
-def generate_image_id() -> str:
-    return str(uuid.uuid4())
-
-
-def detect_image_format(image_bytes: bytes) -> str | None:
-    stripped = image_bytes[:512].lstrip().lower()
-    if stripped.startswith((b"<svg", b"<?xml", b"<!doctype html", b"<html")):
-        return None
-    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "png"
-    if image_bytes.startswith(b"\xff\xd8"):
-        return "jpeg"
-    if image_bytes.startswith((b"GIF87a", b"GIF89a")):
-        return "gif"
-    if image_bytes.startswith(b"RIFF") and len(image_bytes) >= 12 and image_bytes[8:12] == b"WEBP":
-        return "webp"
-    if image_bytes.startswith(b"BM"):
-        return "bmp"
-    if image_bytes.startswith((b"II*\x00", b"MM\x00*")):
-        return "tiff"
-    if len(image_bytes) >= 12 and image_bytes[4:8] == b"ftyp":
-        brand = image_bytes[8:12]
-        compatible = image_bytes[8:32]
-        if brand in {b"avif", b"avis"} or b"avif" in compatible or b"avis" in compatible:
-            return "avif"
-        if brand in {b"heic", b"heix", b"hevc", b"hevx", b"mif1", b"msf1"}:
-            return "heif"
-    if image_bytes.startswith(b"\x00\x00\x01\x00"):
-        return "ico"
-    return None
-
-
-def validate_image_bytes(
-    image_bytes: bytes,
-    *,
-    filename: str = "",
-    content_type: str = "",
-) -> str:
-    detected_format = detect_image_format(image_bytes)
-    if not detected_format:
-        raise ValueError("Image data must be a supported raster image format")
-
-    suffix = Path(filename or "").suffix.lower()
-    extension_format = IMAGE_EXTENSION_FORMATS.get(suffix)
-    if suffix and extension_format != detected_format:
-        raise ValueError("Image file extension does not match image data")
-
-    normalized_content_type = (content_type or "").split(";", 1)[0].strip().lower()
-    content_type_format = IMAGE_CONTENT_TYPE_FORMATS.get(normalized_content_type)
-    if normalized_content_type and content_type_format != detected_format:
-        raise ValueError("Image content type does not match image data")
-
-    return detected_format
-
-
-def get_image_dimensions(image_bytes: bytes) -> tuple[int, int] | None:
-    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n") and len(image_bytes) >= 24:
-        return struct.unpack(">II", image_bytes[16:24])
-
-    if image_bytes.startswith(b"\xff\xd8"):
-        offset = 2
-        while offset + 9 < len(image_bytes):
-            if image_bytes[offset] != 0xFF:
-                offset += 1
-                continue
-            marker = image_bytes[offset + 1]
-            offset += 2
-            while marker == 0xFF and offset < len(image_bytes):
-                marker = image_bytes[offset]
-                offset += 1
-            if marker in (0xD8, 0xD9):
-                continue
-            if offset + 2 > len(image_bytes):
-                return None
-            segment_length = struct.unpack(">H", image_bytes[offset : offset + 2])[0]
-            if segment_length < 2 or offset + segment_length > len(image_bytes):
-                return None
-            if marker in (
-                0xC0,
-                0xC1,
-                0xC2,
-                0xC3,
-                0xC5,
-                0xC6,
-                0xC7,
-                0xC9,
-                0xCA,
-                0xCB,
-                0xCD,
-                0xCE,
-                0xCF,
-            ):
-                height, width = struct.unpack(">HH", image_bytes[offset + 3 : offset + 7])
-                return width, height
-            offset += segment_length
-
-    if image_bytes.startswith(b"RIFF") and image_bytes[8:12] == b"WEBP":
-        chunk_type = image_bytes[12:16]
-        if chunk_type == b"VP8X" and len(image_bytes) >= 30:
-            width = int.from_bytes(image_bytes[24:27], "little") + 1
-            height = int.from_bytes(image_bytes[27:30], "little") + 1
-            return width, height
-        if chunk_type == b"VP8 " and len(image_bytes) >= 30:
-            width, height = struct.unpack("<HH", image_bytes[26:30])
-            return width & 0x3FFF, height & 0x3FFF
-        if chunk_type == b"VP8L" and len(image_bytes) >= 25 and image_bytes[20] == 0x2F:
-            bits = int.from_bytes(image_bytes[21:25], "little")
-            width = (bits & 0x3FFF) + 1
-            height = ((bits >> 14) & 0x3FFF) + 1
-            return width, height
-
-    return None
-
-
-def _image_dimension_metadata(image_bytes: bytes) -> dict[str, int]:
-    dimensions = get_image_dimensions(image_bytes)
-    if not dimensions:
-        return {}
-    width, height = dimensions
-    return {"image_width": width, "image_height": height}
-
-
-def _thumbnail_filename_for_image(filename: str) -> str | None:
-    path_name = Path(filename or "")
-    if (
-        not filename
-        or "\x00" in filename
-        or "/" in filename
-        or "\\" in filename
-        or path_name.name != filename
-        or path_name.suffix.lower() not in IMAGE_FILE_EXTENSIONS
-    ):
-        return None
-
-    safe_stem = "".join(
-        char if char.isalnum() or char in {"-", "_", "."} else "_"
-        for char in path_name.stem
-    ).strip("._")
-    safe_stem = (safe_stem or "image")[:80]
-    digest = hashlib.sha256(filename.encode("utf-8")).hexdigest()[:12]
-    return f"{safe_stem}-{digest}{THUMBNAIL_EXTENSION}"
-
-
-def _safe_path(filename: str, base_dir: str, allowed_suffixes: set[str]) -> Path | None:
-    if not filename or "\x00" in filename or "/" in filename or "\\" in filename:
-        return None
-    if filename in {".", ".."}:
-        return None
-
-    path_name = Path(filename)
-    if path_name.name != filename or path_name.suffix.lower() not in allowed_suffixes:
-        return None
-
-    root = Path(base_dir).resolve()
-    path = (root / filename).resolve()
-    try:
-        path.relative_to(root)
-    except ValueError:
-        return None
-    return path
-
-
-def safe_image_path(filename: str) -> Path | None:
-    return _safe_path(filename, config.IMAGES_DIR, IMAGE_FILE_EXTENSIONS)
-
-
-def safe_thumbnail_path(filename: str) -> Path | None:
-    return _safe_path(filename, config.THUMBNAILS_DIR, {THUMBNAIL_EXTENSION})
-
-
-def _thumbnail_url_for_filename(filename: str) -> str | None:
-    if not safe_image_path(filename):
-        return None
-    if not _thumbnail_filename_for_image(filename):
-        return None
-    return f"/api/thumb/{quote(filename, safe='')}"
-
-
 def _attach_gallery_thumbnail_url(entry: dict[str, Any]) -> dict[str, Any]:
     if "thumbnail_url" not in entry:
         entry["thumbnail_url"] = _thumbnail_url_for_filename(
             str(entry.get("filename") or "")
         )
     return entry
-
-
-def _get_thumbnail_resampling_filter():
-    if Image is None:
-        return None
-    return getattr(getattr(Image, "Resampling", Image), "LANCZOS")
-
-
-def _create_thumbnail_unlocked(image_bytes: bytes, filename: str) -> str | None:
-    if Image is None or ImageOps is None:
-        logger.warning("Pillow is not installed; thumbnail generation skipped")
-        return None
-
-    thumbnail_filename = _thumbnail_filename_for_image(filename)
-    if not thumbnail_filename:
-        return None
-
-    thumbnail_path = safe_thumbnail_path(thumbnail_filename)
-    if not thumbnail_path:
-        return None
-
-    try:
-        with Image.open(io.BytesIO(image_bytes)) as image:
-            if getattr(image, "is_animated", False):
-                image.seek(0)
-            thumbnail = ImageOps.exif_transpose(image)
-            if thumbnail.mode not in {"RGB", "RGBA"}:
-                thumbnail = thumbnail.convert(
-                    "RGBA" if "A" in thumbnail.getbands() else "RGB"
-                )
-            thumbnail.thumbnail(
-                (config.THUMBNAIL_MAX_SIDE, config.THUMBNAIL_MAX_SIDE),
-                _get_thumbnail_resampling_filter(),
-            )
-            thumbnail_path.parent.mkdir(parents=True, exist_ok=True)
-            thumbnail.save(thumbnail_path, "WEBP", quality=82, method=6)
-    except (OSError, UnidentifiedImageError, ValueError) as e:
-        thumbnail_path.unlink(missing_ok=True)
-        logger.warning("Failed to generate thumbnail for %s: %s", filename, e)
-        return None
-
-    return thumbnail_filename
 
 
 def ensure_thumbnail_for_image(filename: str) -> str | None:
@@ -1044,54 +820,6 @@ def _set_thumbnail_filename_for_image(filename: str, thumbnail_filename: str):
                 """,
                 (thumbnail_filename, filename),
             )
-
-
-def _delete_thumbnail_unlocked(filename: str):
-    thumbnail_filename = _thumbnail_filename_for_image(filename)
-    if not thumbnail_filename:
-        return
-    thumbnail_path = safe_thumbnail_path(thumbnail_filename)
-    if thumbnail_path and thumbnail_path.is_file():
-        thumbnail_path.unlink()
-
-
-def _delete_all_thumbnails_unlocked():
-    thumbnails_dir = Path(config.THUMBNAILS_DIR)
-    if not thumbnails_dir.exists():
-        return
-    for path in thumbnails_dir.iterdir():
-        if path.is_file() and path.suffix.lower() == THUMBNAIL_EXTENSION:
-            path.unlink()
-
-
-def _save_image_unlocked(image_bytes: bytes, filename: str) -> Path:
-    validate_image_bytes(image_bytes, filename=filename)
-    path = safe_image_path(filename)
-    if not path:
-        raise ValueError(f"Invalid image filename: {filename}")
-    with open(path, "wb") as f:
-        f.write(image_bytes)
-    return path
-
-
-def _delete_image_unlocked(filename: str) -> bool:
-    path = safe_image_path(filename)
-    if path and path.is_file():
-        path.unlink()
-        return True
-    return False
-
-
-def _scan_image_files() -> set[str]:
-    images_dir = Path(config.IMAGES_DIR)
-    if not images_dir.exists():
-        return set()
-
-    return {
-        path.name
-        for path in images_dir.iterdir()
-        if path.is_file() and path.suffix.lower() in IMAGE_FILE_EXTENSIONS
-    }
 
 
 def _build_gallery_entry(

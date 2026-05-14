@@ -57,6 +57,9 @@ declare module '$env/static/private' {
 	export const npm_config_local_prefix: string;
 	export const GIT_EDITOR: string;
 	export const AI_AGENT: string;
+	export const NO_PROXY: string;
+	export const http_proxy: string;
+	export const _OLD_HTTPS_PROXY: string;
 	export const _CONDA_EXE: string;
 	export const USER: string;
 	export const COMMAND_MODE: string;
@@ -68,6 +71,8 @@ declare module '$env/static/private' {
 	export const __CF_USER_TEXT_ENCODING: string;
 	export const npm_execpath: string;
 	export const _CE_CONDA: string;
+	export const all_proxy: string;
+	export const ALL_PROXY: string;
 	export const PATH: string;
 	export const npm_package_json: string;
 	export const _: string;
@@ -82,8 +87,12 @@ declare module '$env/static/private' {
 	export const npm_package_name: string;
 	export const LANG: string;
 	export const npm_config_npm_version: string;
+	export const _OLD_ALL_PROXY: string;
 	export const XPC_FLAGS: string;
+	export const _OLD_NO_PROXY: string;
 	export const npm_config_node_gyp: string;
+	export const https_proxy: string;
+	export const HTTPS_PROXY: string;
 	export const _CONDA_ROOT: string;
 	export const _CE_M: string;
 	export const XPC_SERVICE_NAME: string;
@@ -92,6 +101,8 @@ declare module '$env/static/private' {
 	export const ANTHROPIC_BASE_URL: string;
 	export const TERMINFO: string;
 	export const CLAUDE_CODE_EXECPATH: string;
+	export const no_proxy: string;
+	export const HTTP_PROXY: string;
 	export const npm_config_cache: string;
 	export const ANTHROPIC_AUTH_TOKEN: string;
 	export const CONDA_PYTHON_EXE: string;
@@ -104,6 +115,7 @@ declare module '$env/static/private' {
 	export const npm_config_user_agent: string;
 	export const CLAUDE_CODE_SESSION_ID: string;
 	export const OSLogRateLimit: string;
+	export const _OLD_HTTP_PROXY: string;
 	export const CLAUDECODE: string;
 	export const npm_node_execpath: string;
 	export const npm_config_prefix: string;
@@ -213,6 +225,9 @@ declare module '$env/dynamic/private' {
 		npm_config_local_prefix: string;
 		GIT_EDITOR: string;
 		AI_AGENT: string;
+		NO_PROXY: string;
+		http_proxy: string;
+		_OLD_HTTPS_PROXY: string;
 		_CONDA_EXE: string;
 		USER: string;
 		COMMAND_MODE: string;
@@ -224,6 +239,8 @@ declare module '$env/dynamic/private' {
 		__CF_USER_TEXT_ENCODING: string;
 		npm_execpath: string;
 		_CE_CONDA: string;
+		all_proxy: string;
+		ALL_PROXY: string;
 		PATH: string;
 		npm_package_json: string;
 		_: string;
@@ -238,8 +255,12 @@ declare module '$env/dynamic/private' {
 		npm_package_name: string;
 		LANG: string;
 		npm_config_npm_version: string;
+		_OLD_ALL_PROXY: string;
 		XPC_FLAGS: string;
+		_OLD_NO_PROXY: string;
 		npm_config_node_gyp: string;
+		https_proxy: string;
+		HTTPS_PROXY: string;
 		_CONDA_ROOT: string;
 		_CE_M: string;
 		XPC_SERVICE_NAME: string;
@@ -248,6 +269,8 @@ declare module '$env/dynamic/private' {
 		ANTHROPIC_BASE_URL: string;
 		TERMINFO: string;
 		CLAUDE_CODE_EXECPATH: string;
+		no_proxy: string;
+		HTTP_PROXY: string;
 		npm_config_cache: string;
 		ANTHROPIC_AUTH_TOKEN: string;
 		CONDA_PYTHON_EXE: string;
@@ -260,6 +283,7 @@ declare module '$env/dynamic/private' {
 		npm_config_user_agent: string;
 		CLAUDE_CODE_SESSION_ID: string;
 		OSLogRateLimit: string;
+		_OLD_HTTP_PROXY: string;
 		CLAUDECODE: string;
 		npm_node_execpath: string;
 		npm_config_prefix: string;

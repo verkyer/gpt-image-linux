@@ -7,12 +7,14 @@ let unauthorizedHandler: UnauthorizedHandler | null = null;
 export class ApiError extends Error {
   status: number;
   body: unknown;
+  action: string;
 
-  constructor(message: string, status: number, body: unknown) {
+  constructor(message: string, status: number, body: unknown, action = 'request') {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.body = body;
+    this.action = action;
   }
 }
 
@@ -34,7 +36,9 @@ export async function apiFetch<T>(url: string, options: RequestInit = {}, action
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') throw error;
     const message = error instanceof Error ? error.message : translate().messages.failedToFetch;
-    throw new Error(translate().messages.networkError(message));
+    const networkError = new Error(translate().messages.networkError(message));
+    (networkError as Error & { action?: string }).action = action;
+    throw networkError;
   }
 
   const contentType = response.headers.get('content-type') || '';
@@ -53,12 +57,12 @@ export async function apiFetch<T>(url: string, options: RequestInit = {}, action
     if (response.status === 401) {
       const message = translate().messages.sessionExpired;
       unauthorizedHandler?.(message);
-      throw new ApiError(message, response.status, body);
+      throw new ApiError(message, response.status, body, action);
     }
 
     const data = body as { detail?: string; error?: string; message?: string } | null;
     const message = data?.detail || data?.error || data?.message || bodyText || translate().messages.requestFailed;
-    throw new ApiError(`${message}${response.status ? ` (${response.status})` : ''}`, response.status, body);
+    throw new ApiError(`${message}${response.status ? ` (${response.status})` : ''}`, response.status, body, action);
   }
 
   if (body === null) {
