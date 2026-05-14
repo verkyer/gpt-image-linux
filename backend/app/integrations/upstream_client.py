@@ -232,47 +232,6 @@ def build_responses_request_data(payload: GenerateRequest) -> dict[str, Any]:
     return {"prompt": payload.prompt, "model": model or payload.model}
 
 
-async def collect_gallery_entries_data(
-    *,
-    download_session: aiohttp.ClientSession,
-    data: list[dict[str, Any]],
-    response_text: str,
-    payload: GenerateRequest,
-    format_extension: str,
-    gallery_metadata: dict[str, Any],
-    progress: ProgressCallback | None,
-) -> list[tuple[bytes, str, str, str, str, dict[str, Any]]]:
-    entries_data: list[tuple[bytes, str, str, str, str, dict[str, Any]]] = []
-    max_bytes = config.MAX_FILE_SIZE_MB * 1024 * 1024
-    for image_index, image_data in enumerate(data):
-        transfer_stage, transfer_message = get_image_transfer_stage(image_data)
-        if progress:
-            progress(
-                transfer_stage,
-                f"{transfer_message} ({image_index + 1}/{len(data)})",
-            )
-        image_bytes = await extract_image_bytes(
-            download_session,
-            image_data,
-            response_text,
-        )
-        if progress:
-            progress(
-                "validating_image_bytes",
-                f"Validating decoded image ({image_index + 1}/{len(data)})",
-            )
-        if len(image_bytes) > max_bytes:
-            raise UpstreamImageDownloadError(f"Image too large: {len(image_bytes)} bytes (max {max_bytes})")
-
-        image_id = storage.generate_image_id()
-        filename = f"{image_id}.{format_extension}"
-        validate_generated_image_bytes(image_bytes, filename)
-        entries_data.append(
-            (image_bytes, image_id, payload.prompt, payload.size, filename, gallery_metadata)
-        )
-    return entries_data
-
-
 async def save_gallery_entries_from_upstream_data(
     *,
     download_session: aiohttp.ClientSession,
@@ -284,18 +243,53 @@ async def save_gallery_entries_from_upstream_data(
     save_message: str,
     progress: ProgressCallback | None,
 ) -> list[storage.GalleryEntry]:
-    entries_data = await collect_gallery_entries_data(
-        download_session=download_session,
-        data=data,
-        response_text=response_text,
-        payload=payload,
-        format_extension=format_extension,
-        gallery_metadata=gallery_metadata,
-        progress=progress,
-    )
-    if progress:
-        progress("saving_images", save_message)
-    return await storage.batch_save_and_update_gallery(entries_data)
+    entries: list[storage.GalleryEntry] = []
+    max_bytes = config.MAX_FILE_SIZE_MB * 1024 * 1024
+    total = len(data)
+    for image_index, image_data in enumerate(data):
+        transfer_stage, transfer_message = get_image_transfer_stage(image_data)
+        if progress:
+            progress(
+                transfer_stage,
+                f"{transfer_message} ({image_index + 1}/{total})",
+            )
+        image_bytes = await extract_image_bytes(
+            download_session,
+            image_data,
+            response_text,
+        )
+        try:
+            if progress:
+                progress(
+                    "validating_image_bytes",
+                    f"Validating decoded image ({image_index + 1}/{total})",
+                )
+            if len(image_bytes) > max_bytes:
+                raise UpstreamImageDownloadError(
+                    f"Image too large: {len(image_bytes)} bytes (max {max_bytes})"
+                )
+
+            image_id = storage.generate_image_id()
+            filename = f"{image_id}.{format_extension}"
+            validate_generated_image_bytes(image_bytes, filename)
+
+            if progress:
+                progress(
+                    "saving_images",
+                    f"{save_message} ({image_index + 1}/{total})",
+                )
+            entry = await storage.add_to_gallery_async(
+                image_bytes=image_bytes,
+                image_id=image_id,
+                prompt=payload.prompt,
+                size=payload.size,
+                filename=filename,
+                metadata=gallery_metadata,
+            )
+            entries.append(entry)
+        finally:
+            del image_bytes
+    return entries
 
 
 def classify_probe_status(method: str, status: int) -> tuple[str, str]:

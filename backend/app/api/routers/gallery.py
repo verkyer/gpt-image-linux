@@ -8,9 +8,10 @@ from starlette.background import BackgroundTask
 
 from ..gallery_archive import (
     build_gallery_zip_file,
-    build_import_gallery_entries,
     import_archive_max_bytes,
+    iter_import_gallery_entries,
     remove_file,
+    stream_upload_to_tempfile,
 )
 from ...repositories import storage
 from ...schemas.models import (
@@ -222,17 +223,17 @@ async def download_all_images():
 
 @router.post("/api/import")
 async def import_gallery_archive(archive: UploadFile = File(...)):
-    archive_bytes = await archive.read()
-    if not archive_bytes:
-        raise HTTPException(status_code=400, detail="Uploaded archive is empty")
-    if len(archive_bytes) > import_archive_max_bytes():
-        raise HTTPException(status_code=400, detail="Uploaded archive is too large")
+    temp_path = await stream_upload_to_tempfile(archive, import_archive_max_bytes())
+    try:
+        imported_count = await asyncio.to_thread(
+            storage.import_gallery_entries,
+            iter_import_gallery_entries(temp_path),
+        )
+    finally:
+        temp_path.unlink(missing_ok=True)
 
-    imports = build_import_gallery_entries(archive_bytes)
-    if not imports:
+    if imported_count == 0:
         raise HTTPException(status_code=400, detail="No importable images found")
-
-    imported_count = await asyncio.to_thread(storage.import_gallery_entries, imports)
     return {
         "status": "success",
         "imported": imported_count,

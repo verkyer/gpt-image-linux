@@ -10,7 +10,7 @@ import threading
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 from urllib.parse import quote
 
 from ..core import settings as config
@@ -163,6 +163,15 @@ _storage_lock = threading.RLock()
 _dirs_initialized = False
 _thread_local = threading.local()
 
+_filter_options_cache: "GalleryFilterOptions | None" = None
+_filter_options_cache_lock = threading.RLock()
+
+
+def _invalidate_filter_options_cache():
+    global _filter_options_cache
+    with _filter_options_cache_lock:
+        _filter_options_cache = None
+
 
 def _default_settings() -> dict:
     return {
@@ -305,6 +314,12 @@ def _ensure_database():
                     ON gallery_entries(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_gallery_entries_filename
                     ON gallery_entries(filename);
+                CREATE INDEX IF NOT EXISTS idx_gallery_entries_model_created_at
+                    ON gallery_entries(model, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_gallery_entries_preset_created_at
+                    ON gallery_entries(api_preset_name, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_gallery_entries_size_created_at
+                    ON gallery_entries(size, created_at DESC);
 
                 CREATE TABLE IF NOT EXISTS generate_jobs (
                     job_id TEXT PRIMARY KEY,
@@ -371,6 +386,24 @@ def _migrate_gallery_schema(conn: sqlite3.Connection):
                 ON gallery_entries(favorite, created_at DESC)
             """
         )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_gallery_entries_model_created_at
+            ON gallery_entries(model, created_at DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_gallery_entries_preset_created_at
+            ON gallery_entries(api_preset_name, created_at DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_gallery_entries_size_created_at
+            ON gallery_entries(size, created_at DESC)
+        """
+    )
 
 
 def _get_setting_value(conn: sqlite3.Connection, key: str) -> str | None:
@@ -704,6 +737,7 @@ def _insert_gallery_entries_on_conn(
         """,
         [_gallery_row_values(entry) for entry in normalized_entries],
     )
+    _invalidate_filter_options_cache()
 
 
 def _migrate_legacy_json(conn: sqlite3.Connection):
@@ -1112,11 +1146,8 @@ def _save_images_and_insert_gallery_entries(
 
 
 def import_gallery_entries(
-    entries_data: list[tuple[bytes, dict[str, Any]]],
+    entries_data: Iterable[tuple[bytes, dict[str, Any]]],
 ) -> int:
-    if not entries_data:
-        return 0
-
     _ensure_database()
     with _storage_lock:
         with _connect() as conn:
@@ -1162,36 +1193,6 @@ async def add_to_gallery_async(
         [entry],
     )
     return GalleryEntry(**_attach_gallery_thumbnail_url(entry))
-
-
-async def batch_save_and_update_gallery(
-    entries_data: list[tuple[bytes, str, str, str, str, dict[str, Any] | None]],
-) -> list[GalleryEntry]:
-    if not entries_data:
-        return []
-
-    entries_created = [
-        _build_gallery_entry(
-            image_id=image_id,
-            prompt=prompt,
-            size=size,
-            filename=filename,
-            metadata=metadata,
-            image_bytes=image_bytes,
-        )
-        for image_bytes, image_id, prompt, size, filename, metadata in entries_data
-    ]
-    image_entries = [
-        (image_bytes, filename)
-        for image_bytes, _, _, _, filename, _ in entries_data
-    ]
-
-    await asyncio.to_thread(
-        _save_images_and_insert_gallery_entries,
-        image_entries,
-        entries_created,
-    )
-    return [GalleryEntry(**_attach_gallery_thumbnail_url(entry)) for entry in entries_created]
 
 
 def _stat_image_bytes(filename: str) -> int | None:
@@ -1281,6 +1282,12 @@ def get_gallery(
 
 
 def get_gallery_filter_options() -> GalleryFilterOptions:
+    global _filter_options_cache
+    with _filter_options_cache_lock:
+        cached = _filter_options_cache
+        if cached is not None:
+            return cached
+
     _ensure_database()
     options: dict[str, list[str]] = {}
     with _connect() as conn:
@@ -1298,7 +1305,11 @@ def get_gallery_filter_options() -> GalleryFilterOptions:
                 """
             ).fetchall()
             options[key] = [row["value"] for row in rows if row["value"]]
-    return GalleryFilterOptions(**options)
+
+    result = GalleryFilterOptions(**options)
+    with _filter_options_cache_lock:
+        _filter_options_cache = result
+    return result
 
 
 def get_gallery_entry(image_id: str) -> GalleryEntry | None:
@@ -1391,6 +1402,8 @@ def update_gallery_entry(image_id: str, updates: dict[str, Any]) -> GalleryEntry
                     f"UPDATE gallery_entries SET {assignments} WHERE id = ?",
                     (*allowed_updates.values(), image_id),
                 )
+                if allowed_updates.keys() & {"model", "api_preset_name", "size"}:
+                    _invalidate_filter_options_cache()
                 row = conn.execute(
                     f"""
                     SELECT {", ".join(GALLERY_COLUMNS)}
@@ -1567,6 +1580,7 @@ def sync_gallery_with_image_files() -> int:
                         "DELETE FROM gallery_entries WHERE id = ?",
                         [(entry_id,) for entry_id in stale_ids],
                     )
+                    _invalidate_filter_options_cache()
                 return len(stale_ids)
 
 
@@ -1586,6 +1600,7 @@ def delete_gallery_image(image_id: str) -> tuple[bool, int]:
                     row["filename"] for row in rows if row["filename"]
                 }
                 conn.execute("DELETE FROM gallery_entries WHERE id = ?", (image_id,))
+                _invalidate_filter_options_cache()
 
                 remaining_filenames: set[str] = set()
                 if removed_filenames:
@@ -1634,6 +1649,7 @@ def delete_gallery_images(image_ids: list[str]) -> tuple[int, int]:
                     f"DELETE FROM gallery_entries WHERE id IN ({delete_placeholders})",
                     tuple(removed_ids),
                 )
+                _invalidate_filter_options_cache()
 
                 remaining_filenames: set[str] = set()
                 if removed_filenames:
@@ -1701,4 +1717,5 @@ def delete_all_gallery_images() -> tuple[int, int]:
                 _delete_all_thumbnails_unlocked()
 
                 conn.execute("DELETE FROM gallery_entries")
+                _invalidate_filter_options_cache()
                 return total, deleted_count

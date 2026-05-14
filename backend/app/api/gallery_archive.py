@@ -1,13 +1,14 @@
 import hashlib
-import io
 import json
+import os
 import re
 import tempfile
 import uuid
 import zipfile
+from collections.abc import Iterator
 from pathlib import Path, PurePosixPath
 
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
 
 from ..core import settings as config
 from ..core.utils import utc_now
@@ -176,84 +177,114 @@ def validate_import_zip_infos(zf: zipfile.ZipFile) -> set[str]:
     return names
 
 
-def build_import_gallery_entries(zip_bytes: bytes) -> list[tuple[bytes, dict]]:
+def iter_import_gallery_entries(zip_path: Path) -> Iterator[tuple[bytes, dict]]:
     try:
-        zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+        zf = zipfile.ZipFile(zip_path)
     except zipfile.BadZipFile as e:
         raise HTTPException(status_code=400, detail="Import file must be a valid ZIP") from e
 
     with zf:
-        names = validate_import_zip_infos(zf)
+        yield from _iter_zip_import_entries(zf)
+
+
+async def stream_upload_to_tempfile(archive: UploadFile, max_bytes: int) -> Path:
+    fd, tmp_name = tempfile.mkstemp(suffix=".zip")
+    tmp_path = Path(tmp_name)
+    total = 0
+    chunk_size = 1024 * 1024
+    try:
+        with os.fdopen(fd, "wb") as out:
+            while True:
+                chunk = await archive.read(chunk_size)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Uploaded archive is too large",
+                    )
+                out.write(chunk)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+    if total == 0:
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="Uploaded archive is empty")
+
+    return tmp_path
+
+
+def _iter_zip_import_entries(zf: zipfile.ZipFile) -> Iterator[tuple[bytes, dict]]:
+    names = validate_import_zip_infos(zf)
+    try:
+        metadata = json.loads(zf.read("metadata.json").decode("utf-8"))
+    except KeyError as e:
+        raise HTTPException(status_code=400, detail="metadata.json is required") from e
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise HTTPException(status_code=400, detail="metadata.json is invalid") from e
+
+    raw_images = metadata.get("images")
+    if not isinstance(raw_images, list):
+        raise HTTPException(status_code=400, detail="metadata.json images must be a list")
+
+    used_names = set(storage.get_all_filenames())
+    used_ids = set(storage.get_all_gallery_ids())
+
+    for raw_entry in raw_images:
+        if not isinstance(raw_entry, dict):
+            continue
+
+        exported_filename = str(raw_entry.get("filename") or "")
+        zip_name = exported_filename if exported_filename in names else f"images/{exported_filename}"
+        if zip_name not in names:
+            continue
+        if Path(zip_name).suffix.lower() not in IMAGE_UPLOAD_EXTENSIONS:
+            continue
+
         try:
-            metadata = json.loads(zf.read("metadata.json").decode("utf-8"))
-        except KeyError as e:
-            raise HTTPException(status_code=400, detail="metadata.json is required") from e
-        except (UnicodeDecodeError, json.JSONDecodeError) as e:
-            raise HTTPException(status_code=400, detail="metadata.json is invalid") from e
+            image_bytes = zf.read(zip_name)
+        except KeyError:
+            continue
+        if not image_bytes:
+            continue
+        if len(image_bytes) > max_upload_bytes():
+            raise HTTPException(
+                status_code=400,
+                detail="Imported image is too large",
+            )
+        try:
+            storage.validate_image_bytes(
+                image_bytes,
+                filename=Path(exported_filename or zip_name).name,
+                content_type=IMAGE_UPLOAD_CONTENT_TYPES.get(
+                    Path(zip_name).suffix.lower(),
+                    "",
+                ),
+            )
+        except ValueError:
+            continue
 
-        raw_images = metadata.get("images")
-        if not isinstance(raw_images, list):
-            raise HTTPException(status_code=400, detail="metadata.json images must be a list")
+        original_name = Path(exported_filename or zip_name).name
+        filename = sanitize_import_filename(original_name)
+        base = Path(filename).stem
+        ext = Path(filename).suffix
+        counter = 1
+        while filename in used_names:
+            filename = f"{base}_{counter}{ext}"
+            counter += 1
+        used_names.add(filename)
 
-        imports: list[tuple[bytes, dict]] = []
-        used_names = set(storage.get_all_filenames())
-        used_ids = set(storage.get_all_gallery_ids())
+        image_id = str(raw_entry.get("id") or uuid.uuid4())
+        while image_id in used_ids:
+            image_id = str(uuid.uuid4())
+        used_ids.add(image_id)
 
-        for raw_entry in raw_images:
-            if not isinstance(raw_entry, dict):
-                continue
-
-            exported_filename = str(raw_entry.get("filename") or "")
-            zip_name = exported_filename if exported_filename in names else f"images/{exported_filename}"
-            if zip_name not in names:
-                continue
-            if Path(zip_name).suffix.lower() not in IMAGE_UPLOAD_EXTENSIONS:
-                continue
-
-            try:
-                image_bytes = zf.read(zip_name)
-            except KeyError:
-                continue
-            if not image_bytes:
-                continue
-            if len(image_bytes) > max_upload_bytes():
-                raise HTTPException(
-                    status_code=400,
-                    detail="Imported image is too large",
-                )
-            try:
-                storage.validate_image_bytes(
-                    image_bytes,
-                    filename=Path(exported_filename or zip_name).name,
-                    content_type=IMAGE_UPLOAD_CONTENT_TYPES.get(
-                        Path(zip_name).suffix.lower(),
-                        "",
-                    ),
-                )
-            except ValueError:
-                continue
-
-            original_name = Path(exported_filename or zip_name).name
-            filename = sanitize_import_filename(original_name)
-            base = Path(filename).stem
-            ext = Path(filename).suffix
-            counter = 1
-            while filename in used_names:
-                filename = f"{base}_{counter}{ext}"
-                counter += 1
-            used_names.add(filename)
-
-            image_id = str(raw_entry.get("id") or uuid.uuid4())
-            while image_id in used_ids:
-                image_id = str(uuid.uuid4())
-            used_ids.add(image_id)
-
-            entry = {
-                **raw_entry,
-                "id": image_id,
-                "filename": filename,
-                "created_at": str(raw_entry.get("created_at") or utc_now()),
-            }
-            imports.append((image_bytes, entry))
-
-        return imports
+        entry = {
+            **raw_entry,
+            "id": image_id,
+            "filename": filename,
+            "created_at": str(raw_entry.get("created_at") or utc_now()),
+        }
+        yield image_bytes, entry
