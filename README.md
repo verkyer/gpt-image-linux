@@ -31,11 +31,11 @@ Key characteristics:
 
 - API preset management: base URL/path/key, model, and global SOCKS5 upstream proxy
 - generation and image-editing (`/v1/images/edits`) with size/quality/format/compression/quantity controls
-- preview + job history with SSE progress, `completed_at`, elapsed time, cancel for queued/running jobs, and reuse/retry from persisted history
+- preview + job history with SSE progress, `completed_at`, elapsed time, loading states, cancel for queued/running jobs, and reuse/retry from persisted history
 - shared queue and concurrency limits for generation/edit jobs
 - optional per-job `webhook_url` with HTTPS-only validation, SSRF checks, signing, and retry
-- gallery with filters, favorites, lightbox, “Edit this image”, download, delete/delete-all, prompt/image-url copy, and persisted total-size metadata
-- ZIP export/import (`metadata.json`) with safety validation and low-memory export path
+- gallery with filters (prompt, model, preset, size, date range, favorite), lightbox, “Edit this image”, download, delete/delete-all, prompt/image-url copy, and persisted total-size metadata
+- ZIP export/import (`metadata.json`) with streaming upload, safety validation, and low-memory export path
 - access-key gate, IP allowlist/proxy-header support, GitHub version badge, and CSP nonce injection
 
 ## Architecture
@@ -460,11 +460,11 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 
 - API 预设管理：base URL/path/key、model、全局 SOCKS5 上游代理
 - 图像生成 + 图生图编辑（`/v1/images/edits`），支持尺寸/质量/格式/压缩率/数量等参数
-- 预览 + 历史任务：SSE 进度、`completed_at`、耗时、排队/运行任务取消，以及从持久化历史复用/重试
+- 预览 + 历史任务：SSE 进度、`completed_at`、耗时、加载状态、排队/运行任务取消，以及从持久化历史复用/重试
 - 生成与编辑共享并发和排队限制
 - 可选任务回调 `webhook_url`：HTTPS 校验、SSRF 防护、签名与重试
-- Gallery：筛选、收藏、Lightbox、“Edit this image”、下载/删除、复制提示词/图片链接、总大小统计
-- ZIP 导出导入（含 `metadata.json`）+ 安全校验 + 低内存导出路径
+- Gallery：筛选（提示词、模型、预设、尺寸、日期区间、收藏）、Lightbox、”Edit this image”、下载/删除、复制提示词/图片链接、总大小统计
+- ZIP 导出导入（含 `metadata.json`）+ 流式上传 + 安全校验 + 低内存导出路径
 - 访问密钥、IP 白名单/反向代理头、版本检测、CSP nonce
 
 ## 架构
