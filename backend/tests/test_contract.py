@@ -966,6 +966,39 @@ def test_gallery_image_download_and_zip(client):
         assert "thumbnail_url" not in metadata["images"][0]
 
 
+def test_gallery_total_bytes_backfills_legacy_entries_without_bytes(client):
+    storage._ensure_database()
+    image_path = storage.safe_image_path("legacy-bytes.png")
+    assert image_path is not None
+    image_path.write_bytes(PNG_BYTES)
+
+    storage.add_to_gallery_sync(
+        image_id="legacy-bytes",
+        prompt="legacy",
+        size="1024x1024",
+        filename="legacy-bytes.png",
+        metadata={"model": "gpt-image-2"},
+    )
+
+    with storage._connect() as conn:
+        row = conn.execute(
+            "SELECT bytes FROM gallery_entries WHERE id = ?",
+            ("legacy-bytes",),
+        ).fetchone()
+        assert row["bytes"] is None
+
+    gallery = client.get("/api/gallery")
+    assert gallery.status_code == 200
+    assert gallery.json()["total_bytes"] == len(PNG_BYTES)
+
+    with storage._connect() as conn:
+        row = conn.execute(
+            "SELECT bytes FROM gallery_entries WHERE id = ?",
+            ("legacy-bytes",),
+        ).fetchone()
+        assert row["bytes"] == len(PNG_BYTES)
+
+
 def test_gallery_batch_delete_only_selected_entries(client):
     _fake_gallery_entry("batch-delete-1", "one", "1024x1024", "batch-delete-1.png")
     _fake_gallery_entry("batch-delete-2", "two", "1024x1024", "batch-delete-2.png")
@@ -1603,3 +1636,20 @@ def test_validation_422_and_global_500(tmp_path, monkeypatch):
         broken = client.get("/api/gallery")
         assert broken.status_code == 500
         assert broken.json()["detail"] == "Internal Server Error"
+
+
+def test_responses_request_uses_default_responses_model(tmp_path):
+    _configure_runtime(tmp_path)
+    from backend.app.integrations import upstream_client as upstream_client_module
+    from backend.app.schemas.models import GenerateRequest
+
+    config.DEFAULT_RESPONSES_MODEL = "gpt-5.4"
+    payload = GenerateRequest(prompt="hello", model="gpt-image-2", size="1024x1024")
+    request_data = upstream_client_module.build_responses_request_data(payload)
+    assert request_data["model"] == "gpt-5.4"
+    assert request_data["prompt"] == "hello"
+
+    config.DEFAULT_RESPONSES_MODEL = ""
+    fallback = upstream_client_module.build_responses_request_data(payload)
+    assert fallback["model"] == "gpt-image-2"
+

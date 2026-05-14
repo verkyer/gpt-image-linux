@@ -88,7 +88,7 @@
     </div>
   </div>
 
-  <div class="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
+  <div class="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-8">
     <input
       value={filters.prompt}
       placeholder={$t.gallery.filterPrompt}
@@ -113,6 +113,22 @@
         <option value={size}>{size}</option>
       {/each}
     </select>
+    <input
+      type="date"
+      value={filters.dateFrom}
+      aria-label={$t.gallery.dateFrom}
+      placeholder={$t.gallery.dateFrom}
+      class="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none"
+      on:change={(event) => onFilter('dateFrom', event.currentTarget.value)}
+    />
+    <input
+      type="date"
+      value={filters.dateTo}
+      aria-label={$t.gallery.dateTo}
+      placeholder={$t.gallery.dateTo}
+      class="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none"
+      on:change={(event) => onFilter('dateTo', event.currentTarget.value)}
+    />
     <label class="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-300">
       <input type="checkbox" class="accent-emerald-500" checked={filters.favorite} on:change={(event) => onFilter('favorite', event.currentTarget.checked)} />
       {$t.gallery.favorites}

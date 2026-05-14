@@ -1,28 +1,41 @@
 import asyncio
-import hmac
-import mimetypes
-import time
 import uuid
-from datetime import datetime, timezone
-from urllib.parse import urlsplit
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
-from starlette.background import BackgroundTask
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 
-from ..app_state import FRONTEND_BUILD_DIR, app
-from ..csp import frontend_index_response
-from ..gallery_archive import build_gallery_zip_file, build_import_gallery_entries, import_archive_max_bytes, max_upload_bytes, remove_file
-from ..jobs import *
-from ..presets import *
-from ..uploads import IMAGE_UPLOAD_CONTENT_TYPES, is_image_upload, resolve_upload_content_type, validate_upload_image_bytes
-from ...core import security as auth
-from ...core import settings as config
-from ...core.api_paths import ALLOWED_API_PATHS, normalize_api_path
+from ..app_state import app
+from ..jobs import (
+    build_pending_job,
+    ensure_job_queue_capacity,
+    get_generate_job_tasks,
+    get_generate_job_webhooks,
+    get_job_subscribers,
+    get_jobs_subscribers,
+    list_active_generate_jobs,
+    publish_queue,
+    run_generate_job,
+    serialize_sse_event,
+    store_generate_job,
+    track_generate_job_task,
+    trim_generate_jobs,
+    validate_job_webhook_url,
+)
+from ..presets import (
+    get_active_preset,
+    get_effective_preset_api_key,
+    get_upstream_socks5_proxy,
+)
+from ...core.api_paths import normalize_api_path
+from ...core.constants import ACTIVE_GENERATE_JOB_STATUSES
 from ...core.utils import utc_now
-from ...integrations import upstream_client as proxy
 from ...repositories import storage
-from ...schemas.models import *
+from ...schemas.models import (
+    GenerateJobResponse,
+    GenerateJobStatus,
+    GenerateRequest,
+    MessageResponse,
+)
 
 
 router = APIRouter()

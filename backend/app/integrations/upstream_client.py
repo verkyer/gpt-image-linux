@@ -228,7 +228,8 @@ def build_gallery_metadata(
 
 
 def build_responses_request_data(payload: GenerateRequest) -> dict[str, Any]:
-    return {"prompt": payload.prompt, "model": payload.model}
+    model = (config.DEFAULT_RESPONSES_MODEL or payload.model or "").strip()
+    return {"prompt": payload.prompt, "model": model or payload.model}
 
 
 async def collect_gallery_entries_data(

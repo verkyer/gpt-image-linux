@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import mimetypes
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -9,12 +8,9 @@ from collections.abc import Awaitable, Callable
 from fastapi import HTTPException
 
 from .app_state import GENERATE_JOB_PERSIST_INTERVAL_SECONDS, MAX_GENERATE_JOBS, app
-from .uploads import IMAGE_UPLOAD_CONTENT_TYPES, resolve_upload_content_type, validate_upload_image_bytes
-from .gallery_archive import max_upload_bytes
 from .presets import get_active_preset, get_effective_preset_api_key, get_exception_message, get_upstream_socks5_proxy
 from ..core import settings as config
 from ..core import validators as ssrf
-from ..core.api_paths import normalize_api_path
 from ..core.constants import ACTIVE_GENERATE_JOB_STATUSES
 from ..core.utils import beijing_now, utc_now
 from ..integrations import upstream_client as proxy
@@ -92,51 +88,6 @@ def dispatch_job_webhook(job: dict):
     if not webhook_url:
         return
     asyncio.create_task(webhooks.deliver_webhook(webhook_url, job.copy()))
-
-
-def normalize_gallery_date_filter(value: str | None, end_of_day: bool = False) -> str | None:
-    raw_value = str(value or "").strip()
-    if not raw_value:
-        return None
-
-    if len(raw_value) == 10:
-        try:
-            datetime.strptime(raw_value, "%Y-%m-%d")
-        except ValueError as e:
-            raise HTTPException(
-                status_code=422,
-                detail="Gallery date filters must use YYYY-MM-DD or ISO datetime",
-            ) from e
-        return f"{raw_value}T{'23:59:59.999999' if end_of_day else '00:00:00'}"
-
-    try:
-        datetime.fromisoformat(raw_value.replace("Z", "+00:00"))
-    except ValueError as e:
-        raise HTTPException(
-            status_code=422,
-            detail="Gallery date filters must use YYYY-MM-DD or ISO datetime",
-        ) from e
-    return raw_value
-
-
-def build_gallery_filters(
-    prompt: str | None,
-    model: str | None,
-    preset: str | None,
-    size: str | None,
-    date_from: str | None,
-    date_to: str | None,
-    favorite: bool | None,
-) -> dict:
-    return {
-        "prompt": str(prompt or "").strip(),
-        "model": str(model or "").strip(),
-        "preset": str(preset or "").strip(),
-        "size": str(size or "").strip(),
-        "date_from": normalize_gallery_date_filter(date_from),
-        "date_to": normalize_gallery_date_filter(date_to, end_of_day=True),
-        "favorite": favorite,
-    }
 
 
 def build_job_update(job_id: str, updates: dict) -> dict:

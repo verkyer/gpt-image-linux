@@ -1195,7 +1195,7 @@ async def batch_save_and_update_gallery(
 
 
 def _stat_image_bytes(filename: str) -> int | None:
-    path = getsafe_image_path(filename)
+    path = safe_image_path(filename)
     if not path:
         return None
     try:

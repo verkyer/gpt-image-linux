@@ -1,16 +1,14 @@
 import os
 import re
-from urllib.parse import urlsplit
 
 from fastapi import HTTPException
 
 from .app_state import app
 from ..core import settings as config
-from ..core.api_paths import ALLOWED_API_PATHS, normalize_api_path, normalize_api_preset
+from ..core.api_paths import normalize_api_path, normalize_api_preset
 from ..core.validators import mask_socks5_proxy_url, normalize_socks5_proxy_url
-from ..integrations import upstream_client as proxy
 from ..repositories import storage
-from ..schemas.models import ApiPresetResponse, PresetHealthResponse, SettingsResponse
+from ..schemas.models import ApiPresetResponse, SettingsResponse
 
 
 def get_exception_message(error: Exception) -> str:
@@ -201,113 +199,3 @@ def build_settings_response() -> SettingsResponse:
         **upstream_socks5_proxy_response_fields(),
         presets=[serialize_api_preset(preset) for preset in get_api_presets()],
     )
-HEALTH_STATUS_RANK = {"ok": 0, "warning": 1, "error": 2}
-
-
-def add_health_check(checks: list[dict], name: str, status: str, message: str):
-    checks.append({"name": name, "status": status, "message": message})
-
-
-def health_status(checks: list[dict]) -> str:
-    if not checks:
-        return "error"
-    return max(
-        (check["status"] for check in checks),
-        key=lambda status: HEALTH_STATUS_RANK[status],
-    )
-
-
-def validate_health_api_url(api_url: str, api_path: str, checks: list[dict]) -> bool:
-    if not api_url:
-        add_health_check(checks, "api_url", "error", "API URL is not configured")
-        return False
-
-    parsed = urlsplit(api_url)
-    if parsed.scheme != "https":
-        add_health_check(checks, "api_url", "error", "API URL must use https://")
-        return False
-    if not parsed.hostname:
-        add_health_check(checks, "api_url", "error", "API URL must include a hostname")
-        return False
-    if parsed.query or parsed.fragment:
-        add_health_check(
-            checks,
-            "api_url",
-            "error",
-            "API URL must not include query strings or fragments",
-        )
-        return False
-
-    try:
-        ssrf.validate_upstream_url(
-            f"{api_url.rstrip('/')}{api_path}",
-            config.UPSTREAM_HOST_ALLOWLIST,
-        )
-    except ValueError as e:
-        add_health_check(checks, "ssrf", "error", str(e))
-        return False
-
-    add_health_check(
-        checks,
-        "ssrf",
-        "ok",
-        "API URL passed scheme, host allowlist, DNS, and private-IP checks",
-    )
-    return True
-
-
-def validate_health_api_path(api_path: str, checks: list[dict]) -> bool:
-    if api_path not in ALLOWED_API_PATHS:
-        add_health_check(
-            checks,
-            "api_path",
-            "error",
-            (
-                "API path is not supported. Allowed paths: "
-                + ", ".join(sorted(ALLOWED_API_PATHS))
-            ),
-        )
-        return False
-
-    add_health_check(checks, "api_path", "ok", f"API path {api_path} is supported")
-    return True
-
-
-def validate_health_api_key(api_key: str, checks: list[dict]) -> str:
-    raw_key = str(api_key or "").strip()
-    env_var = get_api_key_env_var(raw_key)
-
-    if is_malformed_api_key_env_ref(raw_key):
-        add_health_check(
-            checks,
-            "api_key",
-            "error",
-            "API key env ref must be formatted as ${ENV_VAR_NAME}",
-        )
-        return ""
-
-    if env_var:
-        resolved_key = os.getenv(env_var, "").strip()
-        if resolved_key:
-            add_health_check(
-                checks,
-                "api_key",
-                "ok",
-                f"API key resolves from environment variable {env_var}",
-            )
-            return resolved_key
-        add_health_check(
-            checks,
-            "api_key",
-            "error",
-            f"Environment variable {env_var} is not set or empty",
-        )
-        return ""
-
-    if raw_key:
-        add_health_check(checks, "api_key", "ok", "Stored API key is configured")
-        return raw_key
-
-    add_health_check(checks, "api_key", "error", "API key is not configured")
-    return ""
-

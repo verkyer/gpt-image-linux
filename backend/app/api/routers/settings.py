@@ -1,28 +1,34 @@
-import asyncio
-import hmac
-import mimetypes
-import time
+import os
 import uuid
-from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
-from starlette.background import BackgroundTask
+from fastapi import APIRouter, HTTPException
 
-from ..app_state import FRONTEND_BUILD_DIR, app
-from ..csp import frontend_index_response
-from ..gallery_archive import build_gallery_zip_file, build_import_gallery_entries, import_archive_max_bytes, max_upload_bytes, remove_file
-from ..jobs import *
-from ..presets import *
-from ..uploads import IMAGE_UPLOAD_CONTENT_TYPES, is_image_upload, resolve_upload_content_type, validate_upload_image_bytes
-from ...core import security as auth
+from ..app_state import app
+from ..presets import (
+    apply_api_preset,
+    apply_upstream_socks5_proxy,
+    build_settings_response,
+    get_active_preset,
+    get_api_key_env_var,
+    get_api_presets,
+    get_exception_message,
+    get_preset_by_id,
+    get_upstream_socks5_proxy,
+    is_malformed_api_key_env_ref,
+    mask_socks5_proxy_url,
+    persist_api_settings,
+)
 from ...core import settings as config
+from ...core import validators as ssrf
 from ...core.api_paths import ALLOWED_API_PATHS, normalize_api_path
-from ...core.utils import utc_now
 from ...integrations import upstream_client as proxy
-from ...repositories import storage
-from ...schemas.models import *
+from ...schemas.models import (
+    PresetCreateRequest,
+    PresetHealthResponse,
+    SettingsRequest,
+    SettingsResponse,
+)
 
 
 router = APIRouter()

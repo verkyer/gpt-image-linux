@@ -1,28 +1,19 @@
 import asyncio
-import hmac
 import mimetypes
-import time
-import uuid
-from datetime import datetime, timezone
-from urllib.parse import urlsplit
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
-from starlette.background import BackgroundTask
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
-from ..app_state import FRONTEND_BUILD_DIR, app
-from ..csp import frontend_index_response
-from ..gallery_archive import build_gallery_zip_file, build_import_gallery_entries, import_archive_max_bytes, max_upload_bytes, remove_file
-from ..jobs import *
-from ..presets import *
-from ..uploads import IMAGE_UPLOAD_CONTENT_TYPES, is_image_upload, resolve_upload_content_type, validate_upload_image_bytes
-from ...core import security as auth
+from ..gallery_archive import max_upload_bytes
+from ..jobs import build_edit_request_from_form, queue_edit_job
+from ..uploads import (
+    IMAGE_UPLOAD_CONTENT_TYPES,
+    is_image_upload,
+    resolve_upload_content_type,
+    validate_upload_image_bytes,
+)
 from ...core import settings as config
-from ...core.api_paths import ALLOWED_API_PATHS, normalize_api_path
-from ...core.utils import utc_now
-from ...integrations import upstream_client as proxy
 from ...repositories import storage
-from ...schemas.models import *
+from ...schemas.models import GenerateJobResponse
 
 
 router = APIRouter()
@@ -140,4 +131,3 @@ async def edit_image_from_gallery(
         image_filename=path.name,
         image_content_type=image_content_type,
     )
-
