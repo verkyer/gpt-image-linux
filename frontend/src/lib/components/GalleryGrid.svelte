@@ -88,26 +88,26 @@
     </div>
   </div>
 
-  <div class="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-10">
+  <div class="mb-4 flex flex-wrap gap-2">
     <input
       value={filters.prompt}
       placeholder={$t.gallery.filterPrompt}
-      class="lg:col-span-2 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none"
+      class="min-w-[200px] flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none"
       on:input={(event) => onFilter('prompt', event.currentTarget.value)}
     />
-    <select value={filters.model} class="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none" on:change={(event) => onFilter('model', event.currentTarget.value)}>
+    <select value={filters.model} class="min-w-[140px] rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none" on:change={(event) => onFilter('model', event.currentTarget.value)}>
       <option value="">{$t.gallery.allModels}</option>
       {#each gallery?.filter_options.models || [] as model}
         <option value={model}>{model}</option>
       {/each}
     </select>
-    <select value={filters.preset} class="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none" on:change={(event) => onFilter('preset', event.currentTarget.value)}>
+    <select value={filters.preset} class="min-w-[140px] rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none" on:change={(event) => onFilter('preset', event.currentTarget.value)}>
       <option value="">{$t.gallery.allPresets}</option>
       {#each gallery?.filter_options.presets || [] as preset}
         <option value={preset}>{preset}</option>
       {/each}
     </select>
-    <select value={filters.size} class="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none" on:change={(event) => onFilter('size', event.currentTarget.value)}>
+    <select value={filters.size} class="min-w-[120px] rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none" on:change={(event) => onFilter('size', event.currentTarget.value)}>
       <option value="">{$t.gallery.allSizes}</option>
       {#each gallery?.filter_options.sizes || [] as size}
         <option value={size}>{size}</option>
@@ -118,7 +118,7 @@
       value={filters.dateFrom}
       aria-label={$t.gallery.dateFrom}
       placeholder={$t.gallery.dateFrom}
-      class="lg:col-span-2 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none"
+      class="w-[160px] rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none"
       on:change={(event) => onFilter('dateFrom', event.currentTarget.value)}
     />
     <input
@@ -126,7 +126,7 @@
       value={filters.dateTo}
       aria-label={$t.gallery.dateTo}
       placeholder={$t.gallery.dateTo}
-      class="lg:col-span-2 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none"
+      class="w-[160px] rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none"
       on:change={(event) => onFilter('dateTo', event.currentTarget.value)}
     />
     <label class="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-300">
