@@ -20,7 +20,7 @@ Key characteristics:
 - FastAPI backend in `backend/app/`; use `backend.app.main:app` as the ASGI entrypoint
 - public API paths, methods, status codes, SSE event names, cookies, and response shapes are contract-tested and kept stable
 - API presets persisted to SQLite at `data/app.sqlite3`
-- background image-generation jobs executed with `asyncio.create_task`
+- background generation/edit jobs executed with `asyncio.create_task`
 - local image storage under `images/`
 - gallery metadata stored in SQLite at `data/app.sqlite3`
 - legacy `data/gallery.json` and `data/settings.json` are imported once on startup when the database is empty
@@ -29,22 +29,14 @@ Key characteristics:
 
 ## Features
 
-- settings UI for API presets, API base URL, API path, API key, global SOCKS5 upstream proxy, and model
-- generation and edit options for size, quality, format, compression, quantity, and response format
-- image-to-image edits via OpenAI-compatible `/v1/images/edits`
-- auto, ratio-based, and custom image sizes
-- persistent top-left language switch between English and Simplified Chinese
-- preview UI with prompt, parameters, Beijing completion time, elapsed time, and localized generation/edit stages
-- SSE progress updates for preview state with a polling fallback on stream reconnect failure
-- active job history drawer backed by SSE with selectable cancellation for queued/running generation and edit jobs
-- configurable concurrency and queue limits shared by generation and edit jobs
-- optional per-job webhook callback (`webhook_url`) with HTTPS validation, SSRF protection, signed delivery, and retry
-- upload or gallery-based edit source selection with clickable source preview
-- gallery with pagination, prompt/model/preset/size/date/favorites filters, favorite toggles, lightbox, per-image "Edit this image" actions, download, low-memory ZIP export/import with `metadata.json`, delete, delete all, copy prompt, copy image URL, and total image size display backed by persisted file-size metadata
-- optional site access key with session unlock
-- optional IP allowlist and reverse proxy header support
-- app version badge with GitHub `VERSION` update detection
-- nonce-based Content Security Policy for the served frontend index
+- API preset management: base URL/path/key, model, and global SOCKS5 upstream proxy
+- generation and image-editing (`/v1/images/edits`) with size/quality/format/compression/quantity controls
+- preview + job history with SSE progress, `completed_at`, elapsed time, and cancel for queued/running jobs
+- shared queue and concurrency limits for generation/edit jobs
+- optional per-job `webhook_url` with HTTPS-only validation, SSRF checks, signing, and retry
+- gallery with filters, favorites, lightbox, “Edit this image”, download, delete/delete-all, prompt/image-url copy, and persisted total-size metadata
+- ZIP export/import (`metadata.json`) with safety validation and low-memory export path
+- access-key gate, IP allowlist/proxy-header support, GitHub version badge, and CSP nonce injection
 
 ## Architecture
 
@@ -89,33 +81,25 @@ npm --prefix frontend run build
 Runtime persistent storage is minimal:
 
 - generated images are saved in the `images/` directory
-- gallery metadata, image byte sizes, and API presets are stored in SQLite at `data/app.sqlite3`, including Beijing completion time and generation duration
-- generation job status, errors, timing, and result metadata are stored in SQLite at `data/app.sqlite3`
+- gallery metadata, image byte sizes, and API presets are stored in SQLite at `data/app.sqlite3`, including `completed_at`, Beijing completion time, and generation duration
+- generation/edit job status, errors, timing, `completed_at`, and result metadata are stored in SQLite at `data/app.sqlite3`
 - active `asyncio.Task` handles live only in process memory; queued/running jobs from a previous process are marked interrupted on startup
 
 ### Generation flow
 
-1. the frontend sends a request to `/api/generate`
-2. the backend validates settings and creates a SQLite-backed job
-3. the backend starts `run_generate_job(...)` with `asyncio.create_task` and tracks the task handle while it is active
-4. the backend enforces shared queue-capacity and concurrency limits before starting work, then reports detailed stages while building the payload, waiting for the upstream API, parsing JSON, extracting image data, decoding `b64_json`, validating bytes, saving files, and updating gallery metadata
-5. image data is decoded from base64 or downloaded from URL
-6. the backend saves the file and appends the gallery metadata entry
-7. the frontend listens to `/api/generate/{job_id}/events` and renders each SSE progress update in Preview
-8. the job history drawer listens to `/api/generate/jobs/events`, can refresh via `/api/generate/jobs`, and cancels selected jobs via `DELETE /api/generate/{job_id}`
-9. if `webhook_url` is provided, the backend validates it and asynchronously delivers `image.job.finished` after job completion (with signature headers when configured)
+1. frontend calls `/api/generate`
+2. backend validates config, creates a SQLite-backed job, then schedules async execution
+3. shared queue/concurrency limits are enforced; progress stages stream via SSE
+4. upstream image data is decoded/downloaded, validated, and saved; gallery metadata is updated
+5. job history is queryable/streamed (`/api/generate/jobs*`), cancellable (`DELETE /api/generate/{job_id}`), and can trigger optional signed webhook callbacks
 
 ### Edit flow
 
-1. the frontend lets the user upload an image file or choose an existing gallery image via "Edit this image" on cards/lightbox; the selected source can be previewed before submitting the edit request
-2. the frontend sends current parameters to `/api/edits` (upload flow) or `/api/edits/from-gallery/{image_id}` (gallery flow)
-3. the backend creates a SQLite-backed job and calls upstream `/v1/images/edits`
-4. the source image is forwarded as multipart `image` (from upload bytes or gallery file bytes); SVG uploads are rejected
-5. supported parameters are forwarded as multipart fields: `prompt`, `model`, `n`, `size`, `quality`, `output_format`, optional `response_format`, and `output_compression` when applicable
-6. the backend reports detailed stages while building multipart form data, uploading the source image, waiting for the upstream API, parsing JSON, extracting edited image data, decoding `b64_json`, validating bytes, and saving files
-7. returned image data is decoded from base64 or downloaded from URL
-8. the backend saves the edited image and appends the gallery metadata entry
-9. the frontend listens to `/api/generate/{job_id}/events` and renders preview/gallery like normal generation
+1. frontend selects source image (upload or gallery) and calls `/api/edits` or `/api/edits/from-gallery/{image_id}`
+2. backend creates a job and calls upstream `/v1/images/edits` using multipart form data
+3. source image plus supported edit params are forwarded; unsupported source formats (for example SVG) are rejected
+4. progress stages stream via SSE; returned image data is decoded/downloaded, validated, and saved
+5. edited results appear in preview/gallery and follow the same queue, history, and cancellation model as generation
 
 ## Tech stack
 
@@ -399,30 +383,14 @@ The panel supports these upstream paths:
 
 ## Runtime behavior notes
 
-- The current app version is read from `APP_VERSION` first, then from the root `VERSION` file.
-- The frontend checks `https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION` on page load and shows a `New` header badge when that version is newer than the current app version.
-- Version comparison ignores a leading `v`, compares numeric version segments, and does not block app startup or usage.
-- If the remote version check fails, the UI keeps showing the current version and continues normally.
-- API presets are persisted to the SQLite database configured by `DATABASE_FILE`.
-- Generation and edit job history is persisted to SQLite for queued, running-start, and terminal states; intermediate running progress remains live over SSE and is throttled before SQLite persistence.
-- `/api/generate`, `/api/edits`, and `/api/edits/from-gallery/{image_id}` accept optional `webhook_url`; callback delivery uses async retries and request signing when `WEBHOOK_SIGNING_SECRET` is configured.
-- Image URLs returned by upstream APIs are downloaded without automatic redirect following; redirect targets and final peer IPs are revalidated, and downloads are bounded by `MAX_FILE_SIZE_MB` while streaming.
-- Generation and edit jobs share one queue; concurrency is limited by `MAX_ACTIVE_GENERATE_JOBS`, queued capacity is limited by `MAX_QUEUED_GENERATE_JOBS`, and overflow requests return `429`.
-- If the database has no presets, the default preset is initialized from `DEFAULT_API_URL`, `DEFAULT_API_KEY`, and `DEFAULT_API_PATH`.
-- API keys are masked in the UI. Presets may store `${ENV_VAR_NAME}` instead of a real key; the UI labels it as an env ref, SQLite stores only that reference, and generation/edit/health-check calls resolve the real value from the server environment. Literal keys are still stored as provided.
-- Existing `data/settings.json` and `data/gallery.json` files are imported once when the matching database tables are empty.
-- `/api/import` only accepts valid ZIP archives with safe paths and required `metadata.json`, and enforces archive/file-size, file-count, metadata-size, and compression-ratio limits during validation.
-- `/api/download-all` builds export ZIP files on disk in a worker thread and removes the temporary file after the response completes, so large galleries do not need to be fully buffered in memory.
-- Gallery image byte sizes are stored with each entry; `/api/gallery` uses this metadata for total-size calculations and backfills older rows from file stats when needed.
-- Gallery saves generate WebP thumbnails under `THUMBNAILS_DIR`; `/api/gallery` returns `thumbnail_url`, and `/api/thumb/{filename}` lazily rebuilds missing thumbnails for older images.
-- Uploaded edit source images must be supported raster image formats; SVG uploads are rejected.
-- On startup, the backend scans `IMAGES_DIR` and removes gallery metadata entries whose image files are missing.
-- On startup, queued/running jobs persisted by a previous process are marked as interrupted because their task handles cannot survive restart.
-- Queued/running generation and edit jobs can be cancelled; cancellation updates SQLite and calls `asyncio.Task.cancel()` when the task is still in memory.
-- Finished generation jobs are trimmed from SQLite when the job store exceeds `MAX_GENERATE_JOBS`.
-- `DELETE /api/gallery/{image_id}` removes metadata and deletes the image file from `IMAGES_DIR` when no remaining gallery entry references that filename.
-- `DELETE /api/gallery` removes all gallery metadata and deletes image files from `IMAGES_DIR`.
-- Streaming image responses use an opened file handle; avoid interrupting cleanup logic if you modify serving behavior.
+- app version comes from `APP_VERSION` then `VERSION`; optional GitHub remote check can show a `New` badge without blocking usage
+- presets and gallery/job data persist in `DATABASE_FILE`; legacy `data/settings.json` and `data/gallery.json` are imported once when DB tables are empty
+- generation and edit share one queue (`MAX_ACTIVE_GENERATE_JOBS` + `MAX_QUEUED_GENERATE_JOBS`), support cancellation, and persist terminal history including `completed_at`
+- SSE is the primary progress channel; `/api/generate/jobs` provides list/history (`include_finished=true`), and `/api/generate/jobs/events` streams live job changes
+- upstream image URL downloads are revalidated (SSRF-aware, no blind redirect follow) and bounded by `MAX_FILE_SIZE_MB`
+- `/api/import` enforces ZIP safety/size/count/compression checks; `/api/download-all` writes temp ZIP on disk to avoid high memory usage
+- gallery stores byte-size metadata and thumbnails (`THUMBNAILS_DIR`), with lazy thumbnail backfill for older images
+- startup reconciliation removes gallery rows for missing files and marks previously running/queued jobs as interrupted
 
 ## Testing
 
@@ -481,7 +449,7 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 - FastAPI 后端位于 `backend/app/`；ASGI 入口使用 `backend.app.main:app`
 - 公共 API 路径、方法、状态码、SSE 事件名、cookie 和响应结构通过契约测试冻结
 - API 预设持久化保存在 SQLite：`data/app.sqlite3`
-- 图像生成任务通过 `asyncio.create_task` 异步执行
+- 生成/编辑任务通过 `asyncio.create_task` 异步执行
 - 图片保存在 `images/`
 - Gallery 元数据保存在 SQLite：`data/app.sqlite3`
 - 旧的 `data/gallery.json` 和 `data/settings.json` 会在数据库为空时于启动阶段导入一次
@@ -490,22 +458,14 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 
 ## 功能
 
-- 设置界面：API 预设、API Base URL、API Path、API Key、全局 SOCKS5 上游代理、Model
-- 生成/编辑选项：尺寸、质量、格式、压缩比、数量、响应格式
-- 通过 OpenAI 兼容 `/v1/images/edits` 支持图生图编辑
-- 支持自动、比例和自定义图像尺寸
-- 左上角语言切换按钮，可在英文和简体中文之间切换，并持久保存
-- 预览界面：显示提示词、参数、真实图片分辨率、北京时间生成完成时间、生成耗时，以及本地化 generation/edit 细分阶段
-- 预览进度通过 SSE 实时推送，流断开时退回轮询兜底
-- 历史任务抽屉通过 SSE 更新正在排队/运行的生成和编辑任务，并支持选择后主动终止
-- 生成和编辑任务共享可配置的并发上限与排队上限
-- 支持每个任务可选 `webhook_url` 回调：仅允许 HTTPS，带 SSRF 防护、签名投递与重试
-- 支持上传图片或选择 Gallery 图片作为编辑源，并可在提交前预览编辑源
-- Gallery：分页、按 prompt/model/preset/尺寸/日期/收藏筛选、收藏切换、Lightbox、卡片/Lightbox 直接 “Edit this image”、生成所用预设、下载、低内存占用的带 `metadata.json` ZIP 导出/导入（导入含安全校验）、删除、全部删除、复制提示词、复制图片链接、基于持久化文件大小元数据的总大小显示
-- 可选站点访问密钥
-- 可选 IP 白名单和反向代理头支持
-- 头部显示当前版本，并可基于 GitHub 仓库 `VERSION` 检测新版本
-- 后端服务前端入口时会注入 nonce，并发送对应的 Content Security Policy
+- API 预设管理：base URL/path/key、model、全局 SOCKS5 上游代理
+- 图像生成 + 图生图编辑（`/v1/images/edits`），支持尺寸/质量/格式/压缩率/数量等参数
+- 预览 + 历史任务：SSE 进度、`completed_at`、耗时、排队/运行任务取消
+- 生成与编辑共享并发和排队限制
+- 可选任务回调 `webhook_url`：HTTPS 校验、SSRF 防护、签名与重试
+- Gallery：筛选、收藏、Lightbox、“Edit this image”、下载/删除、复制提示词/图片链接、总大小统计
+- ZIP 导出导入（含 `metadata.json`）+ 安全校验 + 低内存导出路径
+- 访问密钥、IP 白名单/反向代理头、版本检测、CSP nonce
 
 ## 架构
 
@@ -550,35 +510,25 @@ npm --prefix frontend run build
 运行时持久化存储非常简单：
 
 - 生成的图片保存在 `images/` 目录
-- Gallery 元数据、图片字节数和 API 预设保存在 SQLite：`data/app.sqlite3`，包含真实图片宽高、北京时间生成完成时间和生成耗时
-- 生成/编辑任务的状态、错误、耗时、请求参数和结果元数据保存在 SQLite：`data/app.sqlite3`
+- Gallery 元数据、图片字节数和 API 预设保存在 SQLite：`data/app.sqlite3`，包含真实图片宽高、`completed_at` 完成时间、北京时间生成完成时间和生成耗时
+- 生成/编辑任务的状态、错误、耗时、`completed_at`、请求参数和结果元数据保存在 SQLite：`data/app.sqlite3`
 - 运行中的 `asyncio.Task` 句柄仅保存在进程内存中；重启后，上个进程遗留的排队/运行任务会被标记为 interrupted
 
 ### 生成流程
 
-1. 前端请求 `/api/generate`
-2. 后端校验配置并创建持久化到 SQLite 的任务
-3. 后端通过 `asyncio.create_task` 启动 `run_generate_job(...)`，并在任务运行期间记录 task 句柄
-4. 后端会先执行共享队列容量与并发限制校验，再在构建 payload、等待上游 API、解析 JSON、提取图片数据、解码 `b64_json`、校验字节、保存文件和更新 Gallery 元数据时持续上报细分阶段
-5. 图片数据从 base64 解码或从 URL 下载
-6. 后端保存文件并写入 Gallery 元数据
-7. 前端监听 `/api/generate/{job_id}/events` 的 SSE 事件，并在 Preview 中实时渲染当前阶段
-8. 历史任务抽屉监听 `/api/generate/jobs/events`，也可通过 `/api/generate/jobs` 手动刷新，并通过 `DELETE /api/generate/{job_id}` 取消选中的任务
-9. 若请求里提供 `webhook_url`，后端会先校验后异步投递 `image.job.finished` 回调；配置签名密钥时会附带签名请求头
-10. 当共享队列已满时，生成和编辑请求会返回 `429 Generation job queue is full`
+1. 前端调用 `/api/generate`
+2. 后端校验配置并创建 SQLite 任务，再异步调度执行
+3. 执行前检查共享并发/队列限制，执行中通过 SSE 推送细分进度
+4. 上游返回数据解码/下载、校验并落盘，同时更新 Gallery 元数据
+5. 任务历史可通过 `/api/generate/jobs*` 查询/订阅，可取消；可选触发签名 webhook 回调
 
 ### 编辑流程
 
-1. 前端支持两种编辑源：上传受支持的位图图片文件，或在 Gallery 卡片/Lightbox 点击 “Edit this image”；选中后可先预览编辑源
-2. 前端将当前参数发送到 `/api/edits`（上传流）或 `/api/edits/from-gallery/{image_id}`（Gallery 流）
-3. 后端创建持久化到 SQLite 的任务并调用上游 `/v1/images/edits`
-4. 源图片以 multipart `image` 字段转发（来自上传字节或 Gallery 文件字节）；SVG 上传会被拒绝
-5. 支持的参数以 multipart 字段转发：`prompt`、`model`、`n`、`size`、`quality`、`output_format`、可选的 `response_format`，以及适用时的 `output_compression`
-6. 后端在构建 multipart 表单、上传源图片、等待上游 API、解析 JSON、提取编辑图片数据、解码 `b64_json`、校验字节和保存文件时持续上报细分阶段
-7. 返回图片数据从 base64 解码或从 URL 下载
-8. 后端保存编辑后的图片并写入 Gallery 元数据
-9. 前端监听 `/api/generate/{job_id}/events`，并像普通生成一样渲染预览和 Gallery
-10. 编辑任务与生成任务共享同一套并发与排队限制
+1. 前端选择编辑源（上传或 Gallery）并调用 `/api/edits` 或 `/api/edits/from-gallery/{image_id}`
+2. 后端创建任务并以 multipart 调用上游 `/v1/images/edits`
+3. 转发源图与支持参数；不支持格式（如 SVG）会被拒绝
+4. 通过 SSE 推送进度；返回数据解码/下载、校验并落盘
+5. 编辑结果进入预览和 Gallery，沿用与生成一致的队列/历史/取消模型
 
 ## 技术栈
 
@@ -862,29 +812,14 @@ curl http://localhost:9090/health
 
 ## 运行时注意事项
 
-- 当前应用版本优先读取 `APP_VERSION`，其次读取根目录 `VERSION` 文件。
-- 前端页面加载时会请求 `https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION`，当远端版本高于当前版本时在头部版本 badge 上显示 `New`。
-- 版本比较会忽略开头的 `v`，按数字版本段比较；远端检查失败不会阻塞启动或使用。
-- API 预设持久化保存在 `DATABASE_FILE` 指向的 SQLite 数据库。
-- 生成/编辑任务历史会把 queued、running 起始和终态持久化到 SQLite；中间 running 进度仍通过 SSE 实时推送，并在写入 SQLite 前节流。
-- `/api/generate`、`/api/edits` 和 `/api/edits/from-gallery/{image_id}` 接受可选 `webhook_url`；回调使用异步重试，配置 `WEBHOOK_SIGNING_SECRET` 时会签名请求。
-- 上游返回的图片 URL 下载不会自动跟随重定向；重定向目标和最终 peer IP 会重新校验，下载流式读取且受 `MAX_FILE_SIZE_MB` 限制。
-- 生成和编辑任务共享同一个队列；并发数受 `MAX_ACTIVE_GENERATE_JOBS` 限制，排队容量受 `MAX_QUEUED_GENERATE_JOBS` 限制，超出时请求返回 `429`。
-- 如果数据库中没有 preset，默认预设会使用 `DEFAULT_API_URL`、`DEFAULT_API_KEY` 和 `DEFAULT_API_PATH` 初始化。
-- API Key 在界面中掩码展示。预设可以保存 `${ENV_VAR_NAME}` 代替真实 key；界面会标记为环境变量引用，SQLite 只保存该引用，生成/编辑/健康检查会从服务端环境变量解析真实值。直接填写真实 key 时仍会按原样保存。
-- 旧的 `data/settings.json` 和 `data/gallery.json` 会在对应数据库表为空时导入一次。
-- `/api/import` 只接受带安全路径且包含 `metadata.json` 的有效 ZIP，并会校验归档/文件体积、文件数量、metadata 大小和压缩比。
-- `/api/download-all` 会在线程中构建磁盘临时 ZIP，并在响应结束后删除临时文件，大 Gallery 导出时无需把完整 ZIP 缓存在内存中。
-- Gallery 图片字节数会随条目持久化保存；`/api/gallery` 使用该元数据计算总大小，并在旧数据缺失时从文件 stat 回填。
-- Gallery 保存图片时会在 `THUMBNAILS_DIR` 下生成 WebP 缩略图；`/api/gallery` 返回 `thumbnail_url`，`/api/thumb/{filename}` 会为旧图片懒生成缺失缩略图。
-- 上传作为编辑源图的文件必须是受支持的位图图片格式；SVG 上传会被拒绝。
-- 启动时后端会扫描 `IMAGES_DIR`，并移除图片文件已不存在的 Gallery 元数据条目。
-- 启动时，上个进程遗留的排队/运行任务会被标记为 interrupted，因为 `asyncio.Task` 句柄无法跨进程恢复。
-- 排队/运行中的生成和编辑任务可以主动取消；取消会更新 SQLite，并在任务句柄仍在内存中时调用 `asyncio.Task.cancel()`。
-- 当任务数量超过 `MAX_GENERATE_JOBS` 时，已结束任务会从 SQLite 裁剪。
-- `DELETE /api/gallery/{image_id}` 会删除元数据；如果没有其他 Gallery 条目引用同一文件名，也会删除 `IMAGES_DIR` 中的对应图片文件。
-- `DELETE /api/gallery` 会删除所有 Gallery 元数据，并删除 `IMAGES_DIR` 中的图片文件。
-- 图片流式返回依赖已打开的文件句柄，修改相关逻辑时需注意资源释放。
+- 版本读取顺序是 `APP_VERSION` -> `VERSION`；可选 GitHub 远端检查仅用于显示 `New`，不会阻塞使用
+- 预设与 Gallery/Job 数据保存在 `DATABASE_FILE`；旧 `data/settings.json`、`data/gallery.json` 仅在空表时一次性导入
+- 生成与编辑共用队列（`MAX_ACTIVE_GENERATE_JOBS` + `MAX_QUEUED_GENERATE_JOBS`），支持取消，并持久化终态历史（含 `completed_at`）
+- SSE 是主进度通道；`/api/generate/jobs` 提供列表/历史（`include_finished=true`），`/api/generate/jobs/events` 推送实时变化
+- 上游图片 URL 下载会做 SSRF/重定向目标复核，并受 `MAX_FILE_SIZE_MB` 限制
+- `/api/import` 做 ZIP 安全与体积校验；`/api/download-all` 用磁盘临时 ZIP，避免大图库导出占满内存
+- Gallery 持久化图片字节数和缩略图（`THUMBNAILS_DIR`），旧图按需懒补缩略图
+- 启动时会清理缺失文件对应的 Gallery 记录，并把上次进程遗留的 running/queued 任务标记为 interrupted
 
 ## 测试
 
