@@ -954,6 +954,9 @@ def test_gallery_image_download_and_zip(client):
 
     archive = client.get("/api/download-all")
     assert archive.status_code == 200
+    assert archive.headers["content-type"].startswith("application/zip")
+    assert "attachment" in archive.headers["content-disposition"]
+    assert archive.headers.get("x-content-type-options") == "nosniff"
     with zipfile.ZipFile(io.BytesIO(archive.content)) as zf:
         assert "metadata.json" in zf.namelist()
         assert "images/gallery-zip.png" in zf.namelist()
@@ -961,6 +964,45 @@ def test_gallery_image_download_and_zip(client):
         assert metadata["images"]
         assert "thumbnail_filename" not in metadata["images"][0]
         assert "thumbnail_url" not in metadata["images"][0]
+        assert metadata["images"][0]["sha256"]
+
+
+def test_download_all_uses_streaming_zip(client, monkeypatch):
+    _fake_gallery_entry("stream-zip", "stream", "1024x1024", "stream-zip.png")
+
+    def boom(_entries):
+        raise AssertionError("temporary ZIP builder should not be used")
+
+    monkeypatch.setattr(
+        "backend.app.api.gallery_archive.build_gallery_zip_file",
+        boom,
+        raising=True,
+    )
+
+    resp = client.get("/api/download-all")
+    assert resp.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+        assert "images/stream-zip.png" in zf.namelist()
+
+
+def test_download_all_deduplicates_shared_filenames(client):
+    _fake_gallery_entry("dup-1", "first", "1024x1024", "dup.png")
+    storage.add_to_gallery_sync(
+        image_id="dup-2",
+        prompt="second",
+        size="1024x1024",
+        filename="dup.png",
+        metadata={"model": "gpt-image-2"},
+    )
+
+    archive = client.get("/api/download-all")
+    assert archive.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(archive.content)) as zf:
+        image_names = [n for n in zf.namelist() if n.startswith("images/")]
+        assert len(image_names) == 2
+        assert len(image_names) == len(set(image_names))
+        assert "images/dup.png" in image_names
+        assert "images/dup_1.png" in image_names
 
 
 def test_gallery_total_bytes_backfills_legacy_entries_without_bytes(client):

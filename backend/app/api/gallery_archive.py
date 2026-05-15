@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from pathlib import Path, PurePosixPath
 
 from fastapi import HTTPException, UploadFile
+from zipstream import ZipStream
 
 from ..core import settings as config
 from ..core.utils import utc_now
@@ -99,6 +100,42 @@ def build_gallery_zip_file(entries: list[GalleryEntry]) -> Path:
         raise
 
     return temp_path
+
+
+def unique_export_name(path: Path, used_names: set[str]) -> str:
+    name = path.name
+    base = path.stem
+    ext = path.suffix
+    counter = 1
+    while name in used_names:
+        name = f"{base}_{counter}{ext}"
+        counter += 1
+    used_names.add(name)
+    return name
+
+
+def iter_gallery_zip_chunks(entries: list[GalleryEntry]) -> Iterator[bytes]:
+    used_names: set[str] = set()
+    exported_entries: list[GalleryEntry] = []
+    zs = ZipStream(compress_type=zipfile.ZIP_STORED)
+
+    for entry in entries:
+        path = storage.safe_image_path(entry.filename)
+        if not path or not path.exists():
+            continue
+
+        name = unique_export_name(path, used_names)
+        exported_entries.append(entry.model_copy(update={"filename": name}))
+        zs.add_path(path, arcname=f"images/{name}")
+
+    metadata = build_gallery_export_metadata(exported_entries)
+    zs.add(
+        json.dumps(metadata, ensure_ascii=False, indent=2).encode("utf-8"),
+        arcname="metadata.json",
+        compress_type=zipfile.ZIP_DEFLATED,
+    )
+
+    yield from zs
 
 
 def remove_file(path: Path):

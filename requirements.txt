@@ -5,3 +5,4 @@ aiohttp-socks>=0.9.0
 python-multipart>=0.0.12
 pydantic>=2.0.0
 Pillow>=10.0.0
+zipstream-ng>=1.8.0,<2.0.0

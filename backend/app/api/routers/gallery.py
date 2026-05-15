@@ -3,14 +3,12 @@ import mimetypes
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
-from starlette.background import BackgroundTask
+from fastapi.responses import FileResponse, StreamingResponse
 
 from ..gallery_archive import (
-    build_gallery_zip_file,
     import_archive_max_bytes,
+    iter_gallery_zip_chunks,
     iter_import_gallery_entries,
-    remove_file,
     stream_upload_to_tempfile,
 )
 from ...repositories import storage
@@ -76,14 +74,16 @@ def build_gallery_filters(
 async def _gallery_zip_response(
     entries: list[GalleryEntry],
     filename_prefix: str,
-) -> FileResponse:
-    temp_path = await asyncio.to_thread(build_gallery_zip_file, entries)
+) -> StreamingResponse:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    return FileResponse(
-        temp_path,
+    filename = f"{filename_prefix}-{timestamp}.zip"
+    return StreamingResponse(
+        iter_gallery_zip_chunks(entries),
         media_type="application/zip",
-        filename=f"{filename_prefix}-{timestamp}.zip",
-        background=BackgroundTask(remove_file, temp_path),
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
