@@ -1929,14 +1929,15 @@ def test_upstream_returned_image_url_download_stays_direct(tmp_path, monkeypatch
             session_events.append(("get", "", url))
             return _FakeResponse(200, {}, [PNG_BYTES], peer_ip="93.184.216.34")
 
-    def fake_create_client_session(timeout, socks5_proxy=None):
-        proxy_url = socks5_proxy or ""
-        created_sessions.append(proxy_url)
-        if proxy_url:
-            return FakeApiSession(proxy_url)
-        return FakeDownloadSession()
+    class FakePool:
+        def get(self, timeout_kind="upstream", socks5_proxy=None):
+            proxy_url = socks5_proxy or ""
+            created_sessions.append(proxy_url)
+            if proxy_url:
+                return FakeApiSession(proxy_url)
+            return FakeDownloadSession()
 
-    monkeypatch.setattr(upstream_client, "create_client_session", fake_create_client_session)
+    monkeypatch.setattr(upstream_client, "get_pool", lambda: FakePool())
 
     entries = asyncio.run(
         upstream_client.call_image_generation_api(
@@ -2008,12 +2009,16 @@ def test_chat_completions_sse_markdown_image_url_is_saved(tmp_path, monkeypatch)
             session_events.append(("get", url, None))
             return _FakeResponse(200, {}, [JPEG_BYTES], peer_ip="93.184.216.34")
 
-    sessions = [FakeApiSession(), FakeDownloadSession()]
+    class FakeCombinedSession(FakeApiSession, FakeDownloadSession):
+        pass
 
-    def fake_create_client_session(timeout, socks5_proxy=None):
-        return sessions.pop(0)
+    fake_session = FakeCombinedSession()
 
-    monkeypatch.setattr(upstream_client, "create_client_session", fake_create_client_session)
+    class FakePool:
+        def get(self, timeout_kind="upstream", socks5_proxy=None):
+            return fake_session
+
+    monkeypatch.setattr(upstream_client, "get_pool", lambda: FakePool())
 
     entries = asyncio.run(
         upstream_client.call_image_generation_api(

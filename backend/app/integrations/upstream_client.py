@@ -18,6 +18,7 @@ from ..core.api_paths import (
 from ..core import validators as ssrf
 from ..repositories import storage
 from ..schemas.models import EditRequest, GenerateRequest
+from .session_pool import TIMEOUT_PROBE, TIMEOUT_UPSTREAM, get_pool
 
 ProgressCallback = Callable[[str, str], None]
 
@@ -56,44 +57,7 @@ MARKDOWN_IMAGE_RE = re.compile(
 HTTP_IMAGE_URL_RE = re.compile(r"https?://[^\s<>'\")]+")
 
 
-UPSTREAM_TIMEOUT = aiohttp.ClientTimeout(
-    total=600,
-    connect=30,
-    sock_connect=30,
-    sock_read=600,
-)
-UPSTREAM_PROBE_TIMEOUT = aiohttp.ClientTimeout(
-    total=10,
-    connect=5,
-    sock_connect=5,
-    sock_read=10,
-)
-
-
-def build_socks5_connector(socks5_proxy: str | None):
-    proxy_url = str(socks5_proxy or "").strip()
-    if not proxy_url:
-        return None
-
-    try:
-        from aiohttp_socks import ProxyConnector
-    except ImportError as e:
-        raise RuntimeError(
-            "SOCKS5 proxy support requires aiohttp-socks. "
-            "Install backend requirements and restart the server."
-        ) from e
-
-    return ProxyConnector.from_url(proxy_url)
-
-
-def create_client_session(
-    timeout: aiohttp.ClientTimeout,
-    socks5_proxy: str | None = None,
-) -> aiohttp.ClientSession:
-    return aiohttp.ClientSession(
-        timeout=timeout,
-        connector=build_socks5_connector(socks5_proxy),
-    )
+DOWNLOAD_CONCURRENCY = 3
 
 
 def get_output_format_info(output_format: str) -> dict[str, str]:
@@ -492,10 +456,10 @@ async def save_gallery_entries_from_upstream_data(
     save_message: str,
     progress: ProgressCallback | None,
 ) -> list[storage.GalleryEntry]:
-    entries: list[storage.GalleryEntry] = []
     max_bytes = config.MAX_FILE_SIZE_MB * 1024 * 1024
     total = len(data)
-    for image_index, image_data in enumerate(data):
+
+    async def process_one(image_index: int, image_data: dict) -> storage.GalleryEntry:
         transfer_stage, transfer_message = get_image_transfer_stage(image_data)
         if progress:
             progress(
@@ -544,9 +508,22 @@ async def save_gallery_entries_from_upstream_data(
                 filename=filename,
                 metadata=entry_metadata,
             )
-            entries.append(entry)
+            return entry
         finally:
             del image_bytes
+
+    if total <= 1:
+        entries = [await process_one(0, data[0])]
+    else:
+        sem = asyncio.Semaphore(DOWNLOAD_CONCURRENCY)
+
+        async def bounded(idx: int, img: dict) -> storage.GalleryEntry:
+            async with sem:
+                return await process_one(idx, img)
+
+        entries = list(
+            await asyncio.gather(*(bounded(i, d) for i, d in enumerate(data)))
+        )
     return entries
 
 
@@ -580,29 +557,29 @@ async def probe_upstream_endpoint(
 
     probe_errors: list[str] = []
     unsupported_method_result: dict[str, Any] | None = None
-    async with create_client_session(UPSTREAM_PROBE_TIMEOUT) as session:
-        for method in ("OPTIONS", "HEAD"):
-            try:
-                async with session.request(
-                    method,
-                    upstream_url,
-                    headers=headers,
-                    allow_redirects=False,
-                ) as resp:
-                    ssrf.validate_response_peer_ip(resp, "Upstream API probe")
-                    status, message = classify_probe_status(method, resp.status)
-                    result = {
-                        "status": status,
-                        "message": message,
-                        "method": method,
-                        "status_code": resp.status,
-                    }
-                    if resp.status in {405, 501}:
-                        unsupported_method_result = result
-                        continue
-                    return result
-            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
-                probe_errors.append(f"{method}: {e}")
+    session = get_pool().get(timeout_kind=TIMEOUT_PROBE)
+    for method in ("OPTIONS", "HEAD"):
+        try:
+            async with session.request(
+                method,
+                upstream_url,
+                headers=headers,
+                allow_redirects=False,
+            ) as resp:
+                ssrf.validate_response_peer_ip(resp, "Upstream API probe")
+                status, message = classify_probe_status(method, resp.status)
+                result = {
+                    "status": status,
+                    "message": message,
+                    "method": method,
+                    "status_code": resp.status,
+                }
+                if resp.status in {405, 501}:
+                    unsupported_method_result = result
+                    continue
+                return result
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
+            probe_errors.append(f"{method}: {e}")
 
     if unsupported_method_result:
         return unsupported_method_result
@@ -776,65 +753,64 @@ async def call_image_generation_api(
     format_info = get_output_format_info(payload.output_format)
     gallery_metadata = build_gallery_metadata(payload, api_path, api_preset_name)
 
-    async with create_client_session(
-        UPSTREAM_TIMEOUT,
-        socks5_proxy=socks5_proxy,
-    ) as upstream_session:
-        async with create_client_session(UPSTREAM_TIMEOUT) as download_session:
+    pool = get_pool()
+    upstream_session = pool.get(timeout_kind=TIMEOUT_UPSTREAM, socks5_proxy=socks5_proxy)
+    download_session = pool.get(timeout_kind=TIMEOUT_UPSTREAM)
+
+    if progress:
+        progress("waiting_for_api", "Waiting for upstream API response")
+    async with upstream_session.post(
+        upstream_url,
+        json=request_data,
+        headers=headers,
+        allow_redirects=False,
+    ) as resp:
+        if not socks5_proxy:
+            ssrf.validate_response_peer_ip(resp, "Upstream API")
+        if api_path == CHAT_COMPLETIONS_API_PATH:
+            result, response_text = await parse_upstream_chat_completion_response(
+                resp, api_path, progress
+            )
+        else:
+            result, response_text = await parse_upstream_json_response(
+                resp, api_path, progress
+            )
+
+        if api_path == RESPONSES_API_PATH:
             if progress:
-                progress("waiting_for_api", "Waiting for upstream API response")
-            async with upstream_session.post(
-                upstream_url,
-                json=request_data,
-                headers=headers,
-                allow_redirects=False,
-            ) as resp:
-                if not socks5_proxy:
-                    ssrf.validate_response_peer_ip(resp, "Upstream API")
-                if api_path == CHAT_COMPLETIONS_API_PATH:
-                    result, response_text = await parse_upstream_chat_completion_response(
-                        resp, api_path, progress
-                    )
-                else:
-                    result, response_text = await parse_upstream_json_response(
-                        resp, api_path, progress
-                    )
-
-                if api_path == RESPONSES_API_PATH:
-                    if progress:
-                        progress(
-                            "extracting_response_image_output",
-                            "Extracting image_generation_call output",
-                        )
-                    data = extract_response_image_results(result)
-                elif api_path == CHAT_COMPLETIONS_API_PATH:
-                    if progress:
-                        progress(
-                            "extracting_chat_completion_image_output",
-                            "Extracting Chat Completions image output",
-                        )
-                    data = extract_chat_completion_image_results(result)
-                else:
-                    if progress:
-                        progress("extracting_generation_data", "Extracting image data array")
-                    data = result.get("data", [])
-                if not data:
-                    text_preview = response_text[:200] if isinstance(response_text, str) else str(response_text)[:200]
-                    raise UpstreamApiError(f"No image data in upstream response: {text_preview}")
-
-                response_preview = response_text[:200]
-                del response_text
-                del result
-                entries = await save_gallery_entries_from_upstream_data(
-                    download_session=download_session,
-                    data=data,
-                    response_preview=response_preview,
-                    payload=payload,
-                    format_extension=format_info["extension"],
-                    gallery_metadata=gallery_metadata,
-                    save_message="Saving generated images",
-                    progress=progress,
+                progress(
+                    "extracting_response_image_output",
+                    "Extracting image_generation_call output",
                 )
+            data = extract_response_image_results(result)
+        elif api_path == CHAT_COMPLETIONS_API_PATH:
+            if progress:
+                progress(
+                    "extracting_chat_completion_image_output",
+                    "Extracting Chat Completions image output",
+                )
+            data = extract_chat_completion_image_results(result)
+        else:
+            if progress:
+                progress("extracting_generation_data", "Extracting image data array")
+            data = result.get("data", [])
+        if not data:
+            text_preview = response_text[:200] if isinstance(response_text, str) else str(response_text)[:200]
+            raise UpstreamApiError(f"No image data in upstream response: {text_preview}")
+
+        response_preview = response_text[:200]
+        del response_text
+        del result
+        entries = await save_gallery_entries_from_upstream_data(
+            download_session=download_session,
+            data=data,
+            response_preview=response_preview,
+            payload=payload,
+            format_extension=format_info["extension"],
+            gallery_metadata=gallery_metadata,
+            save_message="Saving generated images",
+            progress=progress,
+        )
 
     return entries
 
@@ -875,41 +851,39 @@ async def call_image_edit_api(
         for key, value in _build_image_params(payload).items():
             form.add_field(key, str(value))
 
-        async with create_client_session(
-            UPSTREAM_TIMEOUT,
-            socks5_proxy=socks5_proxy,
-        ) as upstream_session:
+        pool = get_pool()
+        upstream_session = pool.get(timeout_kind=TIMEOUT_UPSTREAM, socks5_proxy=socks5_proxy)
+        if progress:
+            progress("uploading_edit_image", "Uploading source image and edit parameters")
+        async with upstream_session.post(
+            upstream_url,
+            data=form,
+            headers=headers,
+            allow_redirects=False,
+        ) as resp:
+            if not socks5_proxy:
+                ssrf.validate_response_peer_ip(resp, "Upstream API")
+            result, response_text = await parse_upstream_json_response(
+                resp, api_path, progress
+            )
+
             if progress:
-                progress("uploading_edit_image", "Uploading source image and edit parameters")
-            async with upstream_session.post(
-                upstream_url,
-                data=form,
-                headers=headers,
-                allow_redirects=False,
-            ) as resp:
-                if not socks5_proxy:
-                    ssrf.validate_response_peer_ip(resp, "Upstream API")
-                result, response_text = await parse_upstream_json_response(
-                    resp, api_path, progress
-                )
+                progress("extracting_edit_data", "Extracting edited image data array")
+            data = result.get("data", [])
+            if not data:
+                raise UpstreamApiError(f"No image data in upstream response: {response_text[:200]}")
 
-                if progress:
-                    progress("extracting_edit_data", "Extracting edited image data array")
-                data = result.get("data", [])
-                if not data:
-                    raise UpstreamApiError(f"No image data in upstream response: {response_text[:200]}")
-
-                response_preview = response_text[:200]
-                del response_text
-                del result
-                async with create_client_session(UPSTREAM_TIMEOUT) as download_session:
-                    return await save_gallery_entries_from_upstream_data(
-                        download_session=download_session,
-                        data=data,
-                        response_preview=response_preview,
-                        payload=payload,
-                        format_extension=format_info["extension"],
-                        gallery_metadata=gallery_metadata,
-                        save_message="Saving edited images",
-                        progress=progress,
-                    )
+            response_preview = response_text[:200]
+            del response_text
+            del result
+            download_session = pool.get(timeout_kind=TIMEOUT_UPSTREAM)
+            return await save_gallery_entries_from_upstream_data(
+                download_session=download_session,
+                data=data,
+                response_preview=response_preview,
+                payload=payload,
+                format_extension=format_info["extension"],
+                gallery_metadata=gallery_metadata,
+                save_message="Saving edited images",
+                progress=progress,
+            )
