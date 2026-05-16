@@ -1,4 +1,5 @@
 import struct
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -220,6 +221,39 @@ def save_image_to_disk(image_bytes: bytes, filename: str) -> Path:
         raise ValueError(f"Invalid image filename: {filename}")
     with open(path, "wb") as f:
         f.write(image_bytes)
+    return path
+
+
+def save_image_to_temp(image_bytes: bytes, filename: str) -> Path:
+    validate_image_bytes(image_bytes, filename=filename)
+    path = safe_image_path(filename)
+    if not path:
+        raise ValueError(f"Invalid image filename: {filename}")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_file = tempfile.NamedTemporaryFile(
+        prefix=f".{path.stem}-",
+        suffix=f"{path.suffix}.tmp",
+        dir=path.parent,
+        delete=False,
+    )
+    temp_path = Path(temp_file.name)
+    try:
+        with temp_file:
+            temp_file.write(image_bytes)
+    except BaseException:
+        temp_path.unlink(missing_ok=True)
+        raise
+    return temp_path
+
+
+def promote_image_temp(filename: str, temp_path: Path) -> Path:
+    path = safe_image_path(filename)
+    if not path:
+        temp_path.unlink(missing_ok=True)
+        raise ValueError(f"Invalid image filename: {filename}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path.replace(path)
     return path
 
 

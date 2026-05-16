@@ -1,6 +1,7 @@
 import hashlib
 import io
 import logging
+import tempfile
 from pathlib import Path
 from urllib.parse import quote
 
@@ -57,18 +58,14 @@ def _get_thumbnail_resampling_filter():
     return getattr(getattr(Image, "Resampling", Image), "LANCZOS")
 
 
-def create_thumbnail(image_bytes: bytes, filename: str) -> str | None:
+def _write_thumbnail_file(
+    image_bytes: bytes,
+    filename: str,
+    thumbnail_path: Path,
+) -> bool:
     if Image is None or ImageOps is None:
         logger.warning("Pillow is not installed; thumbnail generation skipped")
-        return None
-
-    thumbnail_filename = thumbnail_filename_for_image(filename)
-    if not thumbnail_filename:
-        return None
-
-    thumbnail_path = safe_thumbnail_path(thumbnail_filename)
-    if not thumbnail_path:
-        return None
+        return False
 
     try:
         with Image.open(io.BytesIO(image_bytes)) as image:
@@ -88,9 +85,63 @@ def create_thumbnail(image_bytes: bytes, filename: str) -> str | None:
     except (OSError, UnidentifiedImageError, ValueError) as e:
         thumbnail_path.unlink(missing_ok=True)
         logger.warning("Failed to generate thumbnail for %s: %s", filename, e)
+        return False
+
+    return True
+
+
+def create_thumbnail(image_bytes: bytes, filename: str) -> str | None:
+    thumbnail_filename = thumbnail_filename_for_image(filename)
+    if not thumbnail_filename:
         return None
 
+    thumbnail_path = safe_thumbnail_path(thumbnail_filename)
+    if not thumbnail_path:
+        return None
+
+    if not _write_thumbnail_file(image_bytes, filename, thumbnail_path):
+        return None
     return thumbnail_filename
+
+
+def create_thumbnail_temp(image_bytes: bytes, filename: str) -> tuple[str, Path] | None:
+    thumbnail_filename = thumbnail_filename_for_image(filename)
+    if not thumbnail_filename:
+        return None
+
+    thumbnail_path = safe_thumbnail_path(thumbnail_filename)
+    if not thumbnail_path:
+        return None
+
+    thumbnail_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_file = tempfile.NamedTemporaryFile(
+        prefix=f".{thumbnail_path.stem}-",
+        suffix=f"{THUMBNAIL_EXTENSION}.tmp",
+        dir=thumbnail_path.parent,
+        delete=False,
+    )
+    temp_path = Path(temp_file.name)
+    temp_file.close()
+
+    if not _write_thumbnail_file(image_bytes, filename, temp_path):
+        temp_path.unlink(missing_ok=True)
+        return None
+    return thumbnail_filename, temp_path
+
+
+def promote_thumbnail_temp(thumbnail_filename: str, temp_path: Path) -> bool:
+    thumbnail_path = safe_thumbnail_path(thumbnail_filename)
+    if not thumbnail_path:
+        temp_path.unlink(missing_ok=True)
+        return False
+    try:
+        thumbnail_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path.replace(thumbnail_path)
+    except OSError as e:
+        temp_path.unlink(missing_ok=True)
+        logger.warning("Failed to promote thumbnail %s: %s", thumbnail_filename, e)
+        return False
+    return True
 
 
 def delete_thumbnail(filename: str):

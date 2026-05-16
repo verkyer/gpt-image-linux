@@ -1224,6 +1224,40 @@ def test_import_archive(client):
     assert imported.thumbnail_url == "/api/thumb/import-1.png"
 
 
+def test_import_gallery_entries_dedupes_existing_rows_at_commit(client):
+    _fake_gallery_entry("import-1", "existing", "1024x1024", "import-1.png")
+
+    imported_count = storage.import_gallery_entries(
+        [
+            (
+                PNG_BYTES,
+                {
+                    "id": "import-1",
+                    "prompt": "late import",
+                    "size": "1024x1024",
+                    "filename": "import-1.png",
+                    "created_at": "2026-01-02T00:00:00Z",
+                },
+            )
+        ]
+    )
+
+    assert imported_count == 1
+    existing = storage.get_gallery_entry("import-1")
+    assert existing.prompt == "existing"
+
+    imported = next(
+        entry for entry in storage.get_gallery() if entry.prompt == "late import"
+    )
+    assert imported.id != "import-1"
+    assert imported.filename == "import-1_1.png"
+    assert imported.thumbnail_filename is None
+    assert imported.thumbnail_url == "/api/thumb/import-1_1.png"
+
+    thumb = client.get("/api/thumb/import-1_1.png")
+    assert thumb.status_code == 200
+
+
 def test_thumbnail_endpoint_lazily_rebuilds_missing_file(client):
     entry = _fake_gallery_entry("lazy-thumb", "lazy", "1024x1024", "lazy-thumb.png")
     assert entry.thumbnail_filename

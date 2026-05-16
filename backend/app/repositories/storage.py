@@ -25,15 +25,17 @@ from .image_files import (
     generate_image_id,
     get_image_dimensions,
     image_dimension_metadata as _image_dimension_metadata,
+    promote_image_temp as _promote_image_temp_unlocked,
     safe_image_path,
     safe_thumbnail_path,
-    save_image_to_disk as _save_image_unlocked,
+    save_image_to_temp as _save_image_temp_unlocked,
     scan_image_files as _scan_image_files,
     validate_image_bytes,
 )
 from .thumbnails import (
-    create_thumbnail as _create_thumbnail_unlocked,
+    create_thumbnail_temp as _create_thumbnail_temp_unlocked,
     delete_thumbnail as _delete_thumbnail_unlocked,
+    promote_thumbnail_temp as _promote_thumbnail_temp_unlocked,
     thumbnail_filename_for_image as _thumbnail_filename_for_image,
     thumbnail_url_for_filename as _thumbnail_url_for_filename,
 )
@@ -177,6 +179,14 @@ class GalleryPage:
     has_next: bool
     images: list[GalleryEntry]
     filter_options: GalleryFilterOptions
+
+
+@dataclass
+class _PreparedGalleryFile:
+    filename: str
+    image_temp_path: Path
+    thumbnail_filename: str | None = None
+    thumbnail_temp_path: Path | None = None
 
 
 def _invalidate_filter_options_cache():
@@ -872,6 +882,95 @@ def _attach_gallery_thumbnail_url(entry: dict[str, Any]) -> dict[str, Any]:
     return entry
 
 
+def _prepare_gallery_file(image_bytes: bytes, filename: str) -> _PreparedGalleryFile:
+    image_temp_path = _save_image_temp_unlocked(image_bytes, filename)
+    try:
+        prepared_thumbnail = _create_thumbnail_temp_unlocked(image_bytes, filename)
+    except BaseException:
+        image_temp_path.unlink(missing_ok=True)
+        raise
+
+    if not prepared_thumbnail:
+        return _PreparedGalleryFile(filename=filename, image_temp_path=image_temp_path)
+
+    thumbnail_filename, thumbnail_temp_path = prepared_thumbnail
+    return _PreparedGalleryFile(
+        filename=filename,
+        image_temp_path=image_temp_path,
+        thumbnail_filename=thumbnail_filename,
+        thumbnail_temp_path=thumbnail_temp_path,
+    )
+
+
+def _cleanup_prepared_gallery_files(prepared_files: Iterable[_PreparedGalleryFile]):
+    for prepared in prepared_files:
+        prepared.image_temp_path.unlink(missing_ok=True)
+        if prepared.thumbnail_temp_path:
+            prepared.thumbnail_temp_path.unlink(missing_ok=True)
+
+
+def _promote_prepared_images(prepared_files: Sequence[_PreparedGalleryFile]):
+    for prepared in prepared_files:
+        _promote_image_temp_unlocked(prepared.filename, prepared.image_temp_path)
+
+
+def _promote_prepared_thumbnails(prepared_files: Sequence[_PreparedGalleryFile]):
+    for prepared in prepared_files:
+        if prepared.thumbnail_filename and prepared.thumbnail_temp_path:
+            _promote_thumbnail_temp_unlocked(
+                prepared.thumbnail_filename,
+                prepared.thumbnail_temp_path,
+            )
+
+
+def _dedupe_gallery_filename(filename: str, used_filenames: set[str]) -> str:
+    if filename not in used_filenames:
+        return filename
+
+    path_name = Path(filename)
+    base = path_name.stem
+    ext = path_name.suffix
+    counter = 1
+    while True:
+        candidate = f"{base}_{counter}{ext}"
+        if candidate not in used_filenames:
+            return candidate
+        counter += 1
+
+
+def _dedupe_import_entries_on_conn(
+    conn: sqlite3.Connection,
+    entries: list[dict[str, Any]],
+    prepared_files: list[_PreparedGalleryFile],
+):
+    used_filenames = set(_get_all_filenames_on_conn(conn))
+    used_ids = {
+        row["id"]
+        for row in conn.execute("SELECT id FROM gallery_entries").fetchall()
+        if row["id"]
+    }
+
+    for entry, prepared in zip(entries, prepared_files):
+        image_id = str(entry["id"])
+        while image_id in used_ids:
+            image_id = generate_image_id()
+        entry["id"] = image_id
+        used_ids.add(image_id)
+
+        filename = str(entry["filename"])
+        deduped_filename = _dedupe_gallery_filename(filename, used_filenames)
+        entry["filename"] = deduped_filename
+        prepared.filename = deduped_filename
+        used_filenames.add(deduped_filename)
+
+        if deduped_filename != filename:
+            entry.pop("thumbnail_filename", None)
+            if prepared.thumbnail_temp_path:
+                prepared.thumbnail_temp_path.unlink(missing_ok=True)
+            prepared.thumbnail_filename = None
+            prepared.thumbnail_temp_path = None
+
+
 def ensure_thumbnail_for_image(filename: str) -> str | None:
     thumbnail_filename = _thumbnail_filename_for_image(filename)
     if not thumbnail_filename:
@@ -885,19 +984,47 @@ def ensure_thumbnail_for_image(filename: str) -> str | None:
     if not image_path or not image_path.is_file():
         return None
 
-    with _storage_lock:
+    for _ in range(3):
         if thumbnail_path and thumbnail_path.is_file():
             return thumbnail_filename
         try:
+            image_stat = image_path.stat()
             image_bytes = image_path.read_bytes()
         except OSError as e:
             logger.warning("Failed to read image for thumbnail %s: %s", filename, e)
             return None
 
-        created_thumbnail = _create_thumbnail_unlocked(image_bytes, filename)
-        if created_thumbnail:
-            _set_thumbnail_filename_for_image(filename, created_thumbnail)
-        return created_thumbnail
+        prepared_thumbnail = _create_thumbnail_temp_unlocked(image_bytes, filename)
+        if not prepared_thumbnail:
+            return None
+
+        created_thumbnail, temp_path = prepared_thumbnail
+        if thumbnail_path and thumbnail_path.is_file():
+            temp_path.unlink(missing_ok=True)
+            return thumbnail_filename
+
+        with _storage_lock:
+            if thumbnail_path and thumbnail_path.is_file():
+                temp_path.unlink(missing_ok=True)
+                return thumbnail_filename
+            try:
+                current_stat = image_path.stat()
+            except OSError:
+                temp_path.unlink(missing_ok=True)
+                return None
+            if (
+                current_stat.st_mtime_ns != image_stat.st_mtime_ns
+                or current_stat.st_size != image_stat.st_size
+            ):
+                temp_path.unlink(missing_ok=True)
+                continue
+
+            if _promote_thumbnail_temp_unlocked(created_thumbnail, temp_path):
+                _set_thumbnail_filename_for_image(filename, created_thumbnail)
+                return created_thumbnail
+            return None
+
+    return None
 
 
 def _set_thumbnail_filename_for_image(filename: str, thumbnail_filename: str):
@@ -951,44 +1078,61 @@ def _save_images_and_insert_gallery_entries(
     gallery_entries: list[dict[str, Any]],
 ):
     _ensure_database()
-    with _storage_lock:
-        with _connect() as conn:
-            with _transaction(conn):
-                for index, (image_bytes, filename) in enumerate(entries_data):
-                    _save_image_unlocked(image_bytes, filename)
-                    thumbnail_filename = _create_thumbnail_unlocked(
-                        image_bytes,
-                        filename,
-                    )
-                    if thumbnail_filename and index < len(gallery_entries):
-                        gallery_entries[index]["thumbnail_filename"] = thumbnail_filename
-                _insert_gallery_entries_on_conn(conn, gallery_entries)
+    prepared_files: list[_PreparedGalleryFile] = []
+    try:
+        for index, (image_bytes, filename) in enumerate(entries_data):
+            prepared = _prepare_gallery_file(image_bytes, filename)
+            prepared_files.append(prepared)
+            if prepared.thumbnail_filename and index < len(gallery_entries):
+                gallery_entries[index]["thumbnail_filename"] = (
+                    prepared.thumbnail_filename
+                )
+
+        with _storage_lock:
+            _promote_prepared_images(prepared_files)
+            with _connect() as conn:
+                with _transaction(conn):
+                    _insert_gallery_entries_on_conn(conn, gallery_entries)
+            _promote_prepared_thumbnails(prepared_files)
+    except BaseException:
+        _cleanup_prepared_gallery_files(prepared_files)
+        raise
 
 
 def import_gallery_entries(
     entries_data: Iterable[tuple[bytes, dict[str, Any]]],
 ) -> int:
     _ensure_database()
-    with _storage_lock:
-        with _connect() as conn:
-            with _transaction(conn):
-                imported_count = 0
-                for image_bytes, entry in entries_data:
-                    normalized = _normalize_gallery_entry(entry)
-                    if not normalized:
-                        continue
-                    normalized["bytes"] = len(image_bytes)
-                    normalized.pop("thumbnail_filename", None)
-                    _save_image_unlocked(image_bytes, normalized["filename"])
-                    thumbnail_filename = _create_thumbnail_unlocked(
-                        image_bytes,
-                        normalized["filename"],
-                    )
-                    if thumbnail_filename:
-                        normalized["thumbnail_filename"] = thumbnail_filename
-                    _insert_gallery_entries_on_conn(conn, [normalized])
-                    imported_count += 1
-                return imported_count
+    prepared_files: list[_PreparedGalleryFile] = []
+    normalized_entries: list[dict[str, Any]] = []
+    try:
+        for image_bytes, entry in entries_data:
+            normalized = _normalize_gallery_entry(entry)
+            if not normalized:
+                continue
+            normalized["bytes"] = len(image_bytes)
+            normalized.pop("thumbnail_filename", None)
+
+            prepared = _prepare_gallery_file(image_bytes, normalized["filename"])
+            prepared_files.append(prepared)
+            if prepared.thumbnail_filename:
+                normalized["thumbnail_filename"] = prepared.thumbnail_filename
+            normalized_entries.append(normalized)
+
+        if not normalized_entries:
+            return 0
+
+        with _storage_lock:
+            with _connect() as conn:
+                _dedupe_import_entries_on_conn(conn, normalized_entries, prepared_files)
+                _promote_prepared_images(prepared_files)
+                with _transaction(conn):
+                    _insert_gallery_entries_on_conn(conn, normalized_entries)
+            _promote_prepared_thumbnails(prepared_files)
+        return len(normalized_entries)
+    except BaseException:
+        _cleanup_prepared_gallery_files(prepared_files)
+        raise
 
 
 async def add_to_gallery_async(
@@ -1290,15 +1434,12 @@ def add_to_gallery_sync(
         metadata=metadata,
         image_bytes=image_bytes,
     )
-    _ensure_database()
-    with _storage_lock:
+    if image_bytes is not None:
+        _save_images_and_insert_gallery_entries([(image_bytes, filename)], [entry])
+    else:
+        _ensure_database()
         with _connect() as conn:
             with _transaction(conn):
-                if image_bytes is not None:
-                    _save_image_unlocked(image_bytes, filename)
-                    thumbnail_filename = _create_thumbnail_unlocked(image_bytes, filename)
-                    if thumbnail_filename:
-                        entry["thumbnail_filename"] = thumbnail_filename
                 _insert_gallery_entries_on_conn(conn, [entry])
     return GalleryEntry(**_attach_gallery_thumbnail_url(entry))
 
