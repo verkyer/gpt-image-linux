@@ -79,8 +79,8 @@
     jobsStore.startJobsEvents();
   }
 
-  function showToast(message: string) {
-    uiStore.showToast(message);
+  function showToast(message: string, variant?: 'status' | 'error') {
+    uiStore.showToast(message, variant);
   }
 
   function setUi<K extends keyof typeof $uiStore>(key: K, value: (typeof $uiStore)[K]) {
@@ -252,7 +252,7 @@
     if (job.operation === 'edit') {
       if (!$editSourceStore.file && !$editSourceStore.selectedGalleryImageId) {
         previewStore.setError($t.messages.editRetryNeedsSource);
-        showToast($t.messages.editRetryNeedsSource);
+        showToast($t.messages.editRetryNeedsSource, 'error');
         return;
       }
       editImage();
@@ -334,7 +334,7 @@
 />
 
 <main class="mx-auto max-w-5xl space-y-6 px-4 py-6 sm:px-6">
-  <ToastHost message={$uiStore.toast} />
+  <ToastHost toast={$uiStore.toast} />
 
   <PromptForm
     bind:form

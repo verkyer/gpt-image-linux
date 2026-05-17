@@ -2,6 +2,9 @@ import { derived, get, writable } from 'svelte/store';
 import { apiFetch } from '$lib/api/client';
 import { t } from '$lib/i18n';
 import type { PresetHealthResponse, SettingsResponse } from '$lib/api/types';
+import type { ToastVariant } from '$lib/stores/ui';
+
+type ShowToast = (message: string, variant?: ToastVariant) => void;
 
 type SettingsState = {
   settings: SettingsResponse | null;
@@ -25,13 +28,13 @@ function createSettingsStore() {
     update((state) => ({ ...state, settings }));
   }
 
-  async function saveSettings(body: Record<string, unknown>, showToast: (message: string) => void) {
+  async function saveSettings(body: Record<string, unknown>, showToast: ShowToast) {
     if (!String(body.api_url || '').trim()) {
-      showToast(get(t).messages.apiUrlRequired);
+      showToast(get(t).messages.apiUrlRequired, 'error');
       return;
     }
     if (body.api_key !== null && !String(body.api_key || '').trim()) {
-      showToast(get(t).messages.apiKeyRequired);
+      showToast(get(t).messages.apiKeyRequired, 'error');
       return;
     }
 
@@ -53,7 +56,7 @@ function createSettingsStore() {
     }
   }
 
-  async function createPreset(showToast: (message: string) => void) {
+  async function createPreset(showToast: ShowToast) {
     const activePresetId = get(settingsStore).settings?.active_preset_id;
     const settings = await apiFetch<SettingsResponse>(
       '/api/settings/presets',
@@ -68,7 +71,7 @@ function createSettingsStore() {
     showToast(get(t).messages.presetCreated);
   }
 
-  async function activatePreset(presetId: string, showToast: (message: string) => void) {
+  async function activatePreset(presetId: string, showToast: ShowToast) {
     const current = get(settingsStore).settings;
     if (!presetId || presetId === current?.active_preset_id) return;
     const settings = await apiFetch<SettingsResponse>(
@@ -80,7 +83,7 @@ function createSettingsStore() {
     showToast(get(t).messages.presetSwitched);
   }
 
-  async function deleteActivePreset(showToast: (message: string) => void) {
+  async function deleteActivePreset(showToast: ShowToast) {
     const current = get(settingsStore).settings;
     if (!current || current.presets.length <= 1) return;
     const active = current.presets.find((preset) => preset.id === current.active_preset_id);

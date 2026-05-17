@@ -1,11 +1,18 @@
 import { writable } from 'svelte/store';
 
+export type ToastVariant = 'status' | 'error';
+
+export type ToastMessage = {
+  message: string;
+  variant: ToastVariant;
+};
+
 export type UiState = {
   settingsOpen: boolean;
   jobsOpen: boolean;
   sizeDialogOpen: boolean;
   editPreviewOpen: boolean;
-  toast: string;
+  toast: ToastMessage | null;
 };
 
 const initialUiState: UiState = {
@@ -13,7 +20,7 @@ const initialUiState: UiState = {
   jobsOpen: false,
   sizeDialogOpen: false,
   editPreviewOpen: false,
-  toast: ''
+  toast: null
 };
 
 function createUiStore() {
@@ -24,11 +31,11 @@ function createUiStore() {
     update((state) => ({ ...state, [key]: value }));
   }
 
-  function showToast(message: string) {
-    setKey('toast', message);
+  function showToast(message: string, variant: ToastVariant = 'status') {
+    setKey('toast', { message, variant });
     if (toastTimer) clearTimeout(toastTimer);
     toastTimer = setTimeout(() => {
-      setKey('toast', '');
+      setKey('toast', null);
     }, 2500);
   }
 

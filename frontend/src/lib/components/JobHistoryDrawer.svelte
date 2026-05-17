@@ -93,25 +93,25 @@
           <h2 id="jobs-drawer-title" class="text-lg font-semibold text-zinc-100">{$t.jobs.title}</h2>
           <p class="mt-1 text-xs text-zinc-500">{$t.jobs.subtitle}</p>
         </div>
-        <button type="button" class="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" aria-label={$t.jobs.closeLabel} on:click={onClose}>x</button>
+        <button type="button" class="control-focus rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" aria-label={$t.jobs.closeLabel} on:click={onClose}>x</button>
       </div>
 
       <div class="flex flex-col gap-3 border-b border-zinc-800 p-5 sm:flex-row sm:items-center sm:justify-between">
         <div class="grid grid-cols-2 rounded-lg border border-zinc-800 bg-zinc-950 p-1 text-xs font-medium">
-          <button type="button" class={`rounded-md px-3 py-1.5 ${activeTab === 'running' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-200'}`} on:click={() => selectTab('running')}>
+          <button type="button" class={`control-focus rounded-md px-3 py-1.5 ${activeTab === 'running' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-200'}`} on:click={() => selectTab('running')}>
             {$t.jobs.runningTab}
           </button>
-          <button type="button" class={`rounded-md px-3 py-1.5 ${activeTab === 'history' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-200'}`} on:click={() => selectTab('history')}>
+          <button type="button" class={`control-focus rounded-md px-3 py-1.5 ${activeTab === 'history' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-200'}`} on:click={() => selectTab('history')}>
             {$t.jobs.historyTab}
           </button>
         </div>
         <div class="flex justify-end gap-3">
           {#if activeTab === 'running'}
-            <button type="button" class="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" disabled={!jobs.length} on:click={onToggleAll}>
+            <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" disabled={!jobs.length} on:click={onToggleAll}>
               {$t.jobs.selectAll}
             </button>
           {/if}
-          <button type="button" class="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" disabled={activeTab === 'history' && historyLoading} on:click={refreshCurrentTab}>
+          <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" disabled={activeTab === 'history' && historyLoading} on:click={refreshCurrentTab}>
             {$t.jobs.refresh}
           </button>
         </div>
@@ -127,7 +127,7 @@
           <div class="space-y-3">
             {#each jobs as job (job.job_id)}
               <div class="flex gap-3 rounded-xl border border-zinc-800 bg-zinc-950/45 p-4">
-                <input type="checkbox" class="mt-1 accent-emerald-500" checked={selectedIds.has(job.job_id)} on:change={() => onToggle(job.job_id)} />
+                <input type="checkbox" class="control-focus mt-1 accent-emerald-500" checked={selectedIds.has(job.job_id)} on:change={() => onToggle(job.job_id)} />
                 <div class="min-w-0 flex-1">
                   <div class="flex items-center justify-between gap-3">
                     <span class="rounded-md border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-400">{operationLabel(job.operation, $t.operations)}</span>
@@ -168,12 +168,12 @@
                   {/if}
                 </div>
                 <div class="mt-4 flex flex-wrap justify-end gap-2">
-                  <button type="button" class="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800" on:click={() => onUseJob(job)}>
+                  <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800" on:click={() => onUseJob(job)}>
                     {$t.jobs.useAsPrompt}
                   </button>
                   <button
                     type="button"
-                    class="rounded-lg border border-emerald-500/40 px-3 py-2 text-xs font-medium text-emerald-200 hover:bg-emerald-500/10 disabled:cursor-not-allowed disabled:opacity-40"
+                    class="control-focus rounded-lg border border-emerald-500/40 px-3 py-2 text-xs font-medium text-emerald-200 hover:bg-emerald-500/10 disabled:cursor-not-allowed disabled:opacity-40"
                     disabled={isActiveJob(job)}
                     title={isActiveJob(job) ? $t.jobs.retryUnavailable : $t.jobs.retry}
                     on:click={() => onRetryJob(job)}
@@ -194,7 +194,7 @@
 
       {#if activeTab === 'running'}
         <div class="border-t border-zinc-800 p-5">
-          <button type="button" disabled={!selectedIds.size} class="w-full rounded-xl bg-red-600 px-4 py-3 text-sm font-semibold text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-40" on:click={onCancelSelected}>
+          <button type="button" disabled={!selectedIds.size} class="control-focus w-full rounded-xl bg-red-600 px-4 py-3 text-sm font-semibold text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-40" on:click={onCancelSelected}>
             {$t.jobs.cancelSelected}
           </button>
         </div>

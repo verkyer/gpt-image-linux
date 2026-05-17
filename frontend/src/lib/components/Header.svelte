@@ -19,7 +19,7 @@
     <div class="flex items-center gap-3">
       <button
         type="button"
-        class="h-8 min-w-12 rounded-lg border border-zinc-700 px-2 text-xs font-semibold text-zinc-300 transition-colors hover:border-emerald-500/60 hover:bg-zinc-800 hover:text-zinc-100"
+        class="control-focus h-8 min-w-12 rounded-lg border border-zinc-700 px-2 text-xs font-semibold text-zinc-300 transition-colors hover:border-emerald-500/60 hover:bg-zinc-800 hover:text-zinc-100"
         title={$t.language.toggleTitle}
         aria-label={$t.language.toggleTitle}
         aria-pressed={$language === 'zh-CN'}
@@ -40,8 +40,8 @@
               rel="noreferrer"
               title={versionTitle}
               class={hasVersionUpdate
-                ? 'inline-flex items-center rounded-md border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-[11px] font-semibold leading-5 text-amber-200 transition-colors hover:border-amber-300/70 hover:bg-amber-400/15'
-                : 'rounded-md border border-zinc-700 px-2 py-0.5 text-[11px] font-semibold leading-5 text-zinc-400 transition-colors hover:text-zinc-100'}
+                ? 'control-focus inline-flex items-center rounded-md border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-[11px] font-semibold leading-5 text-amber-200 transition-colors hover:border-amber-300/70 hover:bg-amber-400/15'
+                : 'control-focus rounded-md border border-zinc-700 px-2 py-0.5 text-[11px] font-semibold leading-5 text-zinc-400 transition-colors hover:text-zinc-100'}
             >
               {version}
               {#if hasVersionUpdate}
@@ -57,7 +57,7 @@
     <div class="flex items-center gap-2">
       <button
         type="button"
-        class="relative rounded-lg p-2 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+        class="control-focus relative rounded-lg p-2 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
         title={$t.header.jobHistory}
         aria-label={$t.header.jobHistory}
         on:click={onOpenJobs}
@@ -71,7 +71,7 @@
       </button>
       <button
         type="button"
-        class="rounded-lg p-2 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+        class="control-focus rounded-lg p-2 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
         title={$t.common.settings}
         aria-label={$t.common.settings}
         on:click={onOpenSettings}

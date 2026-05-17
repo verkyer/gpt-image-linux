@@ -26,7 +26,7 @@
   />
   <button
     type="button"
-    class="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800"
+    class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800"
     on:click={openPicker}
   >
     {$t.promptForm.uploadEditImage}
@@ -34,7 +34,7 @@
   {#if label}
     <button
       type="button"
-      class="ml-3 inline-block max-w-[260px] truncate align-middle text-left text-xs font-medium text-emerald-300 underline decoration-emerald-500/40 underline-offset-4 hover:text-emerald-200"
+      class="control-focus ml-3 inline-block max-w-[260px] truncate rounded align-middle text-left text-xs font-medium text-emerald-300 underline decoration-emerald-500/40 underline-offset-4 hover:text-emerald-200"
       title={$t.promptForm.previewEditLabel(label)}
       on:click={onPreview}
     >

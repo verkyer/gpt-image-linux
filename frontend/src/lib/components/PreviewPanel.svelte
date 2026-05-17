@@ -24,12 +24,12 @@
     </div>
     <div class="flex shrink-0 items-center gap-2">
       {#if filename}
-        <a href={downloadUrl(filename)} class="rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-zinc-800">{$t.common.download}</a>
+        <a href={downloadUrl(filename)} class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-zinc-800">{$t.common.download}</a>
       {/if}
-      <button type="button" class="rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" disabled={!job && !imageUrl} on:click={onRegenerate}>
+      <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" disabled={!job && !imageUrl} on:click={onRegenerate}>
         {$t.preview.regenerate}
       </button>
-      <button type="button" class="rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-zinc-800" on:click={onClear}>
+      <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-zinc-800" on:click={onClear}>
         {$t.common.clear}
       </button>
     </div>

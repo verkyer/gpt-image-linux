@@ -24,7 +24,7 @@
   <div class="fixed inset-0 z-[100] flex items-center justify-center bg-zinc-950 px-4">
     <button
       type="button"
-      class="absolute left-4 top-4 h-8 min-w-12 rounded-lg border border-zinc-700 px-2 text-xs font-semibold text-zinc-300 transition-colors hover:border-emerald-500/60 hover:bg-zinc-800 hover:text-zinc-100 sm:left-6"
+      class="control-focus absolute left-4 top-4 h-8 min-w-12 rounded-lg border border-zinc-700 px-2 text-xs font-semibold text-zinc-300 transition-colors hover:border-emerald-500/60 hover:bg-zinc-800 hover:text-zinc-100 sm:left-6"
       title={$t.language.toggleTitle}
       aria-label={$t.language.toggleTitle}
       aria-pressed={$language === 'zh-CN'}
@@ -43,12 +43,12 @@
           type="password"
           autocomplete="current-password"
           placeholder={$t.access.placeholder}
-          class="w-full rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 font-mono text-sm text-zinc-100 transition-colors placeholder-zinc-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500/30"
+          class="control-focus w-full rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 font-mono text-sm text-zinc-100 transition-colors placeholder-zinc-500 focus:border-emerald-500"
         />
         <button
           type="submit"
           disabled={loading}
-          class="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+          class="control-focus w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {loading ? $t.access.unlocking : $t.access.unlock}
         </button>

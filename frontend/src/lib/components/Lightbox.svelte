@@ -39,7 +39,7 @@
             <h2 id="lightbox-title" class="text-sm font-semibold text-zinc-100">{$t.lightbox.title}</h2>
             <p class="mt-1 truncate text-xs text-zinc-500">{image.filename}</p>
           </div>
-          <button type="button" class="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" aria-label={$t.lightbox.closeLabel} on:click={onClose}>x</button>
+          <button type="button" class="control-focus rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" aria-label={$t.lightbox.closeLabel} on:click={onClose}>x</button>
         </div>
         <div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
           <div>
@@ -70,12 +70,12 @@
           </div>
         </div>
         <div class="grid grid-cols-2 gap-2 border-t border-zinc-800 p-5">
-          <button type="button" class="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800" on:click={() => onEdit(image)}>{$t.common.edit}</button>
-          <button type="button" class="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800" on:click={() => onFavorite(image)}>{image.favorite ? $t.common.unfavorite : $t.common.favorite}</button>
-          <button type="button" class="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800" on:click={() => onCopyPrompt(image)}>{$t.common.copyPrompt}</button>
-          <button type="button" class="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800" on:click={() => onCopyUrl(image)}>{$t.common.copyUrl}</button>
-          <a href={downloadUrl(image.filename)} class="rounded-lg border border-zinc-700 px-3 py-2 text-center text-xs text-zinc-300 hover:bg-zinc-800">{$t.common.download}</a>
-          <button type="button" class="rounded-lg border border-red-500/40 px-3 py-2 text-xs text-red-300 hover:bg-red-500/10" on:click={() => onDelete(image)}>{$t.common.delete}</button>
+          <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800" on:click={() => onEdit(image)}>{$t.common.edit}</button>
+          <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800" on:click={() => onFavorite(image)}>{image.favorite ? $t.common.unfavorite : $t.common.favorite}</button>
+          <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800" on:click={() => onCopyPrompt(image)}>{$t.common.copyPrompt}</button>
+          <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800" on:click={() => onCopyUrl(image)}>{$t.common.copyUrl}</button>
+          <a href={downloadUrl(image.filename)} class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-center text-xs text-zinc-300 hover:bg-zinc-800">{$t.common.download}</a>
+          <button type="button" class="control-focus rounded-lg border border-red-500/40 px-3 py-2 text-xs text-red-300 hover:bg-red-500/10" on:click={() => onDelete(image)}>{$t.common.delete}</button>
         </div>
       </aside>
     </div>

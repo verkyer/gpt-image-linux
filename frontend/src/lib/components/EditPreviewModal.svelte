@@ -21,7 +21,7 @@
           <h2 id="edit-preview-title" class="text-sm font-semibold text-zinc-100">{$t.promptForm.editSourcePreview}</h2>
           <p class="mt-1 truncate text-xs text-zinc-500">{label}</p>
         </div>
-        <button type="button" class="rounded-lg px-2 py-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" aria-label={$t.promptForm.closeEditPreview} on:click={onClose}>x</button>
+        <button type="button" class="control-focus rounded-lg px-2 py-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" aria-label={$t.promptForm.closeEditPreview} on:click={onClose}>x</button>
       </div>
       <div class="flex min-h-0 flex-1 items-center justify-center bg-zinc-950 p-4">
         <img src={url} alt={label} class="max-h-[calc(100vh-140px)] max-w-full rounded-lg object-contain" decoding="async" />

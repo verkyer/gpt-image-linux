@@ -98,20 +98,20 @@
           <h2 id="settings-drawer-title" class="text-lg font-semibold text-zinc-100">{$t.settings.title}</h2>
           <p class="mt-1 text-xs text-zinc-500">{$t.settings.subtitle}</p>
         </div>
-        <button type="button" class="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" aria-label={$t.settings.closeLabel} on:click={onClose}>x</button>
+        <button type="button" class="control-focus rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" aria-label={$t.settings.closeLabel} on:click={onClose}>x</button>
       </div>
 
       <div class="min-h-0 flex-1 overflow-y-auto p-5">
         <div class="mb-5 flex items-center justify-between">
           <h3 class="text-sm font-semibold text-zinc-200">{$t.settings.presets}</h3>
           <div class="flex gap-2">
-            <button type="button" class="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800" on:click={onCreate}>
+            <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800" on:click={onCreate}>
               {$t.settings.newPreset}
             </button>
             <button
               type="button"
               disabled={!settings || settings.presets.length <= 1}
-              class="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+              class="control-focus rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
               on:click={onDelete}
             >
               {$t.settings.deletePreset}
@@ -123,7 +123,7 @@
           {#each settings?.presets || [] as preset}
             <button
               type="button"
-              class={`w-full rounded-md border px-3 py-2.5 text-left transition-colors ${
+              class={`control-focus w-full rounded-md border px-3 py-2.5 text-left transition-colors ${
                 preset.id === settings?.active_preset_id
                   ? 'border-emerald-500/70 bg-emerald-500/10 text-zinc-100'
                   : 'border-zinc-800 bg-zinc-950/40 text-zinc-300 hover:border-zinc-700 hover:bg-zinc-800/70'
@@ -150,15 +150,15 @@
         <div class="space-y-4">
           <label class="block">
             <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.settings.presetName}</span>
-            <input bind:value={presetName} class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none" />
+            <input bind:value={presetName} class="control-focus w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 focus:border-emerald-500" />
           </label>
           <label class="block">
             <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.settings.apiUrl}</span>
-            <input bind:value={apiUrl} class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 font-mono text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none" placeholder="https://api.example.com" />
+            <input bind:value={apiUrl} class="control-focus w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 font-mono text-sm text-zinc-100 focus:border-emerald-500" placeholder="https://api.example.com" />
           </label>
           <label class="block">
             <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.settings.apiPath}</span>
-            <select bind:value={apiPath} class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none">
+            <select bind:value={apiPath} class="control-focus w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 focus:border-emerald-500">
               <option value="/v1/images/generations">/v1/images/generations</option>
               <option value="/v1/responses">/v1/responses</option>
               <option value="/v1/chat/completions">/v1/chat/completions</option>
@@ -166,12 +166,12 @@
           </label>
           <label class="block">
             <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.settings.apiKey}</span>
-            <input bind:value={apiKey} type={apiKeyInputType} class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 font-mono text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none" />
+            <input bind:value={apiKey} type={apiKeyInputType} class="control-focus w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 font-mono text-sm text-zinc-100 focus:border-emerald-500" />
             <span class="mt-1.5 block text-xs text-zinc-500">{$t.settings.apiKeyHint}</span>
           </label>
           <label class="block">
             <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.settings.upstreamSocks5Proxy}</span>
-            <input bind:value={upstreamSocks5Proxy} class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 font-mono text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none" placeholder="socks5://127.0.0.1:1080" />
+            <input bind:value={upstreamSocks5Proxy} class="control-focus w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 font-mono text-sm text-zinc-100 focus:border-emerald-500" placeholder="socks5://127.0.0.1:1080" />
             <span class="mt-1.5 block text-xs text-zinc-500">{$t.settings.upstreamSocks5ProxyHint}</span>
           </label>
         </div>
@@ -205,7 +205,7 @@
           <button
             type="button"
             disabled={healthChecking || !activePresetId}
-            class="rounded-xl border border-zinc-700 px-4 py-3 text-sm font-semibold text-zinc-200 transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+            class="control-focus rounded-xl border border-zinc-700 px-4 py-3 text-sm font-semibold text-zinc-200 transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
             on:click={checkHealth}
           >
             {healthChecking ? $t.settings.healthChecking : $t.settings.healthCheck}
@@ -213,7 +213,7 @@
           <button
             type="button"
             disabled={saving}
-            class="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+            class="control-focus rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
             on:click={save}
           >
             {saving ? $t.settings.saving : $t.settings.savePreset}

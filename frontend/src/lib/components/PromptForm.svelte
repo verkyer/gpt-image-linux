@@ -48,14 +48,14 @@
     maxlength="4000"
     rows="5"
     placeholder={$t.promptForm.placeholder}
-    class="w-full resize-y rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm leading-6 text-zinc-100 focus:border-emerald-500 focus:outline-none"
+    class="control-focus w-full resize-y rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm leading-6 text-zinc-100 focus:border-emerald-500"
   ></textarea>
   <div class="mt-2 flex justify-end text-xs text-zinc-500">{promptLen}/4000</div>
 
   <div class="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
     <label class="block">
       <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.common.model}</span>
-      <input bind:value={form.model} class="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 font-mono text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none" />
+      <input bind:value={form.model} class="control-focus w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 font-mono text-sm text-zinc-100 focus:border-emerald-500" />
     </label>
 
     <label class="block">
@@ -63,7 +63,7 @@
       <button
         type="button"
         disabled={promptOnlyMode || loading}
-        class="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-left font-mono text-sm text-zinc-100 hover:bg-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
+        class="control-focus w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-left font-mono text-sm text-zinc-100 hover:bg-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
         on:click={onOpenSize}
       >
         {promptOnlyMode ? disabledModeLabel : form.size}
@@ -72,7 +72,7 @@
 
     <label class="block">
       <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.promptForm.quality}</span>
-      <select bind:value={form.quality} disabled={promptOnlyMode || loading} class="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50">
+      <select bind:value={form.quality} disabled={promptOnlyMode || loading} class="control-focus w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-50">
         <option value="auto">auto</option>
         <option value="low">low</option>
         <option value="medium">medium</option>
@@ -82,12 +82,12 @@
 
     <label class="block">
       <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.promptForm.quantity}</span>
-      <input bind:value={form.quantity} disabled={promptOnlyMode || loading} type="number" min="1" max="10" class="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50" on:input={clampQuantity} />
+      <input bind:value={form.quantity} disabled={promptOnlyMode || loading} type="number" min="1" max="10" class="control-focus w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-50" on:input={clampQuantity} />
     </label>
 
     <label class="block">
       <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.promptForm.format}</span>
-      <select bind:value={form.outputFormat} disabled={promptOnlyMode || loading} class="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50">
+      <select bind:value={form.outputFormat} disabled={promptOnlyMode || loading} class="control-focus w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-50">
         <option value="png">png</option>
         <option value="jpeg">jpeg</option>
         <option value="webp">webp</option>
@@ -96,12 +96,12 @@
 
     <label class="block">
       <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.promptForm.compression}</span>
-      <input bind:value={form.outputCompression} disabled={promptOnlyMode || loading || form.outputFormat === 'png'} type="number" min="0" max="100" placeholder={compressionPlaceholder} class="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50" on:input={clampCompression} />
+      <input bind:value={form.outputCompression} disabled={promptOnlyMode || loading || form.outputFormat === 'png'} type="number" min="0" max="100" placeholder={compressionPlaceholder} class="control-focus w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-50" on:input={clampCompression} />
     </label>
 
     <label class="block">
       <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.promptForm.responseFormat}</span>
-      <select bind:value={form.responseFormat} disabled={promptOnlyMode || loading} class="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50">
+      <select bind:value={form.responseFormat} disabled={promptOnlyMode || loading} class="control-focus w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-50">
         <option value="">{$t.promptForm.defaultResponseFormat}</option>
         <option value="url">url</option>
         <option value="b64_json">b64_json</option>
@@ -110,17 +110,17 @@
 
     <label class="block">
       <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.promptForm.webhookUrl}</span>
-      <input bind:value={form.webhookUrl} class="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none" placeholder="https://..." />
+      <input bind:value={form.webhookUrl} class="control-focus w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 focus:border-emerald-500" placeholder="https://..." />
     </label>
   </div>
 
   <div class="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <slot name="edit-source" />
     <div class="flex gap-2">
-      <button type="button" disabled={loading} class="rounded-xl bg-zinc-700 px-4 py-3 text-sm font-semibold text-white hover:bg-zinc-600 disabled:cursor-not-allowed disabled:opacity-50" on:click={onEdit}>
+      <button type="button" disabled={loading} class="control-focus rounded-xl bg-zinc-700 px-4 py-3 text-sm font-semibold text-white hover:bg-zinc-600 disabled:cursor-not-allowed disabled:opacity-50" on:click={onEdit}>
         {$t.promptForm.edits}
       </button>
-      <button type="button" disabled={loading} class="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50" on:click={onGenerate}>
+      <button type="button" disabled={loading} class="control-focus rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50" on:click={onGenerate}>
         {$t.promptForm.generate}
       </button>
     </div>
