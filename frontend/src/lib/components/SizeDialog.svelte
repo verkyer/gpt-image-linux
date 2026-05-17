@@ -1,5 +1,6 @@
 <script lang="ts">
   import { t } from '$lib/i18n';
+  import { dialog } from '$lib/actions/dialog';
 
   export let open = false;
   export let value = 'auto';
@@ -20,10 +21,15 @@
 
 {#if open}
   <div class="fixed inset-0 z-[80] flex items-center justify-center bg-zinc-950/75 px-4 backdrop-blur">
-    <div class="fade-in w-full max-w-lg rounded-2xl border border-zinc-800 bg-zinc-900 p-5 shadow-2xl">
+    <button class="absolute inset-0" type="button" tabindex="-1" aria-label={$t.common.close} on:click={onClose}></button>
+    <div
+      class="fade-in relative w-full max-w-lg rounded-2xl border border-zinc-800 bg-zinc-900 p-5 shadow-2xl"
+      aria-labelledby="size-dialog-title"
+      use:dialog={{ open, onClose }}
+    >
       <div class="mb-5 flex items-center justify-between">
         <div>
-          <h2 class="text-lg font-semibold text-zinc-100">{$t.sizeDialog.title}</h2>
+          <h2 id="size-dialog-title" class="text-lg font-semibold text-zinc-100">{$t.sizeDialog.title}</h2>
           <p class="mt-1 text-xs text-zinc-500">{$t.sizeDialog.subtitle}</p>
         </div>
         <button type="button" class="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" aria-label={$t.common.close} on:click={onClose}>x</button>

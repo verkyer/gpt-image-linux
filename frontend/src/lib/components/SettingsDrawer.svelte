@@ -1,6 +1,7 @@
 <script lang="ts">
   import { t } from '$lib/i18n';
   import type { ApiPath, ApiPreset, PresetHealthResponse, PresetHealthStatus, SettingsResponse } from '$lib/api/types';
+  import { dialog } from '$lib/actions/dialog';
 
   const MASKED_API_KEY_VALUE = '********';
 
@@ -86,11 +87,15 @@
 
 {#if open}
   <div class="fixed inset-0 z-50">
-    <button class="drawer-backdrop absolute inset-0" type="button" aria-label={$t.settings.closeLabel} on:click={onClose}></button>
-    <aside class="fade-in absolute right-0 top-0 flex h-full w-full max-w-lg flex-col border-l border-zinc-800 bg-zinc-900 shadow-2xl">
+    <button class="drawer-backdrop absolute inset-0" type="button" tabindex="-1" aria-label={$t.settings.closeLabel} on:click={onClose}></button>
+    <aside
+      class="fade-in absolute right-0 top-0 flex h-full w-full max-w-lg flex-col border-l border-zinc-800 bg-zinc-900 shadow-2xl"
+      aria-labelledby="settings-drawer-title"
+      use:dialog={{ open, onClose }}
+    >
       <div class="flex items-center justify-between border-b border-zinc-800 p-5">
         <div>
-          <h2 class="text-lg font-semibold text-zinc-100">{$t.settings.title}</h2>
+          <h2 id="settings-drawer-title" class="text-lg font-semibold text-zinc-100">{$t.settings.title}</h2>
           <p class="mt-1 text-xs text-zinc-500">{$t.settings.subtitle}</p>
         </div>
         <button type="button" class="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" aria-label={$t.settings.closeLabel} on:click={onClose}>x</button>

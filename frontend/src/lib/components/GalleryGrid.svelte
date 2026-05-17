@@ -31,6 +31,8 @@
 
   let importInput: HTMLInputElement;
 
+  const EAGER_THUMB_COUNT = 6;
+
   $: images = gallery?.images || [];
   $: initialLoading = loading && images.length === 0;
   $: selectedCount = selectedIds.size;
@@ -193,7 +195,7 @@
       {/if}
 
       <div class={`grid gap-4 sm:grid-cols-2 lg:grid-cols-3 ${loading ? 'opacity-70' : ''}`}>
-        {#each images as image (image.id)}
+        {#each images as image, index (image.id)}
           <article class={`gallery-card overflow-hidden rounded-xl border ${selectedIds.has(image.id) ? 'border-emerald-400 bg-emerald-500/10' : 'border-zinc-800 bg-zinc-950/45'}`}>
             <button type="button" class="relative block aspect-square w-full bg-zinc-950" on:click={() => handleImageClick(image)}>
               {#if selectionMode}
@@ -201,7 +203,16 @@
                   {selectedIds.has(image.id) ? '✓' : ''}
                 </span>
               {/if}
-              <img src={thumbnailUrl(image.filename, image.thumbnail_url)} alt={image.prompt} class="h-full w-full object-cover" loading="lazy" />
+              <img
+                src={thumbnailUrl(image.filename, image.thumbnail_url)}
+                alt={image.prompt}
+                class="h-full w-full object-cover"
+                loading={index < EAGER_THUMB_COUNT ? 'eager' : 'lazy'}
+                fetchpriority={index < EAGER_THUMB_COUNT ? 'high' : 'auto'}
+                decoding="async"
+                width={image.image_width || undefined}
+                height={image.image_height || undefined}
+              />
             </button>
             <div class="space-y-3 p-3">
               <div class="min-w-0">

@@ -2,6 +2,7 @@
   import type { GalleryEntry } from '$lib/api/types';
   import { t } from '$lib/i18n';
   import { downloadUrl, formatBeijingTime, galleryImageSize, imageUrl } from '$lib/utils/format';
+  import { dialog } from '$lib/actions/dialog';
 
   export let open = false;
   export let image: GalleryEntry | null = null;
@@ -15,15 +16,27 @@
 
 {#if open && image}
   <div class="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 p-4">
-    <button class="absolute inset-0" type="button" aria-label={$t.lightbox.closeLabel} on:click={onClose}></button>
-    <div class="lightbox-shell relative">
+    <button class="absolute inset-0" type="button" tabindex="-1" aria-label={$t.lightbox.closeLabel} on:click={onClose}></button>
+    <div
+      class="lightbox-shell relative"
+      aria-labelledby="lightbox-title"
+      use:dialog={{ open, onClose }}
+    >
       <div class="lightbox-media">
-        <img src={imageUrl(image.filename)} alt={image.prompt} class="lightbox-img" />
+        <img
+          src={imageUrl(image.filename)}
+          alt={image.prompt}
+          class="lightbox-img"
+          decoding="async"
+          fetchpriority="high"
+          width={image.image_width || undefined}
+          height={image.image_height || undefined}
+        />
       </div>
       <aside class="lightbox-details flex min-h-0 flex-col">
         <div class="flex items-start justify-between gap-3 border-b border-zinc-800 p-5">
           <div class="min-w-0">
-            <h2 class="text-sm font-semibold text-zinc-100">{$t.lightbox.title}</h2>
+            <h2 id="lightbox-title" class="text-sm font-semibold text-zinc-100">{$t.lightbox.title}</h2>
             <p class="mt-1 truncate text-xs text-zinc-500">{image.filename}</p>
           </div>
           <button type="button" class="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" aria-label={$t.lightbox.closeLabel} on:click={onClose}>x</button>

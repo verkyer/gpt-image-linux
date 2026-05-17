@@ -11,6 +11,9 @@
   export let prompt = '';
   export let onRegenerate: () => void = () => {};
   export let onClear: () => void = () => {};
+
+  $: previewWidth = job?.image_width || undefined;
+  $: previewHeight = job?.image_height || undefined;
 </script>
 
 <section class="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 sm:p-5">
@@ -44,7 +47,16 @@
         <p class="mt-2 text-xs text-zinc-400">{statusLabel(job?.status, $t.statuses) || $t.preview.queued}</p>
       </div>
     {:else if imageUrl}
-      <img src={imageUrl} alt={$t.preview.generatedAlt} class="max-h-[640px] max-w-full rounded-lg object-contain" />
+      <img
+        src={imageUrl}
+        alt={$t.preview.generatedAlt}
+        class="max-h-[640px] max-w-full rounded-lg object-contain"
+        loading="eager"
+        fetchpriority="high"
+        decoding="async"
+        width={previewWidth}
+        height={previewHeight}
+      />
     {:else}
       <div class="px-6 text-center">
         <p class="text-sm font-medium text-zinc-300">{$t.preview.noPreview}</p>
