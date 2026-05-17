@@ -72,7 +72,7 @@ def build_gallery_filters(
 
 
 async def _gallery_zip_response(
-    entries: list[GalleryEntry],
+    entries,
     filename_prefix: str,
 ) -> StreamingResponse:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -147,7 +147,7 @@ async def update_gallery_batch_favorite(req: GalleryBatchFavoriteRequest):
 
 @router.post("/api/gallery/batch/download")
 async def download_gallery_batch(req: GalleryBatchRequest):
-    entries = [entry for image_id in req.ids if (entry := storage.get_gallery_entry(image_id))]
+    entries = storage.get_gallery_entries_by_ids(req.ids)
     if not entries:
         raise HTTPException(status_code=404, detail="Gallery entries not found")
 
@@ -218,11 +218,13 @@ async def download_image(filename: str):
 
 @router.get("/api/download-all")
 async def download_all_images():
-    entries = storage.get_gallery()
-    if not entries:
+    if storage.get_gallery_count() == 0:
         raise HTTPException(status_code=404, detail="No images in gallery")
 
-    return await _gallery_zip_response(entries, "gpt-images")
+    return await _gallery_zip_response(
+        storage.iter_gallery_export_rows(),
+        "gpt-images",
+    )
 
 
 @router.post("/api/import")

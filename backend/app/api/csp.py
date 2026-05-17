@@ -26,7 +26,7 @@ def build_content_security_policy(script_nonce: str | None = None) -> str:
             "style-src 'self' 'unsafe-inline'",
             "img-src 'self' data: blob:",
             "font-src 'self' data:",
-            "connect-src 'self' https://raw.githubusercontent.com",
+            "connect-src 'self'",
         ]
     )
 

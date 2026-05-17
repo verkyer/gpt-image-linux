@@ -13,6 +13,7 @@ AUTH_EXEMPT_PATHS = {
     "/api/access",
     "/api/access/status",
     "/api/version",
+    "/api/version/latest",
     "/favicon.ico",
     "/health",
 }

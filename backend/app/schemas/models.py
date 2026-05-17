@@ -96,6 +96,12 @@ class VersionResponse(BaseModel):
     release_url: Optional[str] = None
 
 
+class LatestVersionResponse(BaseModel):
+    latest_version: Optional[str] = None
+    has_update: bool = False
+    checked_at: Optional[str] = None
+
+
 def validate_image_size(size: str) -> str:
     if size == "auto":
         return size

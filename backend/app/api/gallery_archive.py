@@ -5,8 +5,9 @@ import re
 import tempfile
 import uuid
 import zipfile
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 from fastapi import HTTPException, UploadFile
 from zipstream import ZipStream
@@ -38,19 +39,87 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def build_gallery_export_metadata(entries: list[GalleryEntry]) -> dict:
+_GALLERY_ENTRY_EXPORT_FIELDS = tuple(
+    name for name in GalleryEntry.model_fields
+    if name not in {"thumbnail_filename", "thumbnail_url"}
+)
+
+
+def _entry_to_dict(entry: GalleryEntry | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(entry, dict):
+        data = {
+            key: entry.get(key)
+            for key in _GALLERY_ENTRY_EXPORT_FIELDS
+            if entry.get(key) is not None
+        }
+        for required in ("id", "prompt", "size", "filename", "created_at"):
+            data.setdefault(required, entry.get(required, ""))
+        data["favorite"] = bool(entry.get("favorite"))
+        return data
+    return entry.model_dump(exclude={"thumbnail_filename", "thumbnail_url"})
+
+
+def _entry_filename(entry: GalleryEntry | dict[str, Any]) -> str:
+    if isinstance(entry, dict):
+        return str(entry.get("filename") or "")
+    return entry.filename
+
+
+def _entry_sha256(entry: GalleryEntry | dict[str, Any]) -> str | None:
+    if isinstance(entry, dict):
+        value = entry.get("sha256")
+        return str(value) if value else None
+    return None
+
+
+def _resolve_export_metadata_for_entry(
+    entry: GalleryEntry | dict[str, Any],
+    path: Path,
+) -> dict[str, Any]:
+    data = _entry_to_dict(entry)
+    cached_hash = _entry_sha256(entry)
+    cached_bytes = data.get("bytes")
+
+    if cached_hash and cached_bytes:
+        data["sha256"] = cached_hash
+        return data
+
+    try:
+        stat = path.stat()
+    except OSError:
+        if cached_hash:
+            data["sha256"] = cached_hash
+        if cached_bytes is None:
+            data["bytes"] = None
+        return data
+
+    file_size = stat.st_size
+    data["bytes"] = file_size
+    if cached_hash:
+        data["sha256"] = cached_hash
+        return data
+
+    try:
+        digest = file_sha256(path)
+    except OSError:
+        return data
+
+    data["sha256"] = digest
+    storage.update_gallery_entry_hash(_entry_filename(entry), digest, file_size)
+    return data
+
+
+def build_gallery_export_metadata(
+    entries: Iterable[GalleryEntry | dict[str, Any]],
+) -> dict:
     exported_at = utc_now()
-    images = []
+    images: list[dict[str, Any]] = []
     for entry in entries:
-        path = storage.safe_image_path(entry.filename)
-        data = entry.model_dump(exclude={"thumbnail_filename", "thumbnail_url"})
+        path = storage.safe_image_path(_entry_filename(entry))
         if path and path.exists():
-            try:
-                stat = path.stat()
-                data["bytes"] = stat.st_size
-                data["sha256"] = file_sha256(path)
-            except OSError:
-                data["bytes"] = None
+            data = _resolve_export_metadata_for_entry(entry, path)
+        else:
+            data = _entry_to_dict(entry)
         images.append(data)
 
     return {
@@ -64,17 +133,17 @@ def build_gallery_export_metadata(entries: list[GalleryEntry]) -> dict:
     }
 
 
-def build_gallery_zip_file(entries: list[GalleryEntry]) -> Path:
+def build_gallery_zip_file(entries: Iterable[GalleryEntry | dict[str, Any]]) -> Path:
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
     temp_path = Path(temp_file.name)
     temp_file.close()
     used_names: set[str] = set()
-    exported_entries = []
+    exported_entries: list[GalleryEntry | dict[str, Any]] = []
 
     try:
         with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for entry in entries:
-                path = storage.safe_image_path(entry.filename)
+                path = storage.safe_image_path(_entry_filename(entry))
                 if not path or not path.exists():
                     continue
 
@@ -88,7 +157,10 @@ def build_gallery_zip_file(entries: list[GalleryEntry]) -> Path:
                 used_names.add(name)
 
                 zf.write(path, f"images/{name}")
-                exported_entries.append(entry.model_copy(update={"filename": name}))
+                if isinstance(entry, dict):
+                    exported_entries.append({**entry, "filename": name})
+                else:
+                    exported_entries.append(entry.model_copy(update={"filename": name}))
 
             metadata = build_gallery_export_metadata(exported_entries)
             zf.writestr(
@@ -114,18 +186,23 @@ def unique_export_name(path: Path, used_names: set[str]) -> str:
     return name
 
 
-def iter_gallery_zip_chunks(entries: list[GalleryEntry]) -> Iterator[bytes]:
+def iter_gallery_zip_chunks(
+    entries: Iterable[GalleryEntry | dict[str, Any]],
+) -> Iterator[bytes]:
     used_names: set[str] = set()
-    exported_entries: list[GalleryEntry] = []
+    exported_entries: list[GalleryEntry | dict[str, Any]] = []
     zs = ZipStream(compress_type=zipfile.ZIP_STORED)
 
     for entry in entries:
-        path = storage.safe_image_path(entry.filename)
+        path = storage.safe_image_path(_entry_filename(entry))
         if not path or not path.exists():
             continue
 
         name = unique_export_name(path, used_names)
-        exported_entries.append(entry.model_copy(update={"filename": name}))
+        if isinstance(entry, dict):
+            exported_entries.append({**entry, "filename": name})
+        else:
+            exported_entries.append(entry.model_copy(update={"filename": name}))
         zs.add_path(path, arcname=f"images/{name}")
 
     metadata = build_gallery_export_metadata(exported_entries)

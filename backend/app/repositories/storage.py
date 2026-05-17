@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import os
 import sqlite3
@@ -65,12 +66,14 @@ __all__ = [
     "get_gallery",
     "get_gallery_count",
     "get_gallery_entry",
+    "get_gallery_entries_by_ids",
     "get_gallery_filter_options",
     "get_gallery_page",
     "get_gallery_total_bytes",
     "get_generate_job",
     "get_image_dimensions",
     "import_gallery_entries",
+    "iter_gallery_export_rows",
     "list_generate_jobs",
     "load_settings",
     "mark_active_generate_jobs_interrupted",
@@ -81,6 +84,7 @@ __all__ = [
     "trim_generate_jobs",
     "update_gallery_entries_favorite",
     "update_gallery_entry",
+    "update_gallery_entry_hash",
     "upsert_generate_job",
     "validate_image_bytes",
     "verify_storage_writable",
@@ -107,6 +111,7 @@ GALLERY_COLUMNS = (
     "duration",
     "favorite",
     "bytes",
+    "sha256",
 )
 REQUIRED_GALLERY_COLUMNS = {"id", "prompt", "size", "filename", "created_at"}
 INTEGER_GALLERY_COLUMNS = {
@@ -404,7 +409,8 @@ def _ensure_database():
                     api_preset_name TEXT,
                     duration TEXT,
                     favorite INTEGER NOT NULL DEFAULT 0,
-                    bytes INTEGER
+                    bytes INTEGER,
+                    sha256 TEXT
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_gallery_entries_created_at
@@ -476,6 +482,8 @@ def _migrate_gallery_schema(conn: sqlite3.Connection):
         conn.execute("ALTER TABLE gallery_entries ADD COLUMN thumbnail_filename TEXT")
     if "completed_at" not in columns:
         conn.execute("ALTER TABLE gallery_entries ADD COLUMN completed_at TEXT")
+    if "sha256" not in columns:
+        conn.execute("ALTER TABLE gallery_entries ADD COLUMN sha256 TEXT")
     if "favorite" in _table_columns(conn, "gallery_entries"):
         conn.execute(
             """
@@ -1060,6 +1068,7 @@ def _build_gallery_entry(
         entry.update(_image_dimension_metadata(image_bytes))
     if image_bytes is not None:
         entry["bytes"] = len(image_bytes)
+        entry["sha256"] = hashlib.sha256(image_bytes).hexdigest()
     if metadata:
         entry.update(
             {
@@ -1111,6 +1120,7 @@ def import_gallery_entries(
             if not normalized:
                 continue
             normalized["bytes"] = len(image_bytes)
+            normalized["sha256"] = hashlib.sha256(image_bytes).hexdigest()
             normalized.pop("thumbnail_filename", None)
 
             prepared = _prepare_gallery_file(image_bytes, normalized["filename"])
@@ -1284,6 +1294,58 @@ def get_gallery(
     return [GalleryEntry(**_gallery_entry_from_row(row)) for row in rows]
 
 
+def iter_gallery_export_rows(
+    filters: dict[str, Any] | None = None,
+    *,
+    batch_size: int = 200,
+) -> Iterator[dict[str, Any]]:
+    """Yield gallery entries as plain dicts for export use cases.
+
+    Reads in pages so a huge gallery doesn't materialize all rows at once,
+    and skips Pydantic validation since the export payload doesn't need it.
+    """
+    _ensure_database()
+    where_sql, params = _build_gallery_filter_where(filters)
+    offset = 0
+    while True:
+        with _connect() as conn:
+            rows = _get_gallery_rows_on_conn(
+                conn,
+                where_sql,
+                params,
+                limit=batch_size,
+                offset=offset,
+            )
+        if not rows:
+            return
+        for row in rows:
+            yield _gallery_entry_from_row(row)
+        if len(rows) < batch_size:
+            return
+        offset += batch_size
+
+
+def update_gallery_entry_hash(filename: str, sha256: str, byte_size: int) -> None:
+    """Backfill sha256/bytes for entries sharing a filename. Best-effort."""
+    if not filename or not sha256:
+        return
+    _ensure_database()
+    try:
+        with _connect() as conn:
+            with _transaction(conn):
+                conn.execute(
+                    """
+                    UPDATE gallery_entries
+                    SET sha256 = ?,
+                        bytes = COALESCE(bytes, ?)
+                    WHERE filename = ? AND (sha256 IS NULL OR sha256 = '')
+                    """,
+                    (sha256, byte_size, filename),
+                )
+    except sqlite3.Error as e:
+        logger.warning("Failed to persist sha256 for %s: %s", filename, e)
+
+
 def _get_gallery_filter_options_on_conn(conn: sqlite3.Connection) -> GalleryFilterOptions:
     global _filter_options_cache
     with _filter_options_cache_lock:
@@ -1394,6 +1456,35 @@ def get_gallery_entry(image_id: str) -> GalleryEntry | None:
     if not row:
         return None
     return GalleryEntry(**_gallery_entry_from_row(row))
+
+
+def get_gallery_entries_by_ids(image_ids: Sequence[str]) -> list[GalleryEntry]:
+    """Fetch gallery entries for many ids in one query, preserving input order.
+
+    Duplicate or missing ids are dropped.
+    """
+    _ensure_database()
+    unique_ids = [image_id for image_id in dict.fromkeys(image_ids) if image_id]
+    if not unique_ids:
+        return []
+
+    placeholders = ", ".join("?" for _ in unique_ids)
+    with _connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT {", ".join(GALLERY_COLUMNS)}
+            FROM gallery_entries
+            WHERE id IN ({placeholders})
+            """,
+            tuple(unique_ids),
+        ).fetchall()
+
+    by_id = {row["id"]: row for row in rows}
+    return [
+        GalleryEntry(**_gallery_entry_from_row(by_id[image_id]))
+        for image_id in unique_ids
+        if image_id in by_id
+    ]
 
 
 def _get_all_filenames_on_conn(conn: sqlite3.Connection) -> list[str]:

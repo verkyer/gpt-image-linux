@@ -22,9 +22,8 @@
   import { settingsStore } from '$lib/stores/settings';
   import { uiStore } from '$lib/stores/ui';
   import { copyText, galleryImageSize, imageUrl } from '$lib/utils/format';
-  import { compareVersions, normalizeVersion } from '$lib/utils/version';
 
-  const VERSION_BRANCH = 'main';
+  const VERSION_CHECK_TIMEOUT_MS = 4000;
 
   let version = '';
   let latestVersion = '';
@@ -48,14 +47,9 @@
       latestVersion = '';
       versionHasUpdate = false;
 
-      try {
-        const latest = await fetchLatestVersion(data.github_repo);
-        latestVersion = latest;
-        versionHasUpdate = compareVersions(latest, version) > 0;
-      } catch {
-        latestVersion = '';
-        versionHasUpdate = false;
-      }
+      const latest = await fetchLatestVersion();
+      latestVersion = latest?.latest_version ?? '';
+      versionHasUpdate = Boolean(latest?.has_update);
     } catch {
       version = '';
       latestVersion = '';
@@ -64,12 +58,20 @@
     }
   }
 
-  async function fetchLatestVersion(githubRepo?: string) {
-    if (!githubRepo) return '';
-    const url = `https://raw.githubusercontent.com/${githubRepo}/${VERSION_BRANCH}/VERSION`;
-    const res = await fetch(url, { cache: 'no-store' });
-    if (!res.ok) throw new Error(`Version check failed: ${res.status}`);
-    return normalizeVersion(await res.text());
+  async function fetchLatestVersion(): Promise<{ latest_version: string | null; has_update: boolean } | null> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), VERSION_CHECK_TIMEOUT_MS);
+    try {
+      return await apiFetch<{ latest_version: string | null; has_update: boolean }>(
+        '/api/version/latest',
+        { signal: controller.signal },
+        'loading latest version'
+      );
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async function loadInitialData() {
