@@ -67,9 +67,10 @@ async def generate(req: GenerateRequest):
 async def list_generate_jobs(
     include_finished: bool = Query(default=False),
     limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
 ):
     jobs = (
-        storage.list_generate_jobs(limit=limit)
+        storage.list_generate_jobs(limit=limit, offset=offset)
         if include_finished
         else list_active_generate_jobs()
     )

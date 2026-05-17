@@ -1642,6 +1642,7 @@ def get_generate_job(job_id: str) -> dict[str, Any] | None:
 def list_generate_jobs(
     statuses: set[str] | None = None,
     limit: int | None = None,
+    offset: int = 0,
 ) -> list[dict[str, Any]]:
     _ensure_database()
     with _connect() as conn:
@@ -1658,6 +1659,12 @@ def list_generate_jobs(
         if limit is not None:
             sql += " LIMIT ?"
             params.append(limit)
+            if offset > 0:
+                sql += " OFFSET ?"
+                params.append(offset)
+        elif offset > 0:
+            sql += " LIMIT -1 OFFSET ?"
+            params.append(offset)
         rows = conn.execute(sql, params).fetchall()
     return [_generate_job_from_row(row) for row in rows]
 

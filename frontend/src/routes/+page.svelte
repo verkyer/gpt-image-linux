@@ -109,7 +109,6 @@
 
   function openJobsDrawer() {
     setUi('jobsOpen', true);
-    void jobsStore.loadJobHistory();
   }
 
   function updatePreviewFromJob(job: GenerateJobStatus) {
@@ -321,10 +320,12 @@
   historyJobs={$jobsStore.historyJobs}
   historyLoading={$jobsStore.historyLoading}
   historyLoaded={$jobsStore.historyLoaded}
+  historyHasMore={$jobsStore.historyHasMore}
   selectedIds={$jobsStore.selectedIds}
   onClose={() => setUi('jobsOpen', false)}
   onRefresh={jobsStore.loadJobs}
   onRefreshHistory={jobsStore.loadJobHistory}
+  onLoadMoreHistory={jobsStore.loadMoreJobHistory}
   onToggle={jobsStore.toggleSelection}
   onToggleAll={jobsStore.toggleAll}
   onCancelSelected={jobsStore.cancelSelected}

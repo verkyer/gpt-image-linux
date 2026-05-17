@@ -374,7 +374,7 @@ The panel supports these upstream paths. The API base URL may either omit or inc
 | `POST` | `/api/generate` | Start an image generation job |
 | `POST` | `/api/edits` | Start an image edit job with multipart image upload |
 | `POST` | `/api/edits/from-gallery/{image_id}` | Start an image edit job using an existing gallery image as source |
-| `GET` | `/api/generate/jobs` | List queued/running generation and edit jobs; pass `include_finished=true` for persisted history |
+| `GET` | `/api/generate/jobs` | List queued/running generation and edit jobs; pass `include_finished=true` with optional `limit`/`offset` for paginated persisted history |
 | `GET` | `/api/generate/jobs/events` | Stream queued/running generation and edit jobs over SSE |
 | `GET` | `/api/generate/{job_id}` | Get generation job status or result |
 | `GET` | `/api/generate/{job_id}/events` | Stream generation job status/progress over SSE |
@@ -394,7 +394,7 @@ The panel supports these upstream paths. The API base URL may either omit or inc
 - app version comes from `APP_VERSION` then `VERSION`; optional GitHub remote check can show a `New` badge without blocking usage
 - presets and gallery/job data persist only in `DATABASE_FILE`
 - generation and edit share one queue (`MAX_ACTIVE_GENERATE_JOBS` + `MAX_QUEUED_GENERATE_JOBS`), edit source images are staged under `DATA_DIR/edit-sources` and additionally capped by `MAX_PENDING_EDIT_SOURCE_MB`, support cancellation, and persist terminal history including `completed_at`
-- SSE is the primary progress channel; `/api/generate/jobs` provides list/history (`include_finished=true`), and `/api/generate/jobs/events` streams debounced live job-list changes from memory
+- SSE is the primary progress channel; `/api/generate/jobs` provides list/history (`include_finished=true`, optional `limit`/`offset`), and `/api/generate/jobs/events` streams debounced live job-list changes from memory
 - upstream JSON/SSE bodies are read with a `MAX_UPSTREAM_JSON_MB` cap before parsing, and upstream image URL downloads are revalidated (SSRF-aware, no blind redirect follow) and bounded by `MAX_FILE_SIZE_MB`
 - `/api/import` enforces ZIP safety/size/count/compression checks; `/api/download-all` writes temp ZIP on disk to avoid high memory usage
 - gallery stores byte-size metadata and thumbnails (`THUMBNAILS_DIR`), with lazy thumbnail and opt-in byte-size backfill for older images
@@ -811,7 +811,7 @@ curl http://localhost:9090/health
 | `POST` | `/api/generate` | 创建图像生成任务 |
 | `POST` | `/api/edits` | 使用 multipart 图片上传创建图像编辑任务 |
 | `POST` | `/api/edits/from-gallery/{image_id}` | 使用已有 Gallery 图片作为源图创建图像编辑任务 |
-| `GET` | `/api/generate/jobs` | 查询排队/运行中的生成和编辑任务；传 `include_finished=true` 可查持久化历史 |
+| `GET` | `/api/generate/jobs` | 查询排队/运行中的生成和编辑任务；传 `include_finished=true` 并可选 `limit`/`offset` 可分页查询持久化历史 |
 | `GET` | `/api/generate/jobs/events` | 通过 SSE 推送排队/运行中的生成和编辑任务 |
 | `GET` | `/api/generate/{job_id}` | 查询任务状态或结果 |
 | `GET` | `/api/generate/{job_id}/events` | 通过 SSE 推送单个任务状态和进度 |
@@ -831,7 +831,7 @@ curl http://localhost:9090/health
 - 版本读取顺序是 `APP_VERSION` -> `VERSION`；可选 GitHub 远端检查仅用于显示 `New`，不会阻塞使用
 - 预设与 Gallery/Job 数据只保存在 `DATABASE_FILE`
 - 生成与编辑共用队列（`MAX_ACTIVE_GENERATE_JOBS` + `MAX_QUEUED_GENERATE_JOBS`）；编辑源图先落到 `DATA_DIR/edit-sources` 并额外受 `MAX_PENDING_EDIT_SOURCE_MB` 总量限制；支持取消，并持久化终态历史（含 `completed_at`）
-- SSE 是主进度通道；`/api/generate/jobs` 提供列表/历史（`include_finished=true`），`/api/generate/jobs/events` 从内存推送 debounce 后的实时任务列表变化
+- SSE 是主进度通道；`/api/generate/jobs` 提供列表/历史（`include_finished=true`，可选 `limit`/`offset`），`/api/generate/jobs/events` 从内存推送 debounce 后的实时任务列表变化
 - 上游 JSON/SSE 响应会在解析前受 `MAX_UPSTREAM_JSON_MB` 限制；上游图片 URL 下载会做 SSRF/重定向目标复核，并受 `MAX_FILE_SIZE_MB` 限制
 - `/api/import` 做 ZIP 安全与体积校验；`/api/download-all` 用磁盘临时 ZIP，避免大图库导出占满内存
 - Gallery 持久化图片字节数和缩略图（`THUMBNAILS_DIR`），旧图按需懒补缩略图

@@ -75,20 +75,25 @@ function createGalleryStore() {
   let filterTimer: ReturnType<typeof setTimeout> | null = null;
   let requestSeq = 0;
   let abortController: AbortController | null = null;
+  let pendingRequestKey = '';
 
   subscribe((value) => {
     state = value;
   });
 
   async function loadGallery(page = state.page, includeTotalBytes = false) {
-    const seq = ++requestSeq;
     const filters = { ...state.filters };
+    const params = buildGalleryParams(page, filters, includeTotalBytes);
+    const requestKey = params.toString();
+    if (state.loading && pendingRequestKey === requestKey) return;
+    const seq = ++requestSeq;
+    pendingRequestKey = requestKey;
     abortController?.abort();
     abortController = new AbortController();
     update((current) => ({ ...current, loading: true }));
     try {
       const gallery = await apiFetch<GalleryResponse>(
-        `/api/gallery?${buildGalleryParams(page, filters, includeTotalBytes).toString()}`,
+        `/api/gallery?${requestKey}`,
         { signal: abortController.signal },
         'loading gallery'
       );
@@ -109,6 +114,7 @@ function createGalleryStore() {
     } finally {
       if (seq === requestSeq) {
         abortController = null;
+        pendingRequestKey = '';
         update((current) => ({ ...current, loading: false }));
       }
     }
@@ -253,6 +259,7 @@ function createGalleryStore() {
     requestSeq += 1;
     abortController?.abort();
     abortController = null;
+    pendingRequestKey = '';
   }
 
   return {

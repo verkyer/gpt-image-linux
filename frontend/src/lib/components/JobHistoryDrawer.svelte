@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import type { GenerateJobStatus } from '$lib/api/types';
   import { t } from '$lib/i18n';
   import { formatBeijingTime, operationLabel, stageLabel, statusLabel } from '$lib/utils/format';
@@ -12,10 +13,12 @@
   export let historyJobs: GenerateJobStatus[] = [];
   export let historyLoading = false;
   export let historyLoaded = false;
+  export let historyHasMore = false;
   export let selectedIds: Set<string> = new Set();
   export let onClose: () => void = () => {};
   export let onRefresh: () => MaybePromise = () => {};
   export let onRefreshHistory: () => MaybePromise = () => {};
+  export let onLoadMoreHistory: () => MaybePromise = () => {};
   export let onToggle: (jobId: string) => void = () => {};
   export let onToggleAll: () => void = () => {};
   export let onCancelSelected: () => MaybePromise = () => {};
@@ -23,8 +26,11 @@
   export let onRetryJob: (job: GenerateJobStatus) => void = () => {};
 
   let activeTab: JobsTab = 'running';
+  let historyScrollEl: HTMLDivElement | null = null;
+  let historyLoadMoreRequest = false;
 
   $: if (!open) activeTab = 'running';
+  $: if (open && activeTab === 'history' && historyLoaded && historyHasMore && !historyLoading) void fillHistoryViewportIfNeeded();
 
   function selectTab(tab: JobsTab) {
     activeTab = tab;
@@ -34,6 +40,27 @@
   function refreshCurrentTab() {
     if (activeTab === 'history') void onRefreshHistory();
     else void onRefresh();
+  }
+
+  async function requestMoreHistory() {
+    if (historyLoadMoreRequest || activeTab !== 'history' || historyLoading || !historyHasMore) return;
+    historyLoadMoreRequest = true;
+    try {
+      await onLoadMoreHistory();
+    } finally {
+      historyLoadMoreRequest = false;
+    }
+  }
+
+  function handleHistoryScroll(event: Event) {
+    const element = event.currentTarget as HTMLDivElement;
+    if (element.scrollHeight - element.scrollTop - element.clientHeight <= 160) void requestMoreHistory();
+  }
+
+  async function fillHistoryViewportIfNeeded() {
+    await tick();
+    if (!historyScrollEl || activeTab !== 'history') return;
+    if (historyScrollEl.scrollHeight <= historyScrollEl.clientHeight + 160) await requestMoreHistory();
   }
 
   function isActiveJob(job: GenerateJobStatus) {
@@ -79,13 +106,13 @@
               {$t.jobs.selectAll}
             </button>
           {/if}
-          <button type="button" class="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800" on:click={refreshCurrentTab}>
+          <button type="button" class="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" disabled={activeTab === 'history' && historyLoading} on:click={refreshCurrentTab}>
             {$t.jobs.refresh}
           </button>
         </div>
       </div>
 
-      <div class="min-h-0 flex-1 overflow-y-auto p-5">
+      <div bind:this={historyScrollEl} class="min-h-0 flex-1 overflow-y-auto p-5" on:scroll={handleHistoryScroll}>
         {#if activeTab === 'running' && jobs.length === 0}
           <div class="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/35 px-4 py-10 text-center">
             <p class="text-sm font-medium text-zinc-300">{$t.jobs.noRunning}</p>
@@ -93,7 +120,7 @@
           </div>
         {:else if activeTab === 'running'}
           <div class="space-y-3">
-            {#each jobs as job}
+            {#each jobs as job (job.job_id)}
               <div class="flex gap-3 rounded-xl border border-zinc-800 bg-zinc-950/45 p-4">
                 <input type="checkbox" class="mt-1 accent-emerald-500" checked={selectedIds.has(job.job_id)} on:change={() => onToggle(job.job_id)} />
                 <div class="min-w-0 flex-1">
@@ -107,7 +134,7 @@
               </div>
             {/each}
           </div>
-        {:else if historyLoading}
+        {:else if historyLoading && historyJobs.length === 0}
           <div class="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/35 px-4 py-10 text-center">
             <p class="text-sm font-medium text-zinc-300">{$t.jobs.historyLoading}</p>
           </div>
@@ -117,9 +144,9 @@
             <p class="mt-2 text-xs text-zinc-500">{$t.jobs.noHistoryHint}</p>
           </div>
         {:else}
-          <div class="space-y-3">
-            {#each historyJobs as job}
-              <article class="rounded-xl border border-zinc-800 bg-zinc-950/45 p-4">
+          <div class="space-y-3" aria-busy={historyLoading}>
+            {#each historyJobs as job (job.job_id)}
+              <article class="deferred-list-item rounded-xl border border-zinc-800 bg-zinc-950/45 p-4">
                 <div class="flex items-center justify-between gap-3">
                   <span class="rounded-md border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-400">{operationLabel(job.operation, $t.operations)}</span>
                   <span class={`text-xs font-medium ${statusClass(job)}`}>{statusLabel(job.status, $t.statuses)}</span>
@@ -151,6 +178,11 @@
                 </div>
               </article>
             {/each}
+            {#if historyLoading}
+              <div class="rounded-xl border border-zinc-800 bg-zinc-950/35 px-4 py-4 text-center text-xs text-zinc-400">
+                {$t.jobs.historyLoading}
+              </div>
+            {/if}
           </div>
         {/if}
       </div>

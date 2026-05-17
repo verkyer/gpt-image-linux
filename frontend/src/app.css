@@ -80,6 +80,11 @@ input::placeholder {
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
 }
 
+.deferred-list-item {
+  content-visibility: auto;
+  contain-intrinsic-size: 180px;
+}
+
 .preview-empty {
   background:
     linear-gradient(135deg, rgba(63, 63, 70, 0.18) 25%, transparent 25%) 0 0 / 28px 28px,
@@ -137,4 +142,3 @@ input::placeholder {
     border-top: 1px solid #27272a;
   }
 }
-

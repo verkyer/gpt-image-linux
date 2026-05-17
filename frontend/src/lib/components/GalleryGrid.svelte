@@ -27,9 +27,12 @@
   export let onBatchFavorite: (favorite: boolean) => void = () => {};
   export let onBatchDownload: () => void = () => {};
 
+  const skeletonCards = Array.from({ length: 6 });
+
   let importInput: HTMLInputElement;
 
   $: images = gallery?.images || [];
+  $: initialLoading = loading && images.length === 0;
   $: selectedCount = selectedIds.size;
   $: hasSelection = selectedCount > 0;
   $: hasFilters = Boolean(
@@ -158,47 +161,71 @@
     </div>
   {/if}
 
-  {#if loading}
-    <div class="rounded-xl border border-zinc-800 bg-zinc-950/40 px-4 py-10 text-center text-sm text-zinc-400">{$t.gallery.loading}</div>
+  {#if initialLoading}
+    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-label={$t.gallery.loading}>
+      {#each skeletonCards as _}
+        <div class="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950/45">
+          <div class="aspect-square animate-pulse bg-zinc-800/60"></div>
+          <div class="space-y-3 p-3">
+            <div class="h-4 w-5/6 animate-pulse rounded bg-zinc-800/70"></div>
+            <div class="h-3 w-1/2 animate-pulse rounded bg-zinc-800/60"></div>
+            <div class="flex gap-2">
+              <div class="h-7 w-14 animate-pulse rounded bg-zinc-800/60"></div>
+              <div class="h-7 w-16 animate-pulse rounded bg-zinc-800/60"></div>
+            </div>
+          </div>
+        </div>
+      {/each}
+    </div>
   {:else if images.length === 0}
     <div class="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/35 px-4 py-10 text-center">
       <p class="text-sm font-medium text-zinc-300">{hasFilters ? $t.gallery.noMatch : $t.gallery.empty}</p>
       <p class="mt-2 text-xs text-zinc-500">{hasFilters ? $t.gallery.noMatchHint : $t.gallery.emptyHint}</p>
     </div>
   {:else}
-    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {#each images as image}
-        <article class={`gallery-card overflow-hidden rounded-xl border ${selectedIds.has(image.id) ? 'border-emerald-400 bg-emerald-500/10' : 'border-zinc-800 bg-zinc-950/45'}`}>
-          <button type="button" class="relative block aspect-square w-full bg-zinc-950" on:click={() => handleImageClick(image)}>
-            {#if selectionMode}
-              <span class="absolute left-2 top-2 z-10 rounded-md bg-zinc-950/80 px-2 py-1 text-xs font-medium text-zinc-100">
-                {selectedIds.has(image.id) ? '✓' : ''}
-              </span>
-            {/if}
-            <img src={thumbnailUrl(image.filename, image.thumbnail_url)} alt={image.prompt} class="h-full w-full object-cover" loading="lazy" />
-          </button>
-          <div class="space-y-3 p-3">
-            <div class="min-w-0">
-              <p class="line-clamp-2 text-sm text-zinc-200">{image.prompt}</p>
-              <p class="mt-1 text-xs text-zinc-500">{image.size} / {image.model || '-'}</p>
-            </div>
-            <div class="flex flex-wrap gap-2">
-              <button type="button" class="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800" on:click={(event) => handleGalleryAction(event, () => onEdit(image))}>{$t.common.edit}</button>
-              <button type="button" class="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800" on:click={(event) => handleGalleryAction(event, () => onFavorite(image))}>{image.favorite ? $t.common.unfavorite : $t.common.favorite}</button>
-              <a href={`/api/download/${encodeURIComponent(image.filename)}`} class="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800" on:click|stopPropagation>{$t.common.download}</a>
-              <button type="button" class="rounded-md border border-red-500/40 px-2 py-1 text-xs text-red-300 hover:bg-red-500/10" on:click={(event) => handleGalleryAction(event, () => onDelete(image))}>{$t.common.delete}</button>
-            </div>
+    <div class="relative" aria-busy={loading}>
+      {#if loading}
+        <div class="pointer-events-none absolute inset-0 z-10 rounded-xl bg-zinc-950/20 backdrop-blur-[1px]">
+          <div class="absolute right-3 top-3 rounded-lg border border-zinc-700 bg-zinc-950/90 px-3 py-2 text-xs text-zinc-300 shadow-lg">
+            {$t.gallery.loading}
           </div>
-        </article>
-      {/each}
+        </div>
+      {/if}
+
+      <div class={`grid gap-4 sm:grid-cols-2 lg:grid-cols-3 ${loading ? 'opacity-70' : ''}`}>
+        {#each images as image (image.id)}
+          <article class={`gallery-card overflow-hidden rounded-xl border ${selectedIds.has(image.id) ? 'border-emerald-400 bg-emerald-500/10' : 'border-zinc-800 bg-zinc-950/45'}`}>
+            <button type="button" class="relative block aspect-square w-full bg-zinc-950" on:click={() => handleImageClick(image)}>
+              {#if selectionMode}
+                <span class="absolute left-2 top-2 z-10 rounded-md bg-zinc-950/80 px-2 py-1 text-xs font-medium text-zinc-100">
+                  {selectedIds.has(image.id) ? '✓' : ''}
+                </span>
+              {/if}
+              <img src={thumbnailUrl(image.filename, image.thumbnail_url)} alt={image.prompt} class="h-full w-full object-cover" loading="lazy" />
+            </button>
+            <div class="space-y-3 p-3">
+              <div class="min-w-0">
+                <p class="line-clamp-2 text-sm text-zinc-200">{image.prompt}</p>
+                <p class="mt-1 text-xs text-zinc-500">{image.size} / {image.model || '-'}</p>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <button type="button" class="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800" on:click={(event) => handleGalleryAction(event, () => onEdit(image))}>{$t.common.edit}</button>
+                <button type="button" class="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800" on:click={(event) => handleGalleryAction(event, () => onFavorite(image))}>{image.favorite ? $t.common.unfavorite : $t.common.favorite}</button>
+                <a href={`/api/download/${encodeURIComponent(image.filename)}`} class="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800" on:click|stopPropagation>{$t.common.download}</a>
+                <button type="button" class="rounded-md border border-red-500/40 px-2 py-1 text-xs text-red-300 hover:bg-red-500/10" on:click={(event) => handleGalleryAction(event, () => onDelete(image))}>{$t.common.delete}</button>
+              </div>
+            </div>
+          </article>
+        {/each}
+      </div>
     </div>
 
     <div class="mt-5 flex items-center justify-between">
-      <button type="button" disabled={!gallery?.has_prev} class="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" on:click={() => onPage(-1)}>
+      <button type="button" disabled={loading || !gallery?.has_prev} class="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" on:click={() => onPage(-1)}>
         {$t.gallery.previous}
       </button>
       <span class="text-xs text-zinc-500">{$t.gallery.page(gallery?.page || 1, gallery?.total_pages || 1)}</span>
-      <button type="button" disabled={!gallery?.has_next} class="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" on:click={() => onPage(1)}>
+      <button type="button" disabled={loading || !gallery?.has_next} class="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" on:click={() => onPage(1)}>
         {$t.gallery.next}
       </button>
     </div>

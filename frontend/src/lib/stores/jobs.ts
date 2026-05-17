@@ -12,6 +12,7 @@ export type JobsState = {
   historyJobs: GenerateJobStatus[];
   historyLoading: boolean;
   historyLoaded: boolean;
+  historyHasMore: boolean;
   selectedIds: Set<string>;
 };
 
@@ -20,8 +21,11 @@ const initialJobsState: JobsState = {
   historyJobs: [],
   historyLoading: false,
   historyLoaded: false,
+  historyHasMore: false,
   selectedIds: new Set()
 };
+
+const HISTORY_PAGE_SIZE = 50;
 
 function createJobsStore() {
   const { subscribe, update } = writable<JobsState>(initialJobsState);
@@ -29,6 +33,9 @@ function createJobsStore() {
   let jobsSource: EventSource | null = null;
   let jobsPollingTimer: ReturnType<typeof setInterval> | null = null;
   let activeJobSource: EventSource | null = null;
+  let activeJobPollingTimer: ReturnType<typeof setTimeout> | null = null;
+  let trackedJobId: string | null = null;
+  let historyRequestSeq = 0;
 
   subscribe((value) => {
     state = value;
@@ -48,16 +55,47 @@ function createJobsStore() {
     }
   }
 
-  async function loadJobHistory() {
+  async function loadJobHistory(options: { append?: boolean } = {}) {
+    if (state.historyLoading) return;
+    const append = Boolean(options.append);
+    const offset = append ? state.historyJobs.length : 0;
+    const seq = ++historyRequestSeq;
     update((current) => ({ ...current, historyLoading: true }));
     try {
-      const historyJobs = await apiFetch<GenerateJobStatus[]>('/api/generate/jobs?include_finished=true&limit=500', {}, 'loading job history');
-      update((current) => ({ ...current, historyJobs, historyLoaded: true }));
+      const params = new URLSearchParams({
+        include_finished: 'true',
+        limit: String(HISTORY_PAGE_SIZE),
+        offset: String(offset)
+      });
+      const historyJobs = await apiFetch<GenerateJobStatus[]>(`/api/generate/jobs?${params.toString()}`, {}, 'loading job history');
+      if (seq !== historyRequestSeq) return;
+      update((current) => {
+        const mergedJobs = append
+          ? [...current.historyJobs, ...historyJobs.filter((job) => !current.historyJobs.some((existing) => existing.job_id === job.job_id))]
+          : historyJobs;
+        return {
+          ...current,
+          historyJobs: mergedJobs,
+          historyLoaded: true,
+          historyHasMore: historyJobs.length === HISTORY_PAGE_SIZE
+        };
+      });
     } catch {
-      update((current) => ({ ...current, historyJobs: [], historyLoaded: true }));
+      if (seq !== historyRequestSeq) return;
+      update((current) => ({
+        ...current,
+        historyJobs: append ? current.historyJobs : [],
+        historyLoaded: true,
+        historyHasMore: false
+      }));
     } finally {
-      update((current) => ({ ...current, historyLoading: false }));
+      if (seq === historyRequestSeq) update((current) => ({ ...current, historyLoading: false }));
     }
+  }
+
+  async function loadMoreJobHistory() {
+    if (!state.historyHasMore || state.historyLoading) return;
+    await loadJobHistory({ append: true });
   }
 
   async function refreshHistoryIfLoaded() {
@@ -123,8 +161,10 @@ function createJobsStore() {
     if (!jobId) return;
     let terminal = false;
     closeActiveJobSource();
+    trackedJobId = jobId;
     activeJobSource = openJsonEventSource<GenerateJobStatus>(`/api/generate/${encodeURIComponent(jobId)}/events`, {
       onEvent: ({ data }) => {
+        if (trackedJobId !== jobId) return;
         void updatePreviewFromJob(data);
         if (!isActiveJobStatus(data.status)) {
           terminal = true;
@@ -132,8 +172,8 @@ function createJobsStore() {
         }
       },
       onError: () => {
-        if (!terminal) void pollJob(jobId, updatePreviewFromJob, setPreviewError);
-        closeActiveJobSource();
+        closeActiveJobEventSource();
+        if (!terminal && trackedJobId === jobId) void pollJob(jobId, updatePreviewFromJob, setPreviewError);
       }
     });
   }
@@ -143,14 +183,25 @@ function createJobsStore() {
     updatePreviewFromJob: (job: GenerateJobStatus) => Promise<void>,
     setPreviewError: (message: string) => void
   ) {
+    if (trackedJobId !== jobId) return;
+    clearActiveJobPollingTimer();
     try {
       const job = await apiFetch<GenerateJobStatus>(`/api/generate/${encodeURIComponent(jobId)}`, {}, 'loading job');
+      if (trackedJobId !== jobId) return;
       await updatePreviewFromJob(job);
+      if (trackedJobId !== jobId) return;
       if (isActiveJobStatus(job.status)) {
-        setTimeout(() => void pollJob(jobId, updatePreviewFromJob, setPreviewError), 1200);
+        activeJobPollingTimer = setTimeout(() => {
+          activeJobPollingTimer = null;
+          if (trackedJobId === jobId) void pollJob(jobId, updatePreviewFromJob, setPreviewError);
+        }, 1200);
+      } else {
+        closeActiveJobSource();
       }
     } catch (error) {
+      if (trackedJobId !== jobId) return;
       setPreviewError(error instanceof Error ? error.message : get(t).messages.jobLoadFailed);
+      closeActiveJobSource();
     }
   }
 
@@ -184,9 +235,20 @@ function createJobsStore() {
     };
   }
 
-  function closeActiveJobSource() {
+  function closeActiveJobEventSource() {
     activeJobSource?.close();
     activeJobSource = null;
+  }
+
+  function clearActiveJobPollingTimer() {
+    if (activeJobPollingTimer) clearTimeout(activeJobPollingTimer);
+    activeJobPollingTimer = null;
+  }
+
+  function closeActiveJobSource() {
+    closeActiveJobEventSource();
+    clearActiveJobPollingTimer();
+    trackedJobId = null;
   }
 
   function cleanup() {
@@ -194,12 +256,14 @@ function createJobsStore() {
     jobsSource?.close();
     jobsSource = null;
     stopJobsPolling();
+    historyRequestSeq += 1;
   }
 
   return {
     subscribe,
     loadJobs,
     loadJobHistory,
+    loadMoreJobHistory,
     refreshHistoryIfLoaded,
     startJobsEvents,
     toggleSelection,

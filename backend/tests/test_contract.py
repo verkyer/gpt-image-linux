@@ -2142,6 +2142,27 @@ def test_generate_jobs_list_broadcast_debounces_without_db_reads(client, monkeyp
     assert events[0]["data"][0]["stage"] == "stage_2"
 
 
+def test_generate_jobs_history_supports_offset_pagination(client):
+    for index in range(4):
+        storage.upsert_generate_job(
+            {
+                "job_id": f"history-{index}",
+                "status": "success",
+                "operation": "generation",
+                "prompt": f"history prompt {index}",
+                "size": "1024x1024",
+                "created_at": f"2026-01-01T00:00:0{index}+00:00",
+                "updated_at": f"2026-01-01T00:00:0{index}+00:00",
+                "completed_at": f"2026-01-01T00:00:0{index}+00:00",
+            }
+        )
+
+    resp = client.get("/api/generate/jobs?include_finished=true&limit=2&offset=1")
+
+    assert resp.status_code == 200
+    assert [job["job_id"] for job in resp.json()] == ["history-2", "history-1"]
+
+
 def test_validation_422_and_global_500(tmp_path, monkeypatch):
     _configure_runtime(tmp_path)
     with TestClient(backend_main.app, raise_server_exceptions=False) as client:
