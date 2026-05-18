@@ -47,6 +47,7 @@
     bind:value={form.prompt}
     maxlength="4000"
     rows="5"
+    aria-label={$t.common.prompt}
     placeholder={$t.promptForm.placeholder}
     class="control-focus w-full resize-y rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm leading-6 text-zinc-100 focus:border-emerald-500"
   ></textarea>

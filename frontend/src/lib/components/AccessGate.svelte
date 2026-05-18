@@ -42,6 +42,7 @@
           bind:value={accessKey}
           type="password"
           autocomplete="current-password"
+          aria-label={$t.access.title}
           placeholder={$t.access.placeholder}
           class="control-focus w-full rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 font-mono text-sm text-zinc-100 transition-colors placeholder-zinc-500 focus:border-emerald-500"
         />

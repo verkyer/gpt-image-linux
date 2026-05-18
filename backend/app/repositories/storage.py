@@ -1,9 +1,11 @@
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import sqlite3
 import threading
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +14,7 @@ from typing import Any, Iterable, Iterator, Sequence
 from ..core import settings as config
 from ..core.api_paths import normalize_api_preset
 from ..core.constants import ACTIVE_GENERATE_JOB_STATUSES
+from ..core.observability import observe_job_stage
 from ..core.utils import utc_now
 from ..schemas.models import GalleryEntry, GalleryFilterOptions
 from .image_files import (
@@ -143,6 +146,7 @@ GENERATE_JOB_COLUMNS = (
     "api_path",
     "api_preset_name",
     "duration",
+    "stage_timings_json",
     "image_id",
     "image_url",
     "image_width",
@@ -184,6 +188,7 @@ class GalleryPage:
     has_next: bool
     images: list[GalleryEntry]
     filter_options: GalleryFilterOptions
+    query_elapsed_ms: float = 0.0
 
 
 @dataclass
@@ -445,6 +450,7 @@ def _ensure_database():
                     api_path TEXT,
                     api_preset_name TEXT,
                     duration TEXT,
+                    stage_timings_json TEXT,
                     image_id TEXT,
                     image_url TEXT,
                     image_width INTEGER,
@@ -459,6 +465,7 @@ def _ensure_database():
                 """
             )
             _migrate_gallery_schema(conn)
+            _migrate_generate_jobs_schema(conn)
             _ensure_gallery_fts(conn)
             conn.commit()
 
@@ -509,6 +516,12 @@ def _migrate_gallery_schema(conn: sqlite3.Connection):
             ON gallery_entries(size, created_at DESC)
         """
     )
+
+
+def _migrate_generate_jobs_schema(conn: sqlite3.Connection):
+    columns = _table_columns(conn, "generate_jobs")
+    if "stage_timings_json" not in columns:
+        conn.execute("ALTER TABLE generate_jobs ADD COLUMN stage_timings_json TEXT")
 
 
 def _get_setting_value(conn: sqlite3.Connection, key: str) -> str | None:
@@ -803,6 +816,28 @@ def _normalize_generate_job(job: dict[str, Any]) -> dict[str, Any]:
     for column in GENERATE_JOB_COLUMNS:
         if column in {"job_id", "status", "created_at", "updated_at"}:
             continue
+        if column == "stage_timings_json":
+            value = job.get("stage_timings_json")
+            if value is None:
+                value = job.get("stage_timings")
+            if value is None:
+                continue
+            if isinstance(value, str):
+                try:
+                    json.loads(value)
+                except json.JSONDecodeError:
+                    continue
+                normalized[column] = value
+            else:
+                try:
+                    normalized[column] = json.dumps(
+                        value,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                except TypeError:
+                    continue
+            continue
         value = job.get(column)
         if value is None:
             continue
@@ -827,6 +862,12 @@ def _generate_job_from_row(row: sqlite3.Row) -> dict[str, Any]:
         for column in GENERATE_JOB_COLUMNS
         if row[column] is not None
     }
+    stage_timings_json = job.pop("stage_timings_json", None)
+    if stage_timings_json:
+        try:
+            job["stage_timings"] = json.loads(stage_timings_json)
+        except json.JSONDecodeError:
+            job["stage_timings"] = {}
     if job.get("image_id"):
         job["id"] = job["image_id"]
     return job
@@ -893,7 +934,8 @@ def _attach_gallery_thumbnail_url(entry: dict[str, Any]) -> dict[str, Any]:
 def _prepare_gallery_file(image_bytes: bytes, filename: str) -> _PreparedGalleryFile:
     image_temp_path = _save_image_temp_unlocked(image_bytes, filename)
     try:
-        prepared_thumbnail = _create_thumbnail_temp_unlocked(image_bytes, filename)
+        with observe_job_stage("thumbnail"):
+            prepared_thumbnail = _create_thumbnail_temp_unlocked(image_bytes, filename)
     except BaseException:
         image_temp_path.unlink(missing_ok=True)
         raise
@@ -1101,7 +1143,8 @@ def _save_images_and_insert_gallery_entries(
             _promote_prepared_images(prepared_files)
             with _connect() as conn:
                 with _transaction(conn):
-                    _insert_gallery_entries_on_conn(conn, gallery_entries)
+                    with observe_job_stage("db_insert"):
+                        _insert_gallery_entries_on_conn(conn, gallery_entries)
             _promote_prepared_thumbnails(prepared_files)
     except BaseException:
         _cleanup_prepared_gallery_files(prepared_files)
@@ -1137,7 +1180,8 @@ def import_gallery_entries(
                 _dedupe_import_entries_on_conn(conn, normalized_entries, prepared_files)
                 _promote_prepared_images(prepared_files)
                 with _transaction(conn):
-                    _insert_gallery_entries_on_conn(conn, normalized_entries)
+                    with observe_job_stage("db_insert"):
+                        _insert_gallery_entries_on_conn(conn, normalized_entries)
             _promote_prepared_thumbnails(prepared_files)
         return len(normalized_entries)
     except BaseException:
@@ -1393,6 +1437,7 @@ def get_gallery_page(
     page_size = max(int(page_size), 1)
     offset = (requested_page - 1) * page_size
 
+    query_started_at = time.perf_counter()
     with _connect() as conn:
         where_sql, params = _build_gallery_filter_where(filters)
         rows = _get_gallery_rows_on_conn(
@@ -1428,6 +1473,7 @@ def get_gallery_page(
             else 0
         )
         filter_options = _get_gallery_filter_options_on_conn(conn)
+    query_elapsed_ms = (time.perf_counter() - query_started_at) * 1000
 
     return GalleryPage(
         total=total,
@@ -1439,6 +1485,7 @@ def get_gallery_page(
         has_next=page < total_pages,
         images=[GalleryEntry(**_gallery_entry_from_row(row)) for row in rows],
         filter_options=filter_options,
+        query_elapsed_ms=round(query_elapsed_ms, 2),
     )
 
 

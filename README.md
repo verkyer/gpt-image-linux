@@ -30,12 +30,13 @@ Key characteristics:
 
 - API preset management: base URL/path/key, model, and global SOCKS5 upstream proxy
 - generation and image-editing (`/v1/images/edits`) with size/quality/format/compression/quantity controls
-- preview + job history with SSE progress, `completed_at`, elapsed time, loading states, cancel for queued/running jobs, and reuse/retry from persisted history
+- preview + job history with SSE progress, `completed_at`, elapsed time, per-job stage timings, loading states, cancel for queued/running jobs, and reuse/retry from persisted history
 - shared queue and concurrency limits for generation/edit jobs
 - optional per-job `webhook_url` with HTTPS-only validation, SSRF checks, signing, and retry
 - gallery with filters (FTS-backed prompt search, model, preset, size, date range, favorite), lightbox, “Edit this image”, download, delete/delete-all, prompt/image-url copy, and on-demand total-size metadata
 - ZIP export/import (`metadata.json`) with streaming upload, safety validation, and low-memory export path
 - access-key gate, IP allowlist/proxy-header support, GitHub version badge, and CSP nonce injection
+- observability hooks for job stage timings, slow `/api/gallery` query logging, and an optional `/api/metrics` JSON endpoint
 
 ## Architecture
 
@@ -329,6 +330,8 @@ The panel supports these upstream paths. The API base URL may either omit or inc
 | `DEFAULT_UPSTREAM_SOCKS5_PROXY` | empty | Optional default global SOCKS5 proxy for generation/edit upstream API calls |
 | `APP_VERSION` | `VERSION` file | Override the app version shown in the UI and returned by `/api/version` |
 | `GITHUB_REPO` | `Z1rconium/gpt-image-linux` | GitHub `owner/repo` used for release update detection; set empty to disable latest-version checks |
+| `ENABLE_METRICS` | `false` | Enable `/api/metrics` JSON counters and latency summaries |
+| `SLOW_GALLERY_QUERY_MS` | `200` | Log `/api/gallery` requests at or above this threshold with filters, page, total, and DB query time |
 | `ACCESS_KEY` | empty | Required by default; all non-health routes require unlock when set |
 | `ALLOW_UNAUTHENTICATED` | `false` | Set `true` to explicitly allow startup without `ACCESS_KEY` |
 | `IP_ALLOWLIST` | empty | Comma-separated allowed IPs/CIDRs |
@@ -388,6 +391,7 @@ The panel supports these upstream paths. The API base URL may either omit or inc
 | `GET` | `/api/download-all` | Download all gallery images plus `metadata.json` as a ZIP file |
 | `POST` | `/api/import` | Import a ZIP created by `/api/download-all` |
 | `DELETE` | `/api/gallery` | Delete all gallery entries and server image files |
+| `GET` | `/api/metrics` | Optional metrics snapshot; only available when `ENABLE_METRICS=true` |
 
 ## Runtime behavior notes
 
@@ -395,6 +399,7 @@ The panel supports these upstream paths. The API base URL may either omit or inc
 - presets and gallery/job data persist only in `DATABASE_FILE`
 - generation and edit share one queue (`MAX_ACTIVE_GENERATE_JOBS` + `MAX_QUEUED_GENERATE_JOBS`), edit source images are staged under `DATA_DIR/edit-sources` and additionally capped by `MAX_PENDING_EDIT_SOURCE_MB`, support cancellation, and persist terminal history including `completed_at`
 - SSE is the primary progress channel; `/api/generate/jobs` provides list/history (`include_finished=true`, optional `limit`/`offset`), and `/api/generate/jobs/events` streams debounced live job-list changes from memory
+- terminal job history includes `stage_timings` for `upstream_wait`, `download_decode`, `validate`, `thumbnail`, and `db_insert`; slow gallery queries are logged with query filters and totals
 - upstream JSON/SSE bodies are read with a `MAX_UPSTREAM_JSON_MB` cap before parsing, and upstream image URL downloads are revalidated (SSRF-aware, no blind redirect follow) and bounded by `MAX_FILE_SIZE_MB`
 - `/api/import` enforces ZIP safety/size/count/compression checks; `/api/download-all` writes temp ZIP on disk to avoid high memory usage
 - gallery stores byte-size metadata and thumbnails (`THUMBNAILS_DIR`), with lazy thumbnail and opt-in byte-size backfill for older images
@@ -406,9 +411,12 @@ The panel supports these upstream paths. The API base URL may either omit or inc
 npm run frontend:check
 npm run frontend:build
 python3 -m pytest backend/tests/test_contract.py -q
+npm run test:e2e
+RUN_PERFORMANCE_TESTS=true python3 -m pytest backend/tests/test_performance.py -q
+npm run test:e2e:perf
 ```
 
-The contract tests cover the frozen public API surface, including access cookies, settings, generation/edit job creation, SSE response framing, gallery import/export, frontend index/CSP handling, static asset access, downloads, validation errors, and 500 error shape.
+The contract tests cover the frozen public API surface, including access cookies, settings, generation/edit job creation, job timing metrics, SSE response framing, gallery import/export, frontend index/CSP handling, static asset access, downloads, validation errors, and 500 error shape. Playwright covers access gate, settings drawer focus behavior, mocked generate/edit flows, gallery filtering/batch actions, toast live regions, and lightbox keyboard close.
 
 ## Contributing
 
@@ -467,12 +475,13 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 
 - API 预设管理：base URL/path/key、model、全局 SOCKS5 上游代理
 - 图像生成 + 图生图编辑（`/v1/images/edits`），支持尺寸/质量/格式/压缩率/数量等参数
-- 预览 + 历史任务：SSE 进度、`completed_at`、耗时、加载状态、排队/运行任务取消，以及从持久化历史复用/重试
+- 预览 + 历史任务：SSE 进度、`completed_at`、耗时、任务分段耗时、加载状态、排队/运行任务取消，以及从持久化历史复用/重试
 - 生成与编辑共享并发和排队限制
 - 可选任务回调 `webhook_url`：HTTPS 校验、SSRF 防护、签名与重试
 - Gallery：筛选（FTS 提示词搜索、模型、预设、尺寸、日期区间、收藏）、Lightbox、”Edit this image”、下载/删除、复制提示词/图片链接、按需总大小统计
 - ZIP 导出导入（含 `metadata.json`）+ 流式上传 + 安全校验 + 低内存导出路径
 - 访问密钥、IP 白名单/反向代理头、版本检测、CSP nonce
+- 观测能力：任务分段耗时、慢 `/api/gallery` 查询日志、可选 `/api/metrics` JSON 指标
 
 ## 架构
 
@@ -766,6 +775,8 @@ curl http://localhost:9090/health
 | `DEFAULT_UPSTREAM_SOCKS5_PROXY` | 空 | 可选的全局 SOCKS5 代理默认值，仅用于生成/编辑的上游 API 请求 |
 | `APP_VERSION` | `VERSION` 文件 | 覆盖界面显示和 `/api/version` 返回的当前应用版本 |
 | `GITHUB_REPO` | `Z1rconium/gpt-image-linux` | 用于检测新版本的 GitHub `owner/repo`；设为空可禁用最新版本检查 |
+| `ENABLE_METRICS` | `false` | 启用 `/api/metrics` JSON counters 和延迟摘要 |
+| `SLOW_GALLERY_QUERY_MS` | `200` | `/api/gallery` 达到该阈值时记录筛选条件、页码、total 和 DB 查询耗时 |
 | `ACCESS_KEY` | 空 | 默认要求设置；设置后每个非健康路由均需解锁 |
 | `ALLOW_UNAUTHENTICATED` | `false` | 设置为 `true` 可显式允许在未设置 `ACCESS_KEY` 时启动 |
 | `IP_ALLOWLIST` | 空 | 允许访问的 IP/CIDR，逗号分隔 |
@@ -825,6 +836,7 @@ curl http://localhost:9090/health
 | `GET` | `/api/download-all` | 下载 Gallery 所有图片和 `metadata.json` 为 ZIP 文件 |
 | `POST` | `/api/import` | 导入 `/api/download-all` 创建的 ZIP |
 | `DELETE` | `/api/gallery` | 删除所有 Gallery 条目和服务器图片文件 |
+| `GET` | `/api/metrics` | 可选指标快照；仅在 `ENABLE_METRICS=true` 时可用 |
 
 ## 运行时注意事项
 
@@ -832,6 +844,7 @@ curl http://localhost:9090/health
 - 预设与 Gallery/Job 数据只保存在 `DATABASE_FILE`
 - 生成与编辑共用队列（`MAX_ACTIVE_GENERATE_JOBS` + `MAX_QUEUED_GENERATE_JOBS`）；编辑源图先落到 `DATA_DIR/edit-sources` 并额外受 `MAX_PENDING_EDIT_SOURCE_MB` 总量限制；支持取消，并持久化终态历史（含 `completed_at`）
 - SSE 是主进度通道；`/api/generate/jobs` 提供列表/历史（`include_finished=true`，可选 `limit`/`offset`），`/api/generate/jobs/events` 从内存推送 debounce 后的实时任务列表变化
+- 任务终态历史包含 `stage_timings`：`upstream_wait`、`download_decode`、`validate`、`thumbnail`、`db_insert`；慢 Gallery 查询日志会带筛选条件与 total
 - 上游 JSON/SSE 响应会在解析前受 `MAX_UPSTREAM_JSON_MB` 限制；上游图片 URL 下载会做 SSRF/重定向目标复核，并受 `MAX_FILE_SIZE_MB` 限制
 - `/api/import` 做 ZIP 安全与体积校验；`/api/download-all` 用磁盘临时 ZIP，避免大图库导出占满内存
 - Gallery 持久化图片字节数和缩略图（`THUMBNAILS_DIR`），旧图按需懒补缩略图
@@ -843,9 +856,12 @@ curl http://localhost:9090/health
 npm run frontend:check
 npm run frontend:build
 python3 -m pytest backend/tests/test_contract.py -q
+npm run test:e2e
+RUN_PERFORMANCE_TESTS=true python3 -m pytest backend/tests/test_performance.py -q
+npm run test:e2e:perf
 ```
 
-契约测试覆盖冻结的公共 API 表面，包括访问 cookie、settings、generation/edit 任务创建、SSE 响应 framing、Gallery import/export、前端入口/CSP 处理、静态资源访问、下载、422 校验错误和 500 错误形状。
+契约测试覆盖冻结的公共 API 表面，包括访问 cookie、settings、generation/edit 任务创建、任务耗时指标、SSE 响应 framing、Gallery import/export、前端入口/CSP 处理、静态资源访问、下载、422 校验错误和 500 错误形状。Playwright 覆盖访问门禁、设置抽屉焦点行为、mock 生成/编辑流程、Gallery 筛选/批量操作、toast live region 和 Lightbox 键盘关闭。
 
 ## 贡献
 

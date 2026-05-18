@@ -1,5 +1,7 @@
 import asyncio
+import logging
 import mimetypes
+import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
@@ -11,6 +13,8 @@ from ..gallery_archive import (
     iter_import_gallery_entries,
     stream_upload_to_tempfile,
 )
+from ...core import settings as config
+from ...core.observability import metrics
 from ...repositories import storage
 from ...schemas.models import (
     GalleryBatchFavoriteRequest,
@@ -24,6 +28,7 @@ from ...schemas.models import (
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def normalize_gallery_date_filter(value: str | None, end_of_day: bool = False) -> str | None:
@@ -109,12 +114,32 @@ async def get_gallery_handler(
         date_to=date_to,
         favorite=favorite,
     )
+    started_at = time.perf_counter()
     gallery_page = storage.get_gallery_page(
         page=page,
         page_size=page_size,
         filters=filters,
         include_total_bytes=include_total_bytes,
     )
+    elapsed_ms = (time.perf_counter() - started_at) * 1000
+    metrics.increment("gallery.requests")
+    metrics.observe_ms("gallery.request", elapsed_ms)
+    metrics.observe_ms("gallery.db_query", gallery_page.query_elapsed_ms)
+    if elapsed_ms >= config.SLOW_GALLERY_QUERY_MS:
+        metrics.increment("gallery.slow_queries")
+        logger.warning(
+            "Slow /api/gallery query: elapsed_ms=%.2f db_query_ms=%.2f page=%s page_size=%s total=%s filters=%s",
+            elapsed_ms,
+            gallery_page.query_elapsed_ms,
+            gallery_page.page,
+            gallery_page.page_size,
+            gallery_page.total,
+            {
+                key: value
+                for key, value in filters.items()
+                if value not in (None, "", False)
+            },
+        )
 
     return GalleryResponse(
         total=gallery_page.total,

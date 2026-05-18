@@ -17,6 +17,7 @@ from .app_state import (
 )
 from .presets import get_active_preset, get_effective_preset_api_key, get_exception_message, get_upstream_socks5_proxy
 from ..core import settings as config
+from ..core.observability import JobStageTimer, metrics, use_job_stage_timer
 from ..core import validators as ssrf
 from ..core.constants import ACTIVE_GENERATE_JOB_STATUSES
 from ..core.utils import beijing_now, utc_now
@@ -425,6 +426,7 @@ def queue_image_job(
             api_preset_name=api_preset_name,
         )
         store_generate_job(job_id, pending_job)
+        metrics.increment(f"image_jobs.{operation}.queued")
         task = asyncio.create_task(
             task_factory(
                 job_id,
@@ -509,6 +511,7 @@ async def _run_image_job(
     call_upstream: Callable[[], Awaitable[list[GalleryEntry]]],
 ):
     started_at = time.monotonic()
+    stage_timer = JobStageTimer()
 
     try:
         async with get_generate_job_semaphore():
@@ -536,9 +539,17 @@ async def _run_image_job(
                     "api_preset_name": api_preset_name,
                 },
             )
-            entries = await call_upstream()
-            duration = f"{time.monotonic() - started_at:.2f}s"
+            metrics.increment(f"image_jobs.{operation}.started")
+            with use_job_stage_timer(stage_timer):
+                entries = await call_upstream()
+            duration_seconds = time.monotonic() - started_at
+            duration = f"{duration_seconds:.2f}s"
     except asyncio.CancelledError:
+        stage_timings = stage_timer.snapshot()
+        duration_seconds = time.monotonic() - started_at
+        metrics.increment(f"image_jobs.{operation}.cancelled")
+        metrics.observe_ms("image_job.duration", duration_seconds * 1000)
+        metrics.observe_job_stage_timings(stage_timings)
         store_generate_job(
             job_id,
             {
@@ -547,7 +558,8 @@ async def _run_image_job(
                 "message": cancel_message,
                 "operation": operation,
                 "completed_at": utc_now(),
-                "duration": f"{time.monotonic() - started_at:.2f}s",
+                "duration": f"{duration_seconds:.2f}s",
+                "stage_timings": stage_timings,
                 "error": cancel_message,
             },
         )
@@ -559,6 +571,11 @@ async def _run_image_job(
             logger.info("Image %s stopped after cancellation: job_id=%s", log_action, job_id)
             return
         error_message = get_exception_message(e)
+        stage_timings = stage_timer.snapshot()
+        duration_seconds = time.monotonic() - started_at
+        metrics.increment(f"image_jobs.{operation}.failed")
+        metrics.observe_ms("image_job.duration", duration_seconds * 1000)
+        metrics.observe_job_stage_timings(stage_timings)
         logger.exception(
             "Image %s failed: job_id=%s error_type=%s api_url=%s api_path=%s model=%s size=%s quality=%s output_format=%s response_format=%s n=%s",
             log_action,
@@ -581,7 +598,8 @@ async def _run_image_job(
                 "message": error_message,
                 "operation": operation,
                 "completed_at": utc_now(),
-                "duration": f"{time.monotonic() - started_at:.2f}s",
+                "duration": f"{duration_seconds:.2f}s",
+                "stage_timings": stage_timings,
                 "error": error_message,
             },
         )
@@ -600,6 +618,10 @@ async def _run_image_job(
     )
     first_entry = entries[0]
     completed_at = beijing_now()
+    stage_timings = stage_timer.snapshot()
+    metrics.increment(f"image_jobs.{operation}.succeeded")
+    metrics.observe_ms("image_job.duration", duration_seconds * 1000)
+    metrics.observe_job_stage_timings(stage_timings)
     first_entry = storage.update_gallery_entry(
         first_entry.id,
         {"duration": duration, "completed_at": completed_at},
@@ -626,6 +648,7 @@ async def _run_image_job(
             "api_path": first_entry.api_path,
             "api_preset_name": first_entry.api_preset_name,
             "duration": duration,
+            "stage_timings": stage_timings,
             "completed_at": completed_at,
         },
     )

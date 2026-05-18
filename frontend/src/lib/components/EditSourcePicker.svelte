@@ -21,6 +21,7 @@
     bind:this={input}
     type="file"
     accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp,image/heic,image/heif,image/x-icon,image/tiff"
+    aria-label={$t.promptForm.uploadEditImage}
     class="hidden"
     on:change={onChange}
   />

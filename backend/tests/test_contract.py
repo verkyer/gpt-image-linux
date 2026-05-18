@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from backend.app import main as backend_main
 from backend.app.api import jobs
 from backend.app.core import settings as config
+from backend.app.core.observability import metrics, record_job_stage_timing
 from backend.app.repositories import storage
 
 
@@ -63,11 +64,14 @@ def _configure_runtime(tmp_path: Path, *, access_key: str = "", allow_unauthenti
     config.IMPORT_MAX_COMPRESSION_RATIO = 100
     config.MAX_ACTIVE_GENERATE_JOBS = 2
     config.MAX_QUEUED_GENERATE_JOBS = 20
+    config.ENABLE_METRICS = False
+    config.SLOW_GALLERY_QUERY_MS = 200
     config.THUMBNAILS_DIR = str(images_dir / "thumbs")
     config.THUMBNAIL_MAX_SIDE = 512
 
     storage._db_initialized = False
     storage._dirs_initialized = False
+    metrics.reset()
     backend_main.app.state._state.clear()
 
 
@@ -230,10 +234,13 @@ def patch_upstream(monkeypatch):
         if progress:
             progress("building_generation_payload", "Building generation payload")
             progress("waiting_for_api", "Waiting for upstream API response")
+            record_job_stage_timing("upstream_wait", 1.25)
             progress("received_api_response", "Received upstream API response")
             progress("extracting_generation_data", "Extracting image data array")
             progress("decoding_b64_json", "Decoding b64_json image")
+            record_job_stage_timing("download_decode", 2.5)
             progress("validating_image_bytes", "Validating decoded image")
+            record_job_stage_timing("validate", 0.75)
             progress("saving_image_file", "Saving image file and gallery metadata")
         image_id = storage.generate_image_id()
         filename = f"{image_id}.png"
@@ -273,10 +280,13 @@ def patch_upstream(monkeypatch):
         if progress:
             progress("building_edit_form", "Building multipart edit request")
             progress("uploading_edit_image", "Uploading source image and edit parameters")
+            record_job_stage_timing("upstream_wait", 1.0)
             progress("received_api_response", "Received upstream API response")
             progress("extracting_edit_data", "Extracting edited image data array")
             progress("decoding_b64_json", "Decoding b64_json image")
+            record_job_stage_timing("download_decode", 2.0)
             progress("validating_image_bytes", "Validating decoded image")
+            record_job_stage_timing("validate", 0.5)
             progress("saving_images", "Saving edited images")
         image_id = storage.generate_image_id()
         filename = f"{image_id}.png"
@@ -894,6 +904,55 @@ def test_generate_and_sse_contract(client):
     assert events.headers["content-type"].startswith("text/event-stream")
     assert "event: job" in events.text
     assert job_id in events.text
+
+
+def test_job_stage_timings_and_optional_metrics(client):
+    disabled = client.get("/api/metrics")
+    assert disabled.status_code == 404
+
+    config.ENABLE_METRICS = True
+    resp = client.post(
+        "/api/generate",
+        json={
+            "prompt": "timed job",
+            "size": "1024x1024",
+            "model": "gpt-image-2",
+            "n": 1,
+            "quality": "auto",
+            "output_format": "png",
+        },
+    )
+    assert resp.status_code == 202
+    job = _wait_for_job(client, resp.json()["job_id"])
+    assert job["status"] == "success"
+    assert job["stage_timings"]["upstream_wait"] == 1.25
+    assert job["stage_timings"]["download_decode"] == 2.5
+    assert job["stage_timings"]["validate"] == 0.75
+    assert "thumbnail" in job["stage_timings"]
+    assert "db_insert" in job["stage_timings"]
+
+    metrics_resp = client.get("/api/metrics")
+    assert metrics_resp.status_code == 200
+    body = metrics_resp.json()
+    assert body["enabled"] is True
+    assert body["counters"]["image_jobs.generation.queued"] >= 1
+    assert body["counters"]["image_jobs.generation.succeeded"] >= 1
+    assert body["timings_ms"]["job_stage.upstream_wait"]["count"] >= 1
+
+
+def test_gallery_slow_query_logs_filters_page_and_total(client, caplog):
+    _fake_gallery_entry("gallery-slow", "slow query prompt", "1024x1024", "gallery-slow.png")
+    config.SLOW_GALLERY_QUERY_MS = 0
+
+    with caplog.at_level(logging.WARNING, logger="backend.app.api.routers.gallery"):
+        resp = client.get("/api/gallery?prompt=slow&page=1&page_size=1&include_total_bytes=true")
+
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 1
+    assert "Slow /api/gallery query" in caplog.text
+    assert "page=1" in caplog.text
+    assert "total=1" in caplog.text
+    assert "'prompt': 'slow'" in caplog.text
 
 
 def test_generate_and_edit_default_size_is_auto(client):
