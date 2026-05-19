@@ -110,6 +110,54 @@ class MetricsStore:
             self._samples_ms.clear()
 
 
+def build_metrics_snapshot(
+    *,
+    gauges: dict[str, int | float] | None = None,
+    rates: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    snapshot = metrics.snapshot()
+    snapshot["gauges"] = dict(sorted((gauges or {}).items()))
+    snapshot["rates"] = {
+        name: round(value, 6)
+        for name, value in sorted((rates or {}).items())
+    }
+    return snapshot
+
+
+def format_prometheus_metrics(
+    snapshot: dict[str, Any],
+    *,
+    namespace: str = "gpt_image_panel",
+) -> str:
+    lines: list[str] = []
+
+    for name, value in sorted(snapshot.get("counters", {}).items()):
+        metric_name = f"{namespace}_{_metric_name(name)}_total"
+        lines.append(f"# TYPE {metric_name} counter")
+        lines.append(f"{metric_name} {int(value)}")
+
+    for name, value in sorted(snapshot.get("gauges", {}).items()):
+        metric_name = f"{namespace}_{_metric_name(name)}"
+        lines.append(f"# TYPE {metric_name} gauge")
+        lines.append(f"{metric_name} {_format_metric_value(value)}")
+
+    for name, value in sorted(snapshot.get("rates", {}).items()):
+        metric_name = f"{namespace}_{_metric_name(name)}"
+        lines.append(f"# TYPE {metric_name} gauge")
+        lines.append(f"{metric_name} {_format_metric_value(value)}")
+
+    for name, summary in sorted(snapshot.get("timings_ms", {}).items()):
+        base_name = f"{namespace}_{_metric_name(name)}"
+        lines.append(f"# TYPE {base_name}_count gauge")
+        lines.append(f"{base_name}_count {int(summary.get('count', 0))}")
+        for field in ("p50", "p95", "max"):
+            metric_name = f"{base_name}_{field}_ms"
+            lines.append(f"# TYPE {metric_name} gauge")
+            lines.append(f"{metric_name} {_format_metric_value(summary.get(field, 0.0))}")
+
+    return "\n".join(lines) + "\n"
+
+
 def _percentile(sorted_values: list[float], percentile: float) -> float:
     if not sorted_values:
         return 0.0
@@ -130,6 +178,21 @@ def _summarize_samples(values: list[float]) -> dict[str, float | int]:
         "p95": round(_percentile(sorted_values, 0.95), 2),
         "max": round(sorted_values[-1], 2),
     }
+
+
+def _metric_name(name: str) -> str:
+    normalized = []
+    for char in name:
+        normalized.append(char if char.isalnum() else "_")
+    return "".join(normalized).strip("_").lower() or "metric"
+
+
+def _format_metric_value(value: int | float) -> str:
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, int):
+        return str(value)
+    return f"{float(value):.6f}".rstrip("0").rstrip(".")
 
 
 metrics = MetricsStore()

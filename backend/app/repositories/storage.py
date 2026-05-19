@@ -60,6 +60,7 @@ __all__ = [
     "add_to_gallery_async",
     "add_to_gallery_sync",
     "backfill_missing_gallery_bytes",
+    "close_database_connections",
     "delete_all_gallery_images",
     "delete_gallery_image",
     "delete_gallery_images",
@@ -174,7 +175,6 @@ _db_initialized = False
 _db_init_lock = threading.RLock()
 _storage_lock = threading.RLock()
 _dirs_initialized = False
-_thread_local = threading.local()
 
 _filter_options_cache: "GalleryFilterOptions | None" = None
 _filter_options_cache_lock = threading.RLock()
@@ -268,25 +268,31 @@ def verify_storage_writable():
     _ensure_database()
 
 
-def _connect() -> sqlite3.Connection:
+def _open_connection() -> sqlite3.Connection:
     _ensure_directories()
-    db_path = config.DATABASE_FILE
-    cached = getattr(_thread_local, "conn", None)
-    cached_path = getattr(_thread_local, "conn_path", None)
-    if cached is not None and cached_path == db_path:
-        return cached
-    if cached is not None:
-        try:
-            cached.close()
-        except Exception:
-            pass
-    conn = sqlite3.connect(db_path, timeout=SQLITE_TIMEOUT_SECONDS)
+    conn = sqlite3.connect(config.DATABASE_FILE, timeout=SQLITE_TIMEOUT_SECONDS)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 30000")
-    _thread_local.conn = conn
-    _thread_local.conn_path = db_path
     return conn
+
+
+@contextmanager
+def _connect() -> Iterator[sqlite3.Connection]:
+    conn = _open_connection()
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def close_database_connections():
+    """Close repository-owned SQLite handles.
+
+    Connections are intentionally short-lived now, so this is a lifecycle hook
+    for app shutdown/tests and a single place to extend if pooling returns.
+    """
+    return None
 
 
 @contextmanager

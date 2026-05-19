@@ -137,6 +137,7 @@ async def get_gallery_handler(
     metrics.observe_ms("gallery.db_query", gallery_page.query_elapsed_ms)
     if elapsed_ms >= config.SLOW_GALLERY_QUERY_MS:
         metrics.increment("gallery.slow_queries")
+        metrics.increment("sqlite.slow_queries")
         logger.warning(
             "Slow /api/gallery query: elapsed_ms=%.2f db_query_ms=%.2f page=%s page_size=%s total=%s filters=%s",
             elapsed_ms,

@@ -95,6 +95,7 @@ async def lifespan(app: FastAPI):
             await asyncio.gather(*awaitables, return_exceptions=True)
         from ..integrations.session_pool import close_pool
         await close_pool()
+        storage.close_database_connections()
 
 
 app = FastAPI(title="GPT Image Panel", lifespan=lifespan)

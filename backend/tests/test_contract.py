@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import re
+import sqlite3
 import threading
 import time
 import zipfile
@@ -73,6 +74,7 @@ def _configure_runtime(tmp_path: Path, *, access_key: str = "", allow_unauthenti
     config.THUMBNAILS_DIR = str(images_dir / "thumbs")
     config.THUMBNAIL_MAX_SIDE = 512
 
+    storage.close_database_connections()
     storage._db_initialized = False
     storage._dirs_initialized = False
     metrics.reset()
@@ -1116,7 +1118,21 @@ def test_job_stage_timings_and_optional_metrics(client):
     assert body["enabled"] is True
     assert body["counters"]["image_jobs.generation.queued"] >= 1
     assert body["counters"]["image_jobs.generation.succeeded"] >= 1
+    assert body["gauges"]["image_jobs.active"] == 0
+    assert body["gauges"]["image_jobs.running_capacity"] == 2
+    assert body["rates"]["image_jobs.generation.failure_ratio"] == 0
     assert body["timings_ms"]["job_stage.upstream_wait"]["count"] >= 1
+
+    text_resp = client.get("/api/metrics", headers={"accept": "text/plain"})
+    assert text_resp.status_code == 200
+    assert "gpt_image_panel_image_jobs_generation_queued_total" in text_resp.text
+    assert "gpt_image_panel_image_jobs_active" in text_resp.text
+    assert "gpt_image_panel_job_stage_upstream_wait_p95_ms" in text_resp.text
+
+    prometheus_resp = client.get("/api/metrics/prometheus")
+    assert prometheus_resp.status_code == 200
+    assert prometheus_resp.headers["content-type"].startswith("text/plain")
+    assert "gpt_image_panel_image_jobs_generation_failure_ratio" in prometheus_resp.text
 
 
 def test_gallery_slow_query_logs_filters_page_and_total(client, caplog):
@@ -1132,6 +1148,28 @@ def test_gallery_slow_query_logs_filters_page_and_total(client, caplog):
     assert "page=1" in caplog.text
     assert "total=1" in caplog.text
     assert "'prompt': 'slow'" in caplog.text
+    assert metrics.snapshot()["counters"]["sqlite.slow_queries"] == 1
+
+
+def test_storage_connect_closes_sqlite_handle(client, monkeypatch):
+    closed_paths: list[str] = []
+    real_connect = sqlite3.connect
+
+    class TrackedConnection(sqlite3.Connection):
+        def close(self):
+            closed_paths.append(config.DATABASE_FILE)
+            super().close()
+
+    def tracked_connect(*args, **kwargs):
+        kwargs["factory"] = TrackedConnection
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(storage.sqlite3, "connect", tracked_connect)
+
+    with storage._connect() as conn:
+        assert conn.execute("SELECT 1").fetchone()[0] == 1
+
+    assert closed_paths == [config.DATABASE_FILE]
 
 
 def test_generate_and_edit_default_size_is_auto(client):

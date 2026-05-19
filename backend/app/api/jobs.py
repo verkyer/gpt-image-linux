@@ -290,9 +290,45 @@ def count_active_jobs() -> int:
     )
 
 
+def snapshot_queue_metrics() -> dict[str, int]:
+    jobs = app.state.generate_jobs or {}
+    counts: dict[str, int] = {
+        "image_jobs.active": 0,
+        "image_jobs.queued": 0,
+        "image_jobs.running": 0,
+        "image_jobs.capacity": config.MAX_ACTIVE_GENERATE_JOBS + config.MAX_QUEUED_GENERATE_JOBS,
+        "image_jobs.running_capacity": config.MAX_ACTIVE_GENERATE_JOBS,
+        "image_jobs.queued_capacity": config.MAX_QUEUED_GENERATE_JOBS,
+        "image_jobs.tasks": len(get_generate_job_tasks()),
+        "image_jobs.sse_job_subscribers": sum(
+            len(subscribers)
+            for subscribers in get_job_subscribers().values()
+        ),
+        "image_jobs.sse_jobs_subscribers": len(get_jobs_subscribers()),
+        "edit_sources.pending_bytes": get_pending_edit_source_bytes(),
+        "edit_sources.pending_capacity_bytes": get_max_pending_edit_source_bytes(),
+    }
+    for operation in ("generation", "edit"):
+        for status in ("queued", "running"):
+            counts[f"image_jobs.{operation}.{status}.current"] = 0
+
+    for job in jobs.values():
+        status = str(job.get("status") or "")
+        if status not in ACTIVE_GENERATE_JOB_STATUSES:
+            continue
+        operation = str(job.get("operation") or "generation")
+        counts["image_jobs.active"] += 1
+        counts[f"image_jobs.{status}"] += 1
+        if operation in {"generation", "edit"}:
+            counts[f"image_jobs.{operation}.{status}.current"] += 1
+
+    return counts
+
+
 def ensure_job_queue_capacity(extra_pending_edit_source_bytes: int = 0):
     capacity = config.MAX_ACTIVE_GENERATE_JOBS + config.MAX_QUEUED_GENERATE_JOBS
     if count_active_jobs() >= capacity:
+        metrics.increment("image_jobs.rejected.queue_full")
         raise HTTPException(status_code=429, detail="Generation job queue is full")
     max_pending_edit_source_bytes = get_max_pending_edit_source_bytes()
     if (
@@ -301,6 +337,7 @@ def ensure_job_queue_capacity(extra_pending_edit_source_bytes: int = 0):
         and get_pending_edit_source_bytes() + extra_pending_edit_source_bytes
         > max_pending_edit_source_bytes
     ):
+        metrics.increment("image_jobs.rejected.edit_source_full")
         raise HTTPException(status_code=429, detail="Edit source queue is full")
 
 

@@ -28,6 +28,7 @@ def _configure_runtime(tmp_path: Path):
     config.DATABASE_FILE = str(data_dir / "app.sqlite3")
     config.DEFAULT_UPSTREAM_SOCKS5_PROXY = ""
 
+    storage.close_database_connections()
     storage._db_initialized = False
     storage._dirs_initialized = False
     metrics.reset()
