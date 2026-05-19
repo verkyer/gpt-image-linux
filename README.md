@@ -14,6 +14,12 @@ English | [中文](#中文文档)
 
 GPT Image Panel is a lightweight FastAPI web UI for image generation and image editing. It is designed as a self-hosted panel that connects to an external GPT-compatible image API and stores generated images locally.
 
+## Disclaimer
+
+This project is only a self-hosted web visualization panel for initiating image generation and image editing requests. It does not provide, wrap, proxy, resell, or modify any upstream model or API service. All generation capability, content policy enforcement, account permissions, billing, and model behavior come from the upstream API provider configured by the user.
+
+This project does not encourage or endorse generating pornographic, political, illegal, infringing, violent, hateful, or otherwise sensitive or policy-violating content. Users are solely responsible for their configured upstream service, prompts, uploaded images, generated results, storage, sharing, and any legal or platform-policy consequences. Any content generated through an upstream API is unrelated to this project and is not produced, reviewed, hosted, or approved by the project maintainers.
+
 Key characteristics:
 
 - SvelteKit + TypeScript frontend in `frontend/`
@@ -463,6 +469,12 @@ GPT Image 2 API 图像生成和编辑 Web 面板。
 ## 概述
 
 GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图像编辑。它被设计为自托管面板，连接外部 GPT 兼容图像 API，并在本地存储生成的图片。
+
+## 免责声明
+
+本项目仅是一个用于发起图像生成和图像编辑请求的自托管 Web 可视化面板。本项目不提供、不封装、不代理、不转售、也不修改任何上游模型或 API 服务。实际生成能力、内容政策执行、账号权限、计费规则和模型行为均来自用户自行配置的上游 API 服务商。
+
+本项目不鼓励、不支持生成色情、政治、违法、侵权、暴力、仇恨，或其他敏感及违反政策的内容。用户需要自行对其配置的上游服务、提示词、上传图片、生成结果、存储、传播，以及由此产生的法律或平台政策后果负责。任何通过上游 API 生成的内容均与本项目无关，亦不代表项目维护者生成、审核、托管或认可该内容。
 
 主要特点：
 
