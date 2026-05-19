@@ -26,6 +26,7 @@ type MockOptions = {
   authenticated?: boolean;
   editUploadFailure?: boolean;
   galleryImages?: GalleryImageFixture[];
+  generatedJob?: unknown;
   runningJobs?: unknown[];
   historyJobs?: unknown[];
 };
@@ -121,24 +122,56 @@ function galleryResponse(images = baseGalleryImages, includeTotalBytes = false, 
   };
 }
 
-function job(jobId: string, prompt: string, status: 'running' | 'success' = 'success') {
+type JobStatus = 'queued' | 'running' | 'success' | 'error' | 'cancelled' | 'interrupted' | 'upstream_error';
+
+function job(jobId: string, prompt: string, status: JobStatus = 'success') {
+  const stage =
+    status === 'success'
+      ? 'completed'
+      : status === 'running' || status === 'queued'
+        ? 'waiting_for_api'
+        : status === 'upstream_error'
+          ? 'generation_failed'
+          : status;
+  const message =
+    status === 'success'
+      ? 'Image generation completed'
+      : status === 'running' || status === 'queued'
+        ? 'Waiting for upstream API response'
+        : status === 'upstream_error'
+          ? 'Upstream API error'
+          : status === 'interrupted'
+            ? 'Job interrupted by server restart'
+            : 'Generation job cancelled';
+  const terminal = status !== 'running' && status !== 'queued';
+
   return {
     job_id: jobId,
     status,
-    stage: status === 'success' ? 'completed' : 'waiting_for_api',
-    message: status === 'success' ? 'Image generation completed' : 'Waiting for upstream API response',
+    stage,
+    message,
     operation: 'generation',
     image_id: 'img-1',
     image_url: '/api/image/img-1.png',
+    images: [
+      {
+        image_id: 'img-1',
+        image_url: '/api/image/img-1.png',
+        filename: 'img-1.png',
+        image_width: 1,
+        image_height: 1
+      }
+    ],
     prompt,
     size: '1024x1024',
     created_at: '2026-05-18T12:00:00Z',
     updated_at: '2026-05-18T12:00:01Z',
-    completed_at: status === 'success' ? '2026-05-18T20:00:01+08:00' : null,
+    completed_at: terminal ? '2026-05-18T20:00:01+08:00' : null,
     image_width: 1,
     image_height: 1,
     model: 'gpt-image-2',
-    duration: status === 'success' ? '1.00s' : null,
+    duration: terminal ? '1.00s' : null,
+    error: status === 'success' || status === 'running' || status === 'queued' ? null : message,
     stage_timings: {
       upstream_wait: 1.2,
       download_decode: 0.4,
@@ -273,7 +306,7 @@ async function mockApi(page: Page, options: MockOptions = {}) {
       await route.fulfill({
         status: 200,
         contentType: 'text/event-stream',
-        body: `event: job\ndata: ${JSON.stringify(job('job-generated', 'browser smoke prompt'))}\n\n`
+        body: `event: job\ndata: ${JSON.stringify(options.generatedJob ?? job('job-generated', 'browser smoke prompt'))}\n\n`
       });
       return;
     }
@@ -369,6 +402,57 @@ test('generation, gallery edit source, batch favorite, and lightbox flows work w
   await expect(lightbox).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(lightbox).toBeHidden();
+});
+
+test('multi-image job results can be previewed individually', async ({ page }) => {
+  const generatedJob = {
+    ...job('job-generated', 'browser multi prompt'),
+    image_id: 'multi-1',
+    image_url: '/api/image/multi-1.png',
+    images: [
+      {
+        image_id: 'multi-1',
+        image_url: '/api/image/multi-1.png',
+        filename: 'multi-1.png',
+        image_width: 1,
+        image_height: 1
+      },
+      {
+        image_id: 'multi-2',
+        image_url: '/api/image/multi-2.png',
+        filename: 'multi-2.png',
+        image_width: 1,
+        image_height: 1
+      }
+    ]
+  };
+  await loadApp(page, { generatedJob });
+
+  await page.getByRole('textbox', { name: 'Prompt', exact: true }).fill('browser multi prompt');
+  await page.getByRole('button', { name: 'Generate', exact: true }).click();
+  const preview = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Preview' }) });
+  await expect(preview.getByRole('img', { name: 'Generated preview' })).toBeVisible();
+  await expect(preview.getByRole('button', { name: 'Select result 2' })).toBeVisible();
+
+  await preview.getByRole('button', { name: 'Select result 2' }).click();
+  await expect(preview.getByRole('link', { name: 'Download' })).toHaveAttribute('href', '/api/download/multi-2.png');
+});
+
+test('job history shows detailed terminal statuses', async ({ page }) => {
+  await loadApp(page, {
+    historyJobs: [
+      job('cancelled-job', 'cancelled prompt', 'cancelled'),
+      job('interrupted-job', 'interrupted prompt', 'interrupted'),
+      job('upstream-job', 'upstream prompt', 'upstream_error')
+    ]
+  });
+
+  await page.getByRole('button', { name: 'Job History' }).click();
+  const jobsDrawer = page.getByRole('dialog', { name: 'Job History' });
+  await jobsDrawer.getByRole('button', { name: 'History', exact: true }).click();
+  await expect(jobsDrawer.getByText('cancelled', { exact: true })).toBeVisible();
+  await expect(jobsDrawer.getByText('interrupted', { exact: true })).toBeVisible();
+  await expect(jobsDrawer.getByText('upstream error', { exact: true })).toBeVisible();
 });
 
 test('gallery url state restores filters, lightbox, and job history tab', async ({ page }) => {

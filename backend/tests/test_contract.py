@@ -93,7 +93,13 @@ def _wait_for_job(client: TestClient, job_id: str, timeout: float = 5.0):
         resp = client.get(f"/api/generate/{job_id}")
         assert resp.status_code == 200
         last = resp.json()
-        if last["status"] in {"success", "error"}:
+        if last["status"] in {
+            "success",
+            "error",
+            "cancelled",
+            "interrupted",
+            "upstream_error",
+        }:
             return last
         time.sleep(0.05)
     raise AssertionError(f"job {job_id} did not finish: {last}")
@@ -270,26 +276,29 @@ def patch_upstream(monkeypatch):
             progress("validating_image_bytes", "Validating decoded image")
             record_job_stage_timing("validate", 0.75)
             progress("saving_image_file", "Saving image file and gallery metadata")
-        image_id = storage.generate_image_id()
-        filename = f"{image_id}.png"
-        entry = await storage.add_to_gallery_async(
-            image_bytes=PNG_BYTES,
-            image_id=image_id,
-            prompt=payload.prompt,
-            size=payload.size,
-            filename=filename,
-            metadata={
-                "model": payload.model,
-                "quality": payload.quality,
-                "output_format": payload.output_format,
-                "output_compression": payload.output_compression,
-                "response_format": payload.response_format,
-                "n": payload.n,
-                "api_path": api_path,
-                "api_preset_name": api_preset_name,
-            },
-        )
-        return [entry]
+        entries = []
+        for _index in range(payload.n):
+            image_id = storage.generate_image_id()
+            filename = f"{image_id}.png"
+            entry = await storage.add_to_gallery_async(
+                image_bytes=PNG_BYTES,
+                image_id=image_id,
+                prompt=payload.prompt,
+                size=payload.size,
+                filename=filename,
+                metadata={
+                    "model": payload.model,
+                    "quality": payload.quality,
+                    "output_format": payload.output_format,
+                    "output_compression": payload.output_compression,
+                    "response_format": payload.response_format,
+                    "n": payload.n,
+                    "api_path": api_path,
+                    "api_preset_name": api_preset_name,
+                },
+            )
+            entries.append(entry)
+        return entries
 
     async def fake_edit_api(
         api_url,
@@ -315,26 +324,29 @@ def patch_upstream(monkeypatch):
             progress("validating_image_bytes", "Validating decoded image")
             record_job_stage_timing("validate", 0.5)
             progress("saving_images", "Saving edited images")
-        image_id = storage.generate_image_id()
-        filename = f"{image_id}.png"
-        entry = await storage.add_to_gallery_async(
-            image_bytes=PNG_BYTES,
-            image_id=image_id,
-            prompt=payload.prompt,
-            size=payload.size,
-            filename=filename,
-            metadata={
-                "model": payload.model,
-                "quality": payload.quality,
-                "output_format": payload.output_format,
-                "output_compression": payload.output_compression,
-                "response_format": payload.response_format,
-                "n": payload.n,
-                "api_path": "/v1/images/edits",
-                "api_preset_name": api_preset_name,
-            },
-        )
-        return [entry]
+        entries = []
+        for _index in range(payload.n):
+            image_id = storage.generate_image_id()
+            filename = f"{image_id}.png"
+            entry = await storage.add_to_gallery_async(
+                image_bytes=PNG_BYTES,
+                image_id=image_id,
+                prompt=payload.prompt,
+                size=payload.size,
+                filename=filename,
+                metadata={
+                    "model": payload.model,
+                    "quality": payload.quality,
+                    "output_format": payload.output_format,
+                    "output_compression": payload.output_compression,
+                    "response_format": payload.response_format,
+                    "n": payload.n,
+                    "api_path": "/v1/images/edits",
+                    "api_preset_name": api_preset_name,
+                },
+            )
+            entries.append(entry)
+        return entries
 
     monkeypatch.setattr(backend_main.proxy, "call_image_generation_api", fake_generation_api)
     monkeypatch.setattr(backend_main.proxy, "call_image_edit_api", fake_edit_api)
@@ -996,6 +1008,83 @@ def test_generate_and_sse_contract(client):
     assert job_id in events.text
 
 
+def test_multi_image_job_returns_all_results(client):
+    resp = client.post(
+        "/api/generate",
+        json={
+            "prompt": "three red cubes",
+            "size": "1024x1024",
+            "model": "gpt-image-2",
+            "n": 3,
+            "quality": "auto",
+            "output_format": "png",
+        },
+    )
+    assert resp.status_code == 202
+
+    job = _wait_for_job(client, resp.json()["job_id"])
+    assert job["status"] == "success"
+    assert len(job["images"]) == 3
+    assert job["image_id"] == job["images"][0]["image_id"]
+    assert job["image_url"] == job["images"][0]["image_url"]
+    assert {image["filename"] for image in job["images"]} == {
+        f"{image['image_id']}.png" for image in job["images"]
+    }
+    assert all(image["image_url"].startswith("/api/image/") for image in job["images"])
+
+    gallery = client.get("/api/gallery")
+    assert gallery.status_code == 200
+    assert gallery.json()["total"] == 3
+
+
+def test_upstream_errors_are_reported_as_detailed_job_status(client, monkeypatch):
+    async def failing_generation_api(
+        api_url,
+        api_key,
+        api_path,
+        payload,
+        api_preset_name=None,
+        progress=None,
+        socks5_proxy=None,
+    ):
+        raise backend_main.proxy.UpstreamApiError("upstream quota exhausted")
+
+    monkeypatch.setattr(
+        backend_main.proxy,
+        "call_image_generation_api",
+        failing_generation_api,
+    )
+
+    resp = client.post(
+        "/api/generate",
+        json={"prompt": "quota test", "model": "gpt-image-2"},
+    )
+    assert resp.status_code == 202
+    job = _wait_for_job(client, resp.json()["job_id"])
+    assert job["status"] == "upstream_error"
+    assert job["stage"] == "generation_failed"
+    assert job["error"] == "upstream quota exhausted"
+
+
+def test_active_jobs_mark_interrupted_with_detailed_status(client):
+    storage.upsert_generate_job(
+        {
+            "job_id": "interrupted-job",
+            "status": "running",
+            "stage": "waiting_for_api",
+            "message": "Waiting for upstream API response",
+            "created_at": "2026-05-18T12:00:00Z",
+            "updated_at": "2026-05-18T12:00:01Z",
+        }
+    )
+
+    assert storage.mark_active_generate_jobs_interrupted() == 1
+    job = storage.get_generate_job("interrupted-job")
+    assert job is not None
+    assert job["status"] == "interrupted"
+    assert job["stage"] == "interrupted"
+
+
 def test_job_stage_timings_and_optional_metrics(client):
     disabled = client.get("/api/metrics")
     assert disabled.status_code == 404
@@ -1394,6 +1483,9 @@ def test_cancelled_edit_job_cleans_temp_source(tmp_path, monkeypatch):
                 break
             time.sleep(0.05)
 
+        job = test_client.get(f"/api/generate/{edit.json()['job_id']}").json()
+        assert job["status"] == "cancelled"
+        assert job["stage"] == "cancelled"
         assert not seen["path"].exists()
         assert jobs.get_pending_edit_source_bytes() == 0
 

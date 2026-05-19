@@ -345,6 +345,16 @@ def build_pending_job(
     }
 
 
+def gallery_entry_job_image(entry: GalleryEntry) -> dict:
+    return {
+        "image_id": entry.id,
+        "image_url": f"/api/image/{entry.filename}",
+        "filename": entry.filename,
+        "image_width": entry.image_width,
+        "image_height": entry.image_height,
+    }
+
+
 def set_generate_job_progress(
     job_id: str,
     stage: str,
@@ -561,6 +571,15 @@ async def _run_image_job(
             duration_seconds = time.monotonic() - started_at
             duration = f"{duration_seconds:.2f}s"
     except asyncio.CancelledError:
+        existing_job = app.state.generate_jobs.get(job_id) or storage.get_generate_job(job_id) or {}
+        existing_status = existing_job.get("status")
+        status = (
+            existing_status
+            if existing_status in {"cancelled", "interrupted"}
+            else "cancelled"
+        )
+        message = str(existing_job.get("message") or cancel_message)
+        stage = str(existing_job.get("stage") or "cancelled")
         stage_timings = stage_timer.snapshot()
         duration_seconds = time.monotonic() - started_at
         metrics.increment(f"image_jobs.{operation}.cancelled")
@@ -569,14 +588,14 @@ async def _run_image_job(
         store_generate_job(
             job_id,
             {
-                "status": "error",
-                "stage": "cancelled",
-                "message": cancel_message,
+                "status": status,
+                "stage": stage,
+                "message": message,
                 "operation": operation,
                 "completed_at": utc_now(),
                 "duration": f"{duration_seconds:.2f}s",
                 "stage_timings": stage_timings,
-                "error": cancel_message,
+                "error": message,
             },
         )
         trim_generate_jobs()
@@ -587,6 +606,7 @@ async def _run_image_job(
             logger.info("Image %s stopped after cancellation: job_id=%s", log_action, job_id)
             return
         error_message = get_exception_message(e)
+        status = "upstream_error" if isinstance(e, proxy.UpstreamApiError) else "error"
         stage_timings = stage_timer.snapshot()
         duration_seconds = time.monotonic() - started_at
         metrics.increment(f"image_jobs.{operation}.failed")
@@ -609,7 +629,7 @@ async def _run_image_job(
         store_generate_job(
             job_id,
             {
-                "status": "error",
+                "status": status,
                 "stage": failed_stage,
                 "message": error_message,
                 "operation": operation,
@@ -632,16 +652,21 @@ async def _run_image_job(
         "Finalizing preview image",
         operation,
     )
-    first_entry = entries[0]
     completed_at = beijing_now()
     stage_timings = stage_timer.snapshot()
     metrics.increment(f"image_jobs.{operation}.succeeded")
     metrics.observe_ms("image_job.duration", duration_seconds * 1000)
     metrics.observe_job_stage_timings(stage_timings)
-    first_entry = storage.update_gallery_entry(
-        first_entry.id,
-        {"duration": duration, "completed_at": completed_at},
-    ) or first_entry
+    updated_entries = [
+        storage.update_gallery_entry(
+            entry.id,
+            {"duration": duration, "completed_at": completed_at},
+        )
+        or entry
+        for entry in entries
+    ]
+    first_entry = updated_entries[0]
+    job_images = [gallery_entry_job_image(entry) for entry in updated_entries]
     store_generate_job(
         job_id,
         {
@@ -651,6 +676,7 @@ async def _run_image_job(
             "operation": operation,
             "image_id": first_entry.id,
             "image_url": f"/api/image/{first_entry.filename}",
+            "images": job_images,
             "prompt": first_entry.prompt,
             "size": first_entry.size,
             "image_width": first_entry.image_width,

@@ -151,6 +151,7 @@ GENERATE_JOB_COLUMNS = (
     "stage_timings_json",
     "image_id",
     "image_url",
+    "images_json",
     "image_width",
     "image_height",
     "error",
@@ -467,6 +468,7 @@ def _ensure_database():
                     stage_timings_json TEXT,
                     image_id TEXT,
                     image_url TEXT,
+                    images_json TEXT,
                     image_width INTEGER,
                     image_height INTEGER,
                     error TEXT
@@ -565,6 +567,8 @@ def _migrate_generate_jobs_schema(conn: sqlite3.Connection):
     columns = _table_columns(conn, "generate_jobs")
     if "stage_timings_json" not in columns:
         conn.execute("ALTER TABLE generate_jobs ADD COLUMN stage_timings_json TEXT")
+    if "images_json" not in columns:
+        conn.execute("ALTER TABLE generate_jobs ADD COLUMN images_json TEXT")
 
 
 def _get_setting_value(conn: sqlite3.Connection, key: str) -> str | None:
@@ -884,6 +888,28 @@ def _normalize_generate_job(job: dict[str, Any]) -> dict[str, Any]:
                 except TypeError:
                     continue
             continue
+        if column == "images_json":
+            value = job.get("images_json")
+            if value is None:
+                value = job.get("images")
+            if value is None:
+                continue
+            if isinstance(value, str):
+                try:
+                    json.loads(value)
+                except json.JSONDecodeError:
+                    continue
+                normalized[column] = value
+            else:
+                try:
+                    normalized[column] = json.dumps(
+                        value,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                except TypeError:
+                    continue
+            continue
         value = job.get(column)
         if value is None:
             continue
@@ -914,8 +940,26 @@ def _generate_job_from_row(row: sqlite3.Row) -> dict[str, Any]:
             job["stage_timings"] = json.loads(stage_timings_json)
         except json.JSONDecodeError:
             job["stage_timings"] = {}
+    images_json = job.pop("images_json", None)
+    if images_json:
+        try:
+            job["images"] = json.loads(images_json)
+        except json.JSONDecodeError:
+            job["images"] = []
     if job.get("image_id"):
         job["id"] = job["image_id"]
+    if not job.get("images") and job.get("image_id") and job.get("image_url"):
+        image_url = str(job["image_url"])
+        image: dict[str, Any] = {
+            "image_id": str(job["image_id"]),
+            "image_url": image_url,
+            "filename": image_url.rsplit("/", 1)[-1],
+        }
+        if job.get("image_width") is not None:
+            image["image_width"] = job["image_width"]
+        if job.get("image_height") is not None:
+            image["image_height"] = job["image_height"]
+        job["images"] = [image]
     return job
 
 
@@ -1863,7 +1907,7 @@ def mark_active_generate_jobs_interrupted() -> int:
             conn.execute(
                 f"""
                 UPDATE generate_jobs
-                SET status = 'error',
+                SET status = 'interrupted',
                     stage = 'interrupted',
                     message = 'Job interrupted by server restart',
                     error = 'Job interrupted by server restart',

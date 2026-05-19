@@ -74,7 +74,9 @@
 
   function statusClass(job: GenerateJobStatus) {
     if (job.status === 'success') return 'text-emerald-300';
-    if (job.status === 'error') return 'text-red-300';
+    if (job.status === 'error' || job.status === 'upstream_error') return 'text-red-300';
+    if (job.status === 'cancelled') return 'text-zinc-400';
+    if (job.status === 'interrupted') return 'text-amber-300';
     if (job.status === 'running') return 'text-cyan-300';
     return 'text-amber-300';
   }

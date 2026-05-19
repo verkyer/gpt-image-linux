@@ -1,5 +1,6 @@
 import type { GenerateJobStatus } from '$lib/api/types';
 import type { GalleryEntry } from '$lib/api/types';
+import { isFailureJobStatus } from '$lib/utils/jobs';
 
 export function imageUrl(filename: string) {
   return `/api/image/${encodeURIComponent(filename)}`;
@@ -59,7 +60,7 @@ export function galleryImageSize(image: Pick<GalleryEntry, 'size' | 'image_width
 
 export function stageLabel(job: GenerateJobStatus | null, labels?: Record<string, string>) {
   if (!job?.stage) return '';
-  if (job.status === 'error' && (job.error || job.message)) return job.error || job.message || '';
+  if (isFailureJobStatus(job.status) && (job.error || job.message)) return job.error || job.message || '';
 
   const translated = labels?.[job.stage];
   if (!translated) return job.message || job.stage.replaceAll('_', ' ');

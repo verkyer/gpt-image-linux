@@ -1,6 +1,7 @@
 export type ApiPath = '/v1/images/generations' | '/v1/responses' | '/v1/chat/completions';
 export type ApiKeySource = 'empty' | 'stored' | 'env';
 export type PresetHealthStatus = 'ok' | 'warning' | 'error';
+export type GenerateJobStatusValue = 'queued' | 'running' | 'success' | 'error' | 'cancelled' | 'interrupted' | 'upstream_error';
 
 export type ApiPreset = {
   id: string;
@@ -58,16 +59,25 @@ export type GenerateRequestBody = {
 
 export type GenerateJobResponse = {
   job_id: string;
-  status: 'queued' | 'running' | 'success' | 'error';
+  status: GenerateJobStatusValue;
   message?: string | null;
   stage?: string | null;
   operation?: 'generation' | 'edit' | null;
+};
+
+export type GenerateJobImage = {
+  image_id: string;
+  image_url: string;
+  filename: string;
+  image_width?: number | null;
+  image_height?: number | null;
 };
 
 export type GenerateJobStatus = GenerateJobResponse & {
   id?: string | null;
   image_id?: string | null;
   image_url?: string | null;
+  images?: GenerateJobImage[];
   prompt?: string | null;
   size?: string | null;
   created_at?: string | null;

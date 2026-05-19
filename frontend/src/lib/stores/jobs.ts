@@ -3,7 +3,7 @@ import { apiFetch } from '$lib/api/client';
 import { openJsonEventSource } from '$lib/api/events';
 import { t } from '$lib/i18n';
 import { filenameFromImageUrl } from '$lib/utils/format';
-import { isActiveJobStatus } from '$lib/utils/jobs';
+import { isActiveJobStatus, isFailureJobStatus } from '$lib/utils/jobs';
 import type { GenerateJobResponse, GenerateJobStatus } from '$lib/api/types';
 import type { PreviewState } from '$lib/stores/preview';
 
@@ -224,13 +224,14 @@ function createJobsStore() {
   }
 
   function previewFromJob(job: GenerateJobStatus, preview: PreviewState): PreviewState {
-    const image = job.image_url || '';
+    const primaryImage = job.images?.[0];
+    const image = primaryImage?.image_url || job.image_url || '';
     return {
       loading: isActiveJobStatus(job.status),
-      error: job.status === 'error' ? job.error || job.message || get(t).messages.jobFailed : '',
+      error: isFailureJobStatus(job.status) ? job.error || job.message || get(t).messages.jobFailed : '',
       job,
       imageUrl: image || preview.imageUrl,
-      filename: image ? filenameFromImageUrl(image) : preview.filename,
+      filename: primaryImage?.filename || (image ? filenameFromImageUrl(image) : preview.filename),
       prompt: job.prompt || preview.prompt
     };
   }

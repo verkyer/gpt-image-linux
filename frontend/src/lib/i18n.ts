@@ -130,6 +130,9 @@ const en = {
     working: 'Working on image',
     queued: 'Queued',
     generatedAlt: 'Generated preview',
+    resultCount: (count: number) => `${count} results`,
+    selectResult: (index: number) => `Select result ${index}`,
+    resultThumbAlt: (index: number) => `Generated result ${index}`,
     noPreview: 'No preview yet',
     noPreviewHint: 'Generate or edit an image to show the result.'
   },
@@ -247,7 +250,10 @@ const en = {
     queued: 'queued',
     running: 'running',
     success: 'success',
-    error: 'error'
+    error: 'error',
+    cancelled: 'cancelled',
+    interrupted: 'interrupted',
+    upstream_error: 'upstream error'
   },
   stages: {
     queued: 'Queued',
@@ -274,6 +280,8 @@ const en = {
     finalizing_preview: 'Finalizing preview image',
     completed: 'Completed',
     cancelled: 'Cancelled',
+    interrupted: 'Interrupted',
+    upstream_error: 'Upstream API error',
     generation_failed: 'Generation failed',
     edit_failed: 'Edit failed'
   }
@@ -415,6 +423,9 @@ const zh: TranslationSchema<typeof en> = {
     working: '正在处理图像',
     queued: '排队中',
     generatedAlt: '生成结果预览',
+    resultCount: (count) => `${count} 个结果`,
+    selectResult: (index) => `选择结果 ${index}`,
+    resultThumbAlt: (index) => `生成结果 ${index}`,
     noPreview: '暂无预览',
     noPreviewHint: '生成或编辑一张图片后会在这里显示结果。'
   },
@@ -532,7 +543,10 @@ const zh: TranslationSchema<typeof en> = {
     queued: '排队中',
     running: '运行中',
     success: '成功',
-    error: '错误'
+    error: '错误',
+    cancelled: '已取消',
+    interrupted: '已中断',
+    upstream_error: '上游错误'
   },
   stages: {
     queued: '排队中',
@@ -559,6 +573,8 @@ const zh: TranslationSchema<typeof en> = {
     finalizing_preview: '生成预览图',
     completed: '已完成',
     cancelled: '已取消',
+    interrupted: '已中断',
+    upstream_error: '上游 API 错误',
     generation_failed: '生成失败',
     edit_failed: '编辑失败'
   }

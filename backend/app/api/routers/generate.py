@@ -177,7 +177,7 @@ async def cancel_generate_job(job_id: str):
     store_generate_job(
         job_id,
         {
-            "status": "error",
+            "status": "cancelled",
             "stage": "cancelled",
             "message": cancel_message,
             "operation": job.get("operation"),

@@ -9,6 +9,15 @@ from ..core.validators import normalize_socks5_proxy_url
 ApiPath = Literal["/v1/images/generations", "/v1/responses", "/v1/chat/completions"]
 ApiKeySource = Literal["empty", "stored", "env"]
 PresetHealthStatus = Literal["ok", "warning", "error"]
+GenerateJobStatusValue = Literal[
+    "queued",
+    "running",
+    "success",
+    "error",
+    "cancelled",
+    "interrupted",
+    "upstream_error",
+]
 
 
 class ApiPresetResponse(BaseModel):
@@ -245,16 +254,25 @@ class GalleryFilterOptions(BaseModel):
 
 class GenerateJobResponse(BaseModel):
     job_id: str
-    status: Literal["queued", "running", "success", "error"]
+    status: GenerateJobStatusValue
     message: Optional[str] = None
     stage: Optional[str] = None
     operation: Optional[Literal["generation", "edit"]] = None
+
+
+class GenerateJobImage(BaseModel):
+    image_id: str
+    image_url: str
+    filename: str
+    image_width: Optional[int] = None
+    image_height: Optional[int] = None
 
 
 class GenerateJobStatus(GenerateJobResponse):
     id: Optional[str] = None
     image_id: Optional[str] = None
     image_url: Optional[str] = None
+    images: list[GenerateJobImage] = Field(default_factory=list)
     prompt: Optional[str] = None
     size: Optional[str] = None
     created_at: Optional[str] = None

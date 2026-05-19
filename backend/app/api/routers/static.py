@@ -100,11 +100,11 @@ async def _fetch_branch_version_text(repo: str) -> str | None:
 
 
 async def _fetch_latest_version_text(repo: str) -> str | None:
-    """Fetch latest version: prefer raw VERSION file, fallback to GitHub Release API."""
-    latest = await _fetch_branch_version_text(repo)
+    """Fetch latest version: prefer GitHub Release API, fallback to raw VERSION file."""
+    latest = await _fetch_latest_release_version(repo)
     if latest:
         return latest
-    return await _fetch_latest_release_version(repo)
+    return await _fetch_branch_version_text(repo)
 
 
 @router.get("/favicon.ico")
