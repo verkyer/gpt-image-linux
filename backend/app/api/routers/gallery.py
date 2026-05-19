@@ -190,6 +190,14 @@ async def update_gallery_favorite(
     return entry
 
 
+@router.get("/api/gallery/{image_id}", response_model=GalleryEntry)
+async def get_gallery_item(image_id: str):
+    entry = storage.get_gallery_entry(image_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Gallery entry not found")
+    return entry
+
+
 async def _image_file_response(filename: str, *, download: bool = False):
     path = storage.safe_image_path(filename)
     if not path or not path.exists():

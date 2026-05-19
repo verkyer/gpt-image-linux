@@ -176,6 +176,25 @@ async function mockApi(page: Page, options: MockOptions = {}) {
       await route.fulfill(json(galleryResponse(images, url.searchParams.get('include_total_bytes') === 'true')));
       return;
     }
+    if (url.pathname.match(/^\/api\/gallery\/[^/]+$/) && request.method() === 'GET') {
+      const id = decodeURIComponent(url.pathname.split('/').pop() || '');
+      const image = baseGalleryImages.find((entry) => entry.id === id);
+      await route.fulfill(image ? json(image) : json({ detail: 'Gallery entry not found' }, 404));
+      return;
+    }
+    if (url.pathname.match(/^\/api\/gallery\/[^/]+$/) && request.method() === 'DELETE') {
+      await route.fulfill(json({ status: 'ok', message: 'Deleted gallery entry and 1 image file(s)' }));
+      return;
+    }
+    if (url.pathname === '/api/gallery' && request.method() === 'DELETE') {
+      await route.fulfill(json({ status: 'ok', message: 'Deleted all images' }));
+      return;
+    }
+    if (url.pathname === '/api/gallery/batch/delete') {
+      const body = JSON.parse(request.postData() || '{}');
+      await route.fulfill(json({ status: 'ok', count: body.ids?.length || 0, file_count: body.ids?.length || 0 }));
+      return;
+    }
     if (url.pathname === '/api/gallery/batch/favorite') {
       const body = JSON.parse(request.postData() || '{}');
       await route.fulfill(json({ status: 'ok', count: body.ids?.length || 0, file_count: 0 }));
@@ -313,6 +332,75 @@ test('generation, gallery edit source, batch favorite, and lightbox flows work w
   await expect(lightbox).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(lightbox).toBeHidden();
+});
+
+test('gallery url state restores filters, lightbox, and job history tab', async ({ page }) => {
+  await mockApi(page);
+  await page.goto('/?prompt=Second&favorite=true&image=img-2&jobs=history');
+
+  await expect(page.getByLabel('Filter prompt')).toHaveValue('Second');
+  await expect(page).toHaveURL(/prompt=Second/);
+  await expect(page).toHaveURL(/favorite=true/);
+
+  const lightbox = page.getByRole('dialog', { name: 'Image Details' });
+  await expect(lightbox).toBeVisible();
+  await expect(lightbox).toContainText('img-2.png');
+  await expect(page).toHaveURL(/image=img-2/);
+
+  await page.keyboard.press('Escape');
+  await expect(lightbox).toBeHidden();
+  await expect(page).not.toHaveURL(/image=img-2/);
+
+  const jobsDrawer = page.getByRole('dialog', { name: 'Job History' });
+  await expect(jobsDrawer).toBeVisible();
+  await expect(jobsDrawer.getByText('saved prompt')).toBeVisible();
+  await expect(page).toHaveURL(/jobs=history/);
+
+  await page.getByLabel('Filter prompt').fill('First');
+  await expect(page).toHaveURL(/prompt=First/);
+});
+
+test('single image delete uses custom confirmation and can be undone before the server delete', async ({ page }) => {
+  const deleteRequests: string[] = [];
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    if (request.method() === 'DELETE' && url.pathname === '/api/gallery/img-1') deleteRequests.push(url.pathname);
+  });
+  await loadApp(page);
+
+  await page.locator('.gallery-card').first().getByRole('button', { name: 'Delete' }).click();
+  const confirmDialog = page.getByRole('dialog', { name: 'Delete image?' });
+  await expect(confirmDialog).toBeVisible();
+  await expect(confirmDialog).toContainText('5 seconds');
+
+  await confirmDialog.getByRole('button', { name: 'Delete' }).click();
+  await expect(page.getByRole('status')).toContainText('Image will be deleted in 5 seconds');
+  await expect(page.getByRole('img', { name: 'First gallery image' })).toBeHidden();
+
+  await page.getByRole('button', { name: 'Undo' }).click();
+  await expect(page.getByRole('status')).toContainText('Image deletion undone');
+  await expect(page.getByRole('img', { name: 'First gallery image' })).toBeVisible();
+  await page.waitForTimeout(5200);
+  expect(deleteRequests).toHaveLength(0);
+});
+
+test('delete all requires typed confirmation before submitting', async ({ page }) => {
+  const deleteAllRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return request.method() === 'DELETE' && url.pathname === '/api/gallery';
+  });
+  await loadApp(page);
+
+  await page.getByRole('button', { name: 'Delete All' }).click();
+  const confirmDialog = page.getByRole('dialog', { name: 'Delete all gallery images?' });
+  await expect(confirmDialog).toBeVisible();
+  await expect(confirmDialog.getByRole('button', { name: 'DELETE' })).toBeDisabled();
+
+  await confirmDialog.getByRole('textbox').fill('DELETE');
+  await expect(confirmDialog.getByRole('button', { name: 'DELETE' })).toBeEnabled();
+  await confirmDialog.getByRole('button', { name: 'DELETE' }).click();
+  await deleteAllRequest;
+  await expect(page.getByRole('status')).toContainText('All server images deleted');
 });
 
 test('uploaded edit sources append, submit, and clear', async ({ page }) => {

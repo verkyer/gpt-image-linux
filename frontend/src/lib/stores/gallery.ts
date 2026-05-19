@@ -1,6 +1,9 @@
 import { get, writable } from 'svelte/store';
 import { apiFetch } from '$lib/api/client';
 import { t } from '$lib/i18n';
+import { confirmStore } from '$lib/stores/confirm';
+import type { ToastOptions, ToastVariant } from '$lib/stores/ui';
+import { formatBytes } from '$lib/utils/format';
 import type { GalleryBatchResponse, GalleryEntry, GalleryResponse } from '$lib/api/types';
 
 export type GalleryFilters = {
@@ -54,6 +57,56 @@ function buildGalleryParams(page: number, filters: GalleryFilters, includeTotalB
   return params;
 }
 
+export type GalleryUrlState = {
+  page: number;
+  filters: GalleryFilters;
+};
+
+function parsePage(value: string | null | undefined) {
+  const parsed = Number.parseInt(String(value || ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+}
+
+function parseBoolean(value: string | null | undefined) {
+  const normalized = String(value || '').toLowerCase();
+  return normalized === 'true' || normalized === '1';
+}
+
+export function readGalleryUrlState(searchParams: URLSearchParams): GalleryUrlState {
+  return {
+    page: parsePage(searchParams.get('page')),
+    filters: {
+      prompt: searchParams.get('prompt') || '',
+      model: searchParams.get('model') || '',
+      preset: searchParams.get('preset') || '',
+      size: searchParams.get('size') || '',
+      dateFrom: searchParams.get('date_from') || '',
+      dateTo: searchParams.get('date_to') || '',
+      favorite: parseBoolean(searchParams.get('favorite'))
+    }
+  };
+}
+
+export function writeGalleryUrlState(searchParams: URLSearchParams, page: number, filters: GalleryFilters) {
+  searchParams.delete('page');
+  searchParams.delete('prompt');
+  searchParams.delete('model');
+  searchParams.delete('preset');
+  searchParams.delete('size');
+  searchParams.delete('date_from');
+  searchParams.delete('date_to');
+  searchParams.delete('favorite');
+
+  if (page > 1) searchParams.set('page', String(page));
+  if (filters.prompt.trim()) searchParams.set('prompt', filters.prompt.trim());
+  if (filters.model) searchParams.set('model', filters.model);
+  if (filters.preset) searchParams.set('preset', filters.preset);
+  if (filters.size) searchParams.set('size', filters.size);
+  if (filters.dateFrom) searchParams.set('date_from', filters.dateFrom);
+  if (filters.dateTo) searchParams.set('date_to', filters.dateTo);
+  if (filters.favorite) searchParams.set('favorite', 'true');
+}
+
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -76,10 +129,50 @@ function createGalleryStore() {
   let requestSeq = 0;
   let abortController: AbortController | null = null;
   let pendingRequestKey = '';
+  const pendingSingleDeletes = new Map<string, { image: GalleryEntry; timer: ReturnType<typeof setTimeout> }>();
 
   subscribe((value) => {
     state = value;
   });
+
+  function setPageAndFilters(page: number, filters: GalleryFilters) {
+    update((current) => ({
+      ...current,
+      page,
+      filters: { ...filters },
+      selectedIds: new Set(),
+      selectionMode: false
+    }));
+  }
+
+  function pendingImageMatchesFilters(image: GalleryEntry, filters: GalleryFilters) {
+    if (filters.prompt.trim() && !image.prompt.toLowerCase().includes(filters.prompt.trim().toLowerCase())) return false;
+    if (filters.model && image.model !== filters.model) return false;
+    if (filters.preset && image.api_preset_name !== filters.preset) return false;
+    if (filters.size && image.size !== filters.size) return false;
+    if (filters.favorite && !image.favorite) return false;
+    if (filters.dateFrom || filters.dateTo) {
+      const timestamp = image.completed_at || image.created_at;
+      if (filters.dateFrom && timestamp < `${filters.dateFrom}T00:00:00`) return false;
+      if (filters.dateTo && timestamp > `${filters.dateTo}T23:59:59.999999`) return false;
+    }
+    return true;
+  }
+
+  function filterPendingGallery(gallery: GalleryResponse, includeTotalBytes: boolean, filters: GalleryFilters) {
+    if (!pendingSingleDeletes.size) return gallery;
+
+    const pendingIds = new Set(pendingSingleDeletes.keys());
+    const matchingPending = [...pendingSingleDeletes.values()].filter((pending) => pendingImageMatchesFilters(pending.image, filters));
+    const hiddenBytes = matchingPending.reduce((sum, pending) => sum + (pending.image.bytes || 0), 0);
+
+    return {
+      ...gallery,
+      images: gallery.images.filter((image) => !pendingIds.has(image.id)),
+      total: Math.max(0, gallery.total - matchingPending.length),
+      total_bytes: includeTotalBytes ? Math.max(0, gallery.total_bytes - hiddenBytes) : gallery.total_bytes
+    };
+  }
 
   async function loadGallery(page = state.page, includeTotalBytes = false) {
     const filters = { ...state.filters };
@@ -90,7 +183,7 @@ function createGalleryStore() {
     pendingRequestKey = requestKey;
     abortController?.abort();
     abortController = new AbortController();
-    update((current) => ({ ...current, loading: true }));
+    update((current) => ({ ...current, loading: true, page }));
     try {
       const gallery = await apiFetch<GalleryResponse>(
         `/api/gallery?${requestKey}`,
@@ -98,12 +191,13 @@ function createGalleryStore() {
         'loading gallery'
       );
       if (seq !== requestSeq) return;
-      const visibleIds = new Set(gallery.images.map((image) => image.id));
+      const filteredGallery = filterPendingGallery(gallery, includeTotalBytes, filters);
+      const visibleIds = new Set(filteredGallery.images.map((image) => image.id));
       const selectedIds = new Set([...state.selectedIds].filter((id) => visibleIds.has(id)));
       update((current) => ({
         ...current,
-        gallery,
-        page: gallery.page,
+        gallery: filteredGallery,
+        page: filteredGallery.page,
         selectedIds,
         selectionMode: selectedIds.size > 0 ? current.selectionMode : false
       }));
@@ -123,6 +217,7 @@ function createGalleryStore() {
   function updateFilter(key: keyof GalleryFilters, value: string | boolean) {
     update((current) => ({
       ...current,
+      page: 1,
       filters: {
         ...current.filters,
         [key]: key === 'favorite' ? Boolean(value) : String(value || '')
@@ -135,7 +230,7 @@ function createGalleryStore() {
   }
 
   function resetFilters() {
-    update((current) => ({ ...current, filters: { ...defaultGalleryFilters } }));
+    update((current) => ({ ...current, page: 1, filters: { ...defaultGalleryFilters } }));
     void loadGallery(1);
   }
 
@@ -175,9 +270,28 @@ function createGalleryStore() {
     showToast(get(t).messages.selectedImagesFavorited(result.count));
   }
 
-  async function batchDelete(showToast: (message: string) => void, onDeleted?: (ids: string[]) => void) {
+  async function batchDelete(
+    showToast: (message: string, variant?: ToastVariant, options?: ToastOptions) => void,
+    onDeleted?: (ids: string[]) => void
+  ) {
     const ids = [...state.selectedIds];
-    if (!ids.length || !confirm(get(t).messages.deleteSelectedConfirm(ids.length))) return;
+    if (!ids.length) return;
+    const selectedEntries = state.gallery?.images.filter((image) => ids.includes(image.id)) || [];
+    const selectedBytes = selectedEntries.reduce((sum, image) => sum + (image.bytes || 0), 0);
+    const details = [
+      get(t).confirm.deleteSelectedDetail(ids.length),
+      selectedEntries.length ? get(t).confirm.deleteSelectedSize(formatBytes(selectedBytes)) : ''
+    ].filter(Boolean);
+    const confirmed = await confirmStore.confirm({
+      title: get(t).confirm.deleteSelectedTitle(ids.length),
+      message: get(t).confirm.deleteSelectedMessage(ids.length),
+      details,
+      confirmLabel: get(t).gallery.deleteSelected,
+      cancelLabel: get(t).confirm.cancel,
+      closeLabel: get(t).confirm.closeLabel,
+      variant: 'danger'
+    });
+    if (!confirmed) return;
     const result = await apiFetch<GalleryBatchResponse>(
       '/api/gallery/batch/delete',
       {
@@ -222,16 +336,99 @@ function createGalleryStore() {
     onChanged?.({ ...image, favorite: !image.favorite });
   }
 
-  async function deleteImage(image: GalleryEntry, showToast: (message: string) => void, onDeleted?: (image: GalleryEntry) => void) {
-    if (!confirm(get(t).messages.deleteImageConfirm)) return;
-    await apiFetch(`/api/gallery/${encodeURIComponent(image.id)}`, { method: 'DELETE' }, 'deleting image');
-    onDeleted?.(image);
-    await loadGallery(state.page);
-    showToast(get(t).messages.imageDeleted);
+  function cancelPendingSingleDelete(imageId: string) {
+    const pending = pendingSingleDeletes.get(imageId);
+    if (!pending) return false;
+    clearTimeout(pending.timer);
+    pendingSingleDeletes.delete(imageId);
+    return true;
   }
 
-  async function deleteAll(showToast: (message: string) => void, onDeleted?: () => void) {
-    if (!confirm(get(t).messages.deleteAllConfirm)) return;
+  async function deleteImage(
+    image: GalleryEntry,
+    showToast: (message: string, variant?: ToastVariant, options?: ToastOptions) => void,
+    onPendingHidden?: (image: GalleryEntry) => void,
+    onDeleted?: (image: GalleryEntry) => void
+  ) {
+    const confirmed = await confirmStore.confirm({
+      title: get(t).confirm.deleteImageTitle,
+      message: get(t).confirm.deleteImageMessage(image.filename),
+      details: [get(t).confirm.deleteImageDetail],
+      confirmLabel: get(t).common.delete,
+      cancelLabel: get(t).confirm.cancel,
+      closeLabel: get(t).confirm.closeLabel,
+      variant: 'danger'
+    });
+    if (!confirmed) return;
+
+    cancelPendingSingleDelete(image.id);
+    pendingSingleDeletes.set(image.id, {
+      image,
+      timer: setTimeout(async () => {
+        pendingSingleDeletes.delete(image.id);
+        try {
+          await apiFetch(`/api/gallery/${encodeURIComponent(image.id)}`, { method: 'DELETE' }, 'deleting image');
+          await loadGallery(state.page);
+          onDeleted?.(image);
+          showToast(get(t).messages.imageDeleted);
+        } catch (error) {
+          if (isAbortError(error)) return;
+          await loadGallery(state.page);
+          showToast(get(t).messages.imageDeletionFailed, 'error');
+        }
+      }, 5000)
+    });
+
+    update((current) => {
+      if (!current.gallery) return current;
+      return {
+        ...current,
+        gallery: {
+          ...current.gallery,
+          images: current.gallery.images.filter((entry) => entry.id !== image.id),
+          total: Math.max(0, current.gallery.total - 1),
+          total_bytes: Math.max(0, current.gallery.total_bytes - (image.bytes || 0))
+        },
+        selectedIds: new Set([...current.selectedIds].filter((id) => id !== image.id))
+      };
+    });
+    onPendingHidden?.(image);
+
+    showToast(get(t).messages.imageDeletionPending, 'status', {
+      actionLabel: get(t).common.undo,
+      onAction: async () => {
+        if (!cancelPendingSingleDelete(image.id)) return;
+        await loadGallery(state.page);
+        showToast(get(t).messages.imageDeletionUndone);
+      },
+      durationMs: 5000
+    });
+  }
+
+  async function deleteAll(
+    showToast: (message: string, variant?: ToastVariant, options?: ToastOptions) => void,
+    onDeleted?: () => void
+  ) {
+    const stats = await apiFetch<GalleryResponse>(
+      '/api/gallery?page=1&page_size=1&include_total_bytes=true',
+      {},
+      'loading gallery delete impact'
+    );
+    const confirmed = await confirmStore.confirm({
+      title: get(t).confirm.deleteAllTitle,
+      message: get(t).confirm.deleteAllMessage(stats.total),
+      details: [get(t).confirm.deleteAllDetail(formatBytes(stats.total_bytes)), get(t).confirm.deleteAllConfirmHint],
+      confirmLabel: get(t).confirm.deleteAllConfirmLabel,
+      cancelLabel: get(t).confirm.cancel,
+      closeLabel: get(t).confirm.closeLabel,
+      requiredText: get(t).confirm.deleteAllConfirmLabel,
+      requiredTextLabel: get(t).confirm.deleteAllConfirmHint,
+      variant: 'danger'
+    });
+    if (!confirmed) return;
+
+    pendingSingleDeletes.forEach((pending) => clearTimeout(pending.timer));
+    pendingSingleDeletes.clear();
     await apiFetch('/api/gallery', { method: 'DELETE' }, 'deleting all images');
     onDeleted?.();
     await loadGallery(1);
@@ -256,6 +453,8 @@ function createGalleryStore() {
   function cleanup() {
     if (filterTimer) clearTimeout(filterTimer);
     filterTimer = null;
+    pendingSingleDeletes.forEach((pending) => clearTimeout(pending.timer));
+    pendingSingleDeletes.clear();
     requestSeq += 1;
     abortController?.abort();
     abortController = null;
@@ -265,6 +464,7 @@ function createGalleryStore() {
   return {
     subscribe,
     loadGallery,
+    setPageAndFilters,
     updateFilter,
     resetFilters,
     setSelectionMode,
@@ -278,6 +478,7 @@ function createGalleryStore() {
     deleteImage,
     deleteAll,
     importArchive,
+    cancelPendingSingleDelete,
     cleanup
   };
 }

@@ -10,6 +10,7 @@
   type MaybePromise = void | Promise<void>;
 
   export let open = false;
+  export let activeTab: JobsTab = 'running';
   export let jobs: GenerateJobStatus[] = [];
   export let historyJobs: GenerateJobStatus[] = [];
   export let historyLoading = false;
@@ -17,6 +18,7 @@
   export let historyHasMore = false;
   export let selectedIds: Set<string> = new Set();
   export let onClose: () => void = () => {};
+  export let onTabChange: (tab: JobsTab) => void = () => {};
   export let onRefresh: () => MaybePromise = () => {};
   export let onRefreshHistory: () => MaybePromise = () => {};
   export let onLoadMoreHistory: () => MaybePromise = () => {};
@@ -26,25 +28,27 @@
   export let onUseJob: (job: GenerateJobStatus) => void = () => {};
   export let onRetryJob: (job: GenerateJobStatus) => void = () => {};
 
-  let activeTab: JobsTab = 'running';
+  let internalActiveTab: JobsTab = 'running';
   let historyScrollEl: HTMLDivElement | null = null;
   let historyLoadMoreRequest = false;
 
-  $: if (!open) activeTab = 'running';
-  $: if (open && activeTab === 'history' && historyLoaded && historyHasMore && !historyLoading) void fillHistoryViewportIfNeeded();
+  $: if (!open && internalActiveTab !== 'running') internalActiveTab = 'running';
+  $: if (open && internalActiveTab !== activeTab) internalActiveTab = activeTab;
+  $: if (open && internalActiveTab === 'history' && historyLoaded && historyHasMore && !historyLoading) void fillHistoryViewportIfNeeded();
 
   function selectTab(tab: JobsTab) {
-    activeTab = tab;
+    internalActiveTab = tab;
+    onTabChange(tab);
     if (tab === 'history' && !historyLoaded && !historyLoading) void onRefreshHistory();
   }
 
   function refreshCurrentTab() {
-    if (activeTab === 'history') void onRefreshHistory();
+    if (internalActiveTab === 'history') void onRefreshHistory();
     else void onRefresh();
   }
 
   async function requestMoreHistory() {
-    if (historyLoadMoreRequest || activeTab !== 'history' || historyLoading || !historyHasMore) return;
+    if (historyLoadMoreRequest || internalActiveTab !== 'history' || historyLoading || !historyHasMore) return;
     historyLoadMoreRequest = true;
     try {
       await onLoadMoreHistory();
@@ -60,7 +64,7 @@
 
   async function fillHistoryViewportIfNeeded() {
     await tick();
-    if (!historyScrollEl || activeTab !== 'history') return;
+    if (!historyScrollEl || internalActiveTab !== 'history') return;
     if (historyScrollEl.scrollHeight <= historyScrollEl.clientHeight + 160) await requestMoreHistory();
   }
 
@@ -98,32 +102,32 @@
 
       <div class="flex flex-col gap-3 border-b border-zinc-800 p-5 sm:flex-row sm:items-center sm:justify-between">
         <div class="grid grid-cols-2 rounded-lg border border-zinc-800 bg-zinc-950 p-1 text-xs font-medium">
-          <button type="button" class={`control-focus rounded-md px-3 py-1.5 ${activeTab === 'running' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-200'}`} on:click={() => selectTab('running')}>
+          <button type="button" class={`control-focus rounded-md px-3 py-1.5 ${internalActiveTab === 'running' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-200'}`} on:click={() => selectTab('running')}>
             {$t.jobs.runningTab}
           </button>
-          <button type="button" class={`control-focus rounded-md px-3 py-1.5 ${activeTab === 'history' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-200'}`} on:click={() => selectTab('history')}>
+          <button type="button" class={`control-focus rounded-md px-3 py-1.5 ${internalActiveTab === 'history' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-200'}`} on:click={() => selectTab('history')}>
             {$t.jobs.historyTab}
           </button>
         </div>
         <div class="flex justify-end gap-3">
-          {#if activeTab === 'running'}
+          {#if internalActiveTab === 'running'}
             <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" disabled={!jobs.length} on:click={onToggleAll}>
               {$t.jobs.selectAll}
             </button>
           {/if}
-          <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" disabled={activeTab === 'history' && historyLoading} on:click={refreshCurrentTab}>
+          <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" disabled={internalActiveTab === 'history' && historyLoading} on:click={refreshCurrentTab}>
             {$t.jobs.refresh}
           </button>
         </div>
       </div>
 
       <div bind:this={historyScrollEl} class="min-h-0 flex-1 overflow-y-auto p-5" on:scroll={handleHistoryScroll}>
-        {#if activeTab === 'running' && jobs.length === 0}
+        {#if internalActiveTab === 'running' && jobs.length === 0}
           <div class="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/35 px-4 py-10 text-center">
             <p class="text-sm font-medium text-zinc-300">{$t.jobs.noRunning}</p>
             <p class="mt-2 text-xs text-zinc-500">{$t.jobs.noRunningHint}</p>
           </div>
-        {:else if activeTab === 'running'}
+        {:else if internalActiveTab === 'running'}
           <div class="space-y-3">
             {#each jobs as job (job.job_id)}
               <div class="flex gap-3 rounded-xl border border-zinc-800 bg-zinc-950/45 p-4">
@@ -192,7 +196,7 @@
         {/if}
       </div>
 
-      {#if activeTab === 'running'}
+      {#if internalActiveTab === 'running'}
         <div class="border-t border-zinc-800 p-5">
           <button type="button" disabled={!selectedIds.size} class="control-focus w-full rounded-xl bg-red-600 px-4 py-3 text-sm font-semibold text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-40" on:click={onCancelSelected}>
             {$t.jobs.cancelSelected}

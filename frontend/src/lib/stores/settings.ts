@@ -1,6 +1,7 @@
 import { derived, get, writable } from 'svelte/store';
 import { apiFetch } from '$lib/api/client';
 import { t } from '$lib/i18n';
+import { confirmStore } from '$lib/stores/confirm';
 import type { PresetHealthResponse, SettingsResponse } from '$lib/api/types';
 import type { ToastVariant } from '$lib/stores/ui';
 
@@ -87,7 +88,16 @@ function createSettingsStore() {
     const current = get(settingsStore).settings;
     if (!current || current.presets.length <= 1) return;
     const active = current.presets.find((preset) => preset.id === current.active_preset_id);
-    if (!active || !confirm(get(t).messages.deletePresetConfirm(active.name || get(t).common.untitledPreset))) return;
+    if (!active) return;
+    const confirmed = await confirmStore.confirm({
+      title: get(t).confirm.deletePresetTitle,
+      message: get(t).confirm.deletePresetMessage(active.name || get(t).common.untitledPreset),
+      confirmLabel: get(t).settings.deletePreset,
+      cancelLabel: get(t).confirm.cancel,
+      closeLabel: get(t).confirm.closeLabel,
+      variant: 'danger'
+    });
+    if (!confirmed) return;
     const settings = await apiFetch<SettingsResponse>(
       `/api/settings/presets/${encodeURIComponent(active.id)}`,
       { method: 'DELETE' },

@@ -5,6 +5,14 @@ export type ToastVariant = 'status' | 'error';
 export type ToastMessage = {
   message: string;
   variant: ToastVariant;
+  actionLabel?: string;
+  onAction?: () => void;
+};
+
+export type ToastOptions = {
+  actionLabel?: string;
+  onAction?: () => void;
+  durationMs?: number;
 };
 
 export type UiState = {
@@ -31,12 +39,17 @@ function createUiStore() {
     update((state) => ({ ...state, [key]: value }));
   }
 
-  function showToast(message: string, variant: ToastVariant = 'status') {
-    setKey('toast', { message, variant });
+  function showToast(message: string, variant: ToastVariant = 'status', options: ToastOptions = {}) {
+    setKey('toast', {
+      message,
+      variant,
+      actionLabel: options.actionLabel,
+      onAction: options.onAction
+    });
     if (toastTimer) clearTimeout(toastTimer);
     toastTimer = setTimeout(() => {
       setKey('toast', null);
-    }, 2500);
+    }, options.durationMs ?? 2500);
   }
 
   function cleanup() {

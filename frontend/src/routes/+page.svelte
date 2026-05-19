@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import AccessGate from '$lib/components/AccessGate.svelte';
+  import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import EditPreviewModal from '$lib/components/EditPreviewModal.svelte';
   import EditSourcePicker from '$lib/components/EditSourcePicker.svelte';
   import GalleryGrid from '$lib/components/GalleryGrid.svelte';
@@ -16,26 +17,34 @@
   import { t } from '$lib/i18n';
   import type { GalleryEntry, GenerateJobStatus, SettingsResponse } from '$lib/api/types';
   import { accessStore } from '$lib/stores/access';
-  import { galleryStore } from '$lib/stores/gallery';
+  import { confirmStore } from '$lib/stores/confirm';
+  import { galleryStore, readGalleryUrlState, writeGalleryUrlState } from '$lib/stores/gallery';
   import { jobsStore } from '$lib/stores/jobs';
   import { DEFAULT_PROMPT_MODEL, MAX_EDIT_SOURCE_IMAGES, editSourceStore, initialPromptFormState, previewStore, type PromptFormState } from '$lib/stores/preview';
   import { settingsStore } from '$lib/stores/settings';
-  import { uiStore } from '$lib/stores/ui';
+  import { uiStore, type ToastOptions } from '$lib/stores/ui';
   import { copyText, galleryImageSize, imageUrl } from '$lib/utils/format';
 
   const VERSION_CHECK_TIMEOUT_MS = 4000;
+  type JobsTab = 'running' | 'history';
 
   let version = '';
   let latestVersion = '';
   let versionHasUpdate = false;
   let releaseUrl: string | null = null;
   let lightboxImage: GalleryEntry | null = null;
+  let jobsTab: JobsTab = 'running';
   let form: PromptFormState = { ...initialPromptFormState };
   let editPicker: EditSourcePicker;
   let editPreviewUrl = '';
   let editPreviewLabel = '';
   let lastActivePresetId = '';
   let lastActivePresetDefaultModel = DEFAULT_PROMPT_MODEL;
+  let urlSyncReady = false;
+  let applyingUrlState = false;
+  let urlSyncQueued = false;
+  let queuedUrlSyncMode: 'replace' | 'push' = 'replace';
+  let lightboxLookupSeq = 0;
 
   $: activeJobsCount = $jobsStore.jobs.length;
   $: syncFormModelToActivePreset($settingsStore.settings);
@@ -80,12 +89,126 @@
   }
 
   async function loadInitialData() {
-    await Promise.all([settingsStore.loadSettings(), galleryStore.loadGallery(1), jobsStore.loadJobs()]);
+    await Promise.all([settingsStore.loadSettings(), jobsStore.loadJobs(), applyUrlStateToApp()]);
+    urlSyncReady = true;
+    syncUrlState();
     jobsStore.startJobsEvents();
   }
 
-  function showToast(message: string, variant?: 'status' | 'error') {
-    uiStore.showToast(message, variant);
+  function showToast(message: string, variant?: 'status' | 'error', options?: ToastOptions) {
+    uiStore.showToast(message, variant, options);
+  }
+
+  function syncUrlState(mode: 'replace' | 'push' = 'replace') {
+    if (!urlSyncReady || applyingUrlState || typeof window === 'undefined') return;
+
+    const url = new URL(window.location.href);
+    writeGalleryUrlState(url.searchParams, $galleryStore.page, $galleryStore.filters);
+
+    if (lightboxImage) url.searchParams.set('image', lightboxImage.id);
+    else url.searchParams.delete('image');
+
+    if ($uiStore.jobsOpen) url.searchParams.set('jobs', jobsTab);
+    else url.searchParams.delete('jobs');
+
+    const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (nextUrl === currentUrl) return;
+    window.history[mode === 'push' ? 'pushState' : 'replaceState']({}, '', nextUrl);
+  }
+
+  function queueUrlSync(mode: 'replace' | 'push' = 'replace') {
+    if (mode === 'push') queuedUrlSyncMode = 'push';
+    if (urlSyncQueued) return;
+    urlSyncQueued = true;
+    queueMicrotask(() => {
+      urlSyncQueued = false;
+      const nextMode = queuedUrlSyncMode;
+      queuedUrlSyncMode = 'replace';
+      syncUrlState(nextMode);
+    });
+  }
+
+  function parseJobsTab(value: string | null): JobsTab | null {
+    if (value === 'history' || value === 'running') return value;
+    return null;
+  }
+
+  async function syncLightboxFromUrl(imageId: string | null | undefined) {
+    const nextImageId = String(imageId || '').trim();
+    if (!nextImageId) {
+      lightboxImage = null;
+      return;
+    }
+
+    const existing = $galleryStore.gallery?.images.find((image) => image.id === nextImageId);
+    if (existing) {
+      lightboxImage = existing;
+      return;
+    }
+
+    const seq = ++lightboxLookupSeq;
+    try {
+      const image = await apiFetch<GalleryEntry>(`/api/gallery/${encodeURIComponent(nextImageId)}`, {}, 'loading gallery image');
+      if (seq === lightboxLookupSeq) lightboxImage = image;
+    } catch {
+      if (seq !== lightboxLookupSeq) return;
+      lightboxImage = null;
+      showToast($t.messages.galleryImageNotFound, 'error');
+    }
+  }
+
+  function openLightbox(image: GalleryEntry) {
+    lightboxImage = image;
+    queueUrlSync('push');
+  }
+
+  function closeLightbox() {
+    lightboxImage = null;
+    queueUrlSync('replace');
+  }
+
+  function openJobsDrawer(tab: JobsTab = jobsTab) {
+    jobsTab = tab;
+    setUi('jobsOpen', true);
+    if (tab === 'history' && !$jobsStore.historyLoaded && !$jobsStore.historyLoading) void jobsStore.loadJobHistory();
+    queueUrlSync();
+  }
+
+  function closeJobsDrawer() {
+    setUi('jobsOpen', false);
+    queueUrlSync();
+  }
+
+  function setJobsTab(tab: JobsTab) {
+    jobsTab = tab;
+    if (tab === 'history' && !$jobsStore.historyLoaded && !$jobsStore.historyLoading) void jobsStore.loadJobHistory();
+    queueUrlSync();
+  }
+
+  async function applyUrlStateToApp() {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    const state = readGalleryUrlState(url.searchParams);
+    const nextJobsTab = parseJobsTab(url.searchParams.get('jobs'));
+    const imageId = url.searchParams.get('image');
+
+    applyingUrlState = true;
+    try {
+      galleryStore.setPageAndFilters(state.page, state.filters);
+      jobsTab = nextJobsTab || 'running';
+      setUi('jobsOpen', Boolean(nextJobsTab));
+
+      if (nextJobsTab === 'history' && !$jobsStore.historyLoaded && !$jobsStore.historyLoading) {
+        void jobsStore.loadJobHistory();
+      }
+
+      await galleryStore.loadGallery(state.page);
+      await syncLightboxFromUrl(imageId);
+    } finally {
+      applyingUrlState = false;
+    }
+    syncUrlState();
   }
 
   function setUi<K extends keyof typeof $uiStore>(key: K, value: (typeof $uiStore)[K]) {
@@ -135,10 +258,6 @@
     void settingsStore.checkPresetHealth(presetId);
   }
 
-  function openJobsDrawer() {
-    setUi('jobsOpen', true);
-  }
-
   function updatePreviewFromJob(job: GenerateJobStatus) {
     previewStore.setPreview(jobsStore.previewFromJob(job, $previewStore));
     if (job.status !== 'queued' && job.status !== 'running') {
@@ -179,7 +298,7 @@
       return;
     }
     form = { ...form, size: galleryImageSize(image) };
-    lightboxImage = null;
+    closeLightbox();
     showToast($t.messages.galleryImageReady);
   }
 
@@ -218,7 +337,7 @@
 
   async function batchDeleteGallery() {
     await galleryStore.batchDelete(showToast, (ids) => {
-      if (lightboxImage && ids.includes(lightboxImage.id)) lightboxImage = null;
+      if (lightboxImage && ids.includes(lightboxImage.id)) closeLightbox();
       if ($editSourceStore.selectedGalleryImageId && ids.includes($editSourceStore.selectedGalleryImageId)) {
         previewStore.clearGalleryEditSource($editSourceStore.selectedGalleryImageId);
         setUi('editPreviewOpen', false);
@@ -235,20 +354,26 @@
   }
 
   async function deleteImage(image: GalleryEntry) {
-    await galleryStore.deleteImage(image, showToast, () => {
-      if (lightboxImage?.id === image.id) lightboxImage = null;
-      if ($editSourceStore.selectedGalleryImageId === image.id) {
-        previewStore.clearGalleryEditSource(image.id);
-        setUi('editPreviewOpen', false);
-        editPreviewUrl = '';
-        editPreviewLabel = '';
+    await galleryStore.deleteImage(
+      image,
+      showToast,
+      () => {
+        if (lightboxImage?.id === image.id) closeLightbox();
+      },
+      () => {
+        if ($editSourceStore.selectedGalleryImageId === image.id) {
+          previewStore.clearGalleryEditSource(image.id);
+          setUi('editPreviewOpen', false);
+          editPreviewUrl = '';
+          editPreviewLabel = '';
+        }
       }
-    });
+    );
   }
 
   async function deleteAllImages() {
     await galleryStore.deleteAll(showToast, () => {
-      lightboxImage = null;
+      closeLightbox();
       previewStore.clearGalleryEditSource($editSourceStore.selectedGalleryImageId);
       setUi('editPreviewOpen', false);
       editPreviewUrl = '';
@@ -297,13 +422,13 @@
 
   function useJobAsPrompt(job: GenerateJobStatus) {
     form = jobToPromptForm(job);
-    setUi('jobsOpen', false);
+    closeJobsDrawer();
     showToast($t.messages.jobLoadedIntoPrompt);
   }
 
   function retryJob(job: GenerateJobStatus) {
     form = jobToPromptForm(job);
-    setUi('jobsOpen', false);
+    closeJobsDrawer();
     if (job.operation === 'edit') {
       if (!$editSourceStore.files.length && !$editSourceStore.selectedGalleryImageId) {
         previewStore.setError($t.messages.editRetryNeedsSource);
@@ -316,21 +441,36 @@
     generateImage();
   }
 
+  $: if (urlSyncReady) {
+    $galleryStore.page;
+    $galleryStore.filters;
+    $uiStore.jobsOpen;
+    jobsTab;
+    lightboxImage?.id;
+    queueUrlSync();
+  }
+
   onMount(() => {
     accessStore.installUnauthorizedHandler();
     void loadVersion();
     void accessStore.checkAccess(loadInitialData);
 
+    const popstate = () => {
+      void applyUrlStateToApp();
+    };
+    window.addEventListener('popstate', popstate);
+
     const keydown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       if ($uiStore.editPreviewOpen) setUi('editPreviewOpen', false);
-      else if (lightboxImage) lightboxImage = null;
+      else if (lightboxImage) closeLightbox();
       else if ($uiStore.sizeDialogOpen) setUi('sizeDialogOpen', false);
-      else if ($uiStore.jobsOpen) setUi('jobsOpen', false);
+      else if ($uiStore.jobsOpen) closeJobsDrawer();
       else if ($uiStore.settingsOpen) setUi('settingsOpen', false);
     };
     window.addEventListener('keydown', keydown);
     return () => {
+      window.removeEventListener('popstate', popstate);
       window.removeEventListener('keydown', keydown);
       jobsStore.cleanup();
       galleryStore.cleanup();
@@ -355,6 +495,8 @@
   onOpenSettings={() => setUi('settingsOpen', true)}
 />
 
+<ConfirmDialog request={$confirmStore.request} />
+
 <SettingsDrawer
   open={$uiStore.settingsOpen}
   settings={$settingsStore.settings}
@@ -371,13 +513,15 @@
 
 <JobHistoryDrawer
   open={$uiStore.jobsOpen}
+  activeTab={jobsTab}
   jobs={$jobsStore.jobs}
   historyJobs={$jobsStore.historyJobs}
   historyLoading={$jobsStore.historyLoading}
   historyLoaded={$jobsStore.historyLoaded}
   historyHasMore={$jobsStore.historyHasMore}
   selectedIds={$jobsStore.selectedIds}
-  onClose={() => setUi('jobsOpen', false)}
+  onClose={closeJobsDrawer}
+  onTabChange={setJobsTab}
   onRefresh={jobsStore.loadJobs}
   onRefreshHistory={jobsStore.loadJobHistory}
   onLoadMoreHistory={jobsStore.loadMoreJobHistory}
@@ -447,7 +591,7 @@
     onDelete={deleteImage}
     onDeleteAll={deleteAllImages}
     onImport={importArchive}
-    onOpen={(image) => (lightboxImage = image)}
+    onOpen={openLightbox}
     onEdit={prepareGalleryImageForEdit}
     selectionMode={$galleryStore.selectionMode}
     selectedIds={$galleryStore.selectedIds}
@@ -464,7 +608,7 @@
 <Lightbox
   open={Boolean(lightboxImage)}
   image={lightboxImage}
-  onClose={() => (lightboxImage = null)}
+  onClose={closeLightbox}
   onEdit={prepareGalleryImageForEdit}
   onFavorite={toggleFavorite}
   onDelete={deleteImage}

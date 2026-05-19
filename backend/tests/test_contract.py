@@ -1450,6 +1450,15 @@ def test_gallery_image_download_and_zip(client):
     assert gallery_stats.status_code == 200
     assert gallery_stats.json()["total_bytes"] == len(PNG_BYTES)
 
+    detail = client.get("/api/gallery/gallery-zip")
+    assert detail.status_code == 200
+    assert detail.json()["id"] == "gallery-zip"
+    assert detail.json()["filename"] == "gallery-zip.png"
+
+    missing_detail = client.get("/api/gallery/missing")
+    assert missing_detail.status_code == 404
+    assert missing_detail.json()["detail"] == "Gallery entry not found"
+
     image = client.get("/api/image/gallery-zip.png")
     assert image.status_code == 200
     assert image.headers["cache-control"].startswith("public")

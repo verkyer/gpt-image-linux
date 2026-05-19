@@ -33,7 +33,7 @@ Key characteristics:
 - preview + job history with SSE progress, `completed_at`, elapsed time, per-job stage timings, loading states, cancel for queued/running jobs, and reuse/retry from persisted history
 - shared queue and concurrency limits for generation/edit jobs
 - optional per-job `webhook_url` with HTTPS-only validation, SSRF checks, signing, and retry
-- gallery with filters (FTS-backed prompt search, model, preset, size, date range, favorite), lightbox, “Edit this image”, download, delete/delete-all, prompt/image-url copy, and on-demand total-size metadata
+- gallery with filters (FTS-backed prompt search, model, preset, size, date range, favorite), URL-synced page/filter/lightbox/job-history state, lightbox, “Edit this image”, download, custom delete confirmations with 5-second undo for single images, delete/delete-all, prompt/image-url copy, and on-demand total-size metadata
 - ZIP export/import (`metadata.json`) with streaming upload, safety validation, and low-memory export path
 - access-key gate, IP allowlist/proxy-header support, GitHub version badge, and CSP nonce injection
 - observability hooks for job stage timings, slow `/api/gallery` query logging, and an optional `/api/metrics` JSON endpoint
@@ -387,6 +387,7 @@ The panel supports these upstream paths. The API base URL may either omit or inc
 | `DELETE` | `/api/generate/{job_id}` | Cancel and remove a queued/running generation or edit job |
 | `GET` | `/api/gallery` | List gallery images with pagination and optional `prompt`, `model`, `preset`, `size`, `date_from`, `date_to`, `favorite`, and `include_total_bytes` filters |
 | `PATCH` | `/api/gallery/{id}/favorite` | Set or clear a gallery favorite flag |
+| `GET` | `/api/gallery/{image_id}` | Get a single gallery entry by ID |
 | `GET` | `/api/image/{filename}` | Serve image file |
 | `GET` | `/api/thumb/{filename}` | Serve or lazily create a WebP gallery thumbnail |
 | `GET` | `/api/download/{filename}` | Download image as attachment |
@@ -481,7 +482,7 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 - 预览 + 历史任务：SSE 进度、`completed_at`、耗时、任务分段耗时、加载状态、排队/运行任务取消，以及从持久化历史复用/重试
 - 生成与编辑共享并发和排队限制
 - 可选任务回调 `webhook_url`：HTTPS 校验、SSRF 防护、签名与重试
-- Gallery：筛选（FTS 提示词搜索、模型、预设、尺寸、日期区间、收藏）、Lightbox、”Edit this image”、下载/删除、复制提示词/图片链接、按需总大小统计
+- Gallery：筛选（FTS 提示词搜索、模型、预设、尺寸、日期区间、收藏）、URL 同步的 page/filter/lightbox/job history 状态、Lightbox、”Edit this image”、下载/删除、单图 5 秒撤销删除、复制提示词/图片链接、按需总大小统计
 - ZIP 导出导入（含 `metadata.json`）+ 流式上传 + 安全校验 + 低内存导出路径
 - 访问密钥、IP 白名单/反向代理头、版本检测、CSP nonce
 - 观测能力：任务分段耗时、慢 `/api/gallery` 查询日志、可选 `/api/metrics` JSON 指标
@@ -835,6 +836,7 @@ curl http://localhost:9090/health
 | `DELETE` | `/api/generate/{job_id}` | 取消并移除排队/运行中的生成或编辑任务 |
 | `GET` | `/api/gallery` | 分页查询 Gallery 图片，可选 `prompt`、`model`、`preset`、`size`、`date_from`、`date_to`、`favorite`、`include_total_bytes` 筛选 |
 | `PATCH` | `/api/gallery/{id}/favorite` | 设置或取消 Gallery 收藏标记 |
+| `GET` | `/api/gallery/{image_id}` | 按 ID 获取单个 Gallery 条目 |
 | `GET` | `/api/image/{filename}` | 访问图片文件 |
 | `GET` | `/api/thumb/{filename}` | 访问或懒生成 WebP Gallery 缩略图 |
 | `GET` | `/api/download/{filename}` | 下载图片 |
