@@ -133,47 +133,6 @@ def build_gallery_export_metadata(
     }
 
 
-def build_gallery_zip_file(entries: Iterable[GalleryEntry | dict[str, Any]]) -> Path:
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
-    temp_path = Path(temp_file.name)
-    temp_file.close()
-    used_names: set[str] = set()
-    exported_entries: list[GalleryEntry | dict[str, Any]] = []
-
-    try:
-        with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for entry in entries:
-                path = storage.safe_image_path(_entry_filename(entry))
-                if not path or not path.exists():
-                    continue
-
-                name = path.name
-                base = path.stem
-                ext = path.suffix
-                counter = 1
-                while name in used_names:
-                    name = f"{base}_{counter}{ext}"
-                    counter += 1
-                used_names.add(name)
-
-                zf.write(path, f"images/{name}")
-                if isinstance(entry, dict):
-                    exported_entries.append({**entry, "filename": name})
-                else:
-                    exported_entries.append(entry.model_copy(update={"filename": name}))
-
-            metadata = build_gallery_export_metadata(exported_entries)
-            zf.writestr(
-                "metadata.json",
-                json.dumps(metadata, ensure_ascii=False, indent=2),
-            )
-    except Exception:
-        temp_path.unlink(missing_ok=True)
-        raise
-
-    return temp_path
-
-
 def unique_export_name(path: Path, used_names: set[str]) -> str:
     name = path.name
     base = path.stem
@@ -213,10 +172,6 @@ def iter_gallery_zip_chunks(
     )
 
     yield from zs
-
-
-def remove_file(path: Path):
-    path.unlink(missing_ok=True)
 
 
 def sanitize_import_filename(filename: str, fallback_ext: str = ".png") -> str:

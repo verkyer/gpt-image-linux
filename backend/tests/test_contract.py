@@ -1478,24 +1478,6 @@ def test_gallery_image_download_and_zip(client):
         assert metadata["images"][0]["sha256"]
 
 
-def test_download_all_uses_streaming_zip(client, monkeypatch):
-    _fake_gallery_entry("stream-zip", "stream", "1024x1024", "stream-zip.png")
-
-    def boom(_entries):
-        raise AssertionError("temporary ZIP builder should not be used")
-
-    monkeypatch.setattr(
-        "backend.app.api.gallery_archive.build_gallery_zip_file",
-        boom,
-        raising=True,
-    )
-
-    resp = client.get("/api/download-all")
-    assert resp.status_code == 200
-    with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
-        assert "images/stream-zip.png" in zf.namelist()
-
-
 def test_download_all_deduplicates_shared_filenames(client):
     _fake_gallery_entry("dup-1", "first", "1024x1024", "dup.png")
     storage.add_to_gallery_sync(
