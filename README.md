@@ -333,7 +333,7 @@ The panel supports these upstream paths. The API base URL may either omit or inc
 | `DEFAULT_RESPONSES_MODEL` | `gpt-5.4` | Fallback top-level model used for `/v1/responses` when no request/preset model is provided |
 | `DEFAULT_UPSTREAM_SOCKS5_PROXY` | empty | Optional default global SOCKS5 proxy for generation/edit upstream API calls |
 | `APP_VERSION` | `VERSION` file | Override the app version shown in the UI and returned by `/api/version` |
-| `GITHUB_REPO` | `Z1rconium/gpt-image-linux` | GitHub `owner/repo` used for release update detection; set empty to disable latest-version checks |
+| `GITHUB_REPO` | `Z1rconium/gpt-image-linux` | GitHub `owner/repo` used for latest-release update detection; set empty to disable latest-version checks |
 | `ENABLE_METRICS` | `false` | Enable `/api/metrics` JSON counters and latency summaries |
 | `SLOW_GALLERY_QUERY_MS` | `200` | Log `/api/gallery` requests at or above this threshold with filters, page, total, and DB query time |
 | `ACCESS_KEY` | empty | Required by default; all non-health routes require unlock when set |
@@ -400,7 +400,7 @@ The panel supports these upstream paths. The API base URL may either omit or inc
 
 ## Runtime behavior notes
 
-- app version comes from `APP_VERSION` then `VERSION`; optional GitHub remote check can show a `New` badge without blocking usage
+- app version comes from `APP_VERSION` then `VERSION`; optional GitHub remote check reads the latest release first, falls back to the configured branch `VERSION`, and can show a `New` badge without blocking usage
 - presets and gallery/job data persist only in `DATABASE_FILE`
 - generation and edit share one queue (`MAX_ACTIVE_GENERATE_JOBS` + `MAX_QUEUED_GENERATE_JOBS`), all edit source images are staged under `DATA_DIR/edit-sources` and additionally capped by `MAX_PENDING_EDIT_SOURCE_MB`, support cancellation, and persist terminal history including `completed_at`
 - SSE is the primary progress channel; `/api/generate/jobs` provides list/history (`include_finished=true`, optional `limit`/`offset`), and `/api/generate/jobs/events` streams debounced live job-list changes from memory
@@ -783,7 +783,7 @@ curl http://localhost:9090/health
 | `DEFAULT_RESPONSES_MODEL` | `gpt-5.4` | 当请求/预设没有提供模型时，`/v1/responses` 使用的兜底顶层模型 |
 | `DEFAULT_UPSTREAM_SOCKS5_PROXY` | 空 | 可选的全局 SOCKS5 代理默认值，仅用于生成/编辑的上游 API 请求 |
 | `APP_VERSION` | `VERSION` 文件 | 覆盖界面显示和 `/api/version` 返回的当前应用版本 |
-| `GITHUB_REPO` | `Z1rconium/gpt-image-linux` | 用于检测新版本的 GitHub `owner/repo`；设为空可禁用最新版本检查 |
+| `GITHUB_REPO` | `Z1rconium/gpt-image-linux` | 用于检测 latest release 新版本的 GitHub `owner/repo`；设为空可禁用最新版本检查 |
 | `ENABLE_METRICS` | `false` | 启用 `/api/metrics` JSON counters 和延迟摘要 |
 | `SLOW_GALLERY_QUERY_MS` | `200` | `/api/gallery` 达到该阈值时记录筛选条件、页码、total 和 DB 查询耗时 |
 | `ACCESS_KEY` | 空 | 默认要求设置；设置后每个非健康路由均需解锁 |
@@ -850,7 +850,7 @@ curl http://localhost:9090/health
 
 ## 运行时注意事项
 
-- 版本读取顺序是 `APP_VERSION` -> `VERSION`；可选 GitHub 远端检查仅用于显示 `New`，不会阻塞使用
+- 版本读取顺序是 `APP_VERSION` -> `VERSION`；可选 GitHub 远端检查会先读 latest release，再回退到配置分支的 `VERSION`，仅用于显示 `New`，不会阻塞使用
 - 预设与 Gallery/Job 数据只保存在 `DATABASE_FILE`
 - 生成与编辑共用队列（`MAX_ACTIVE_GENERATE_JOBS` + `MAX_QUEUED_GENERATE_JOBS`）；所有编辑源图先落到 `DATA_DIR/edit-sources` 并额外受 `MAX_PENDING_EDIT_SOURCE_MB` 总量限制；支持取消，并持久化终态历史（含 `completed_at`）
 - SSE 是主进度通道；`/api/generate/jobs` 提供列表/历史（`include_finished=true`，可选 `limit`/`offset`），`/api/generate/jobs/events` 从内存推送 debounce 后的实时任务列表变化

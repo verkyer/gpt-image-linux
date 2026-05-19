@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from backend.app import main as backend_main
 from backend.app.api import jobs
+from backend.app.api.routers import static as static_router
 from backend.app.api.jobs import EditImageSource
 from backend.app.core import settings as config
 from backend.app.core.observability import metrics, record_job_stage_timing
@@ -347,6 +348,64 @@ def test_health_and_version(client):
     version = client.get("/api/version")
     assert version.status_code == 200
     assert version.json()["version"]
+
+
+def test_latest_version_uses_release_api_and_cache(client, monkeypatch):
+    static_router._latest_version_cache.update({"repo": None, "value": None, "fetched_at": 0.0})
+    monkeypatch.setattr(config, "ENABLE_VERSION_CHECK", True)
+    monkeypatch.setattr(config, "GITHUB_REPO", "test/repo")
+    monkeypatch.setattr(config, "APP_VERSION", "v0.4.6")
+    monkeypatch.setattr(config, "VERSION_CHECK_CACHE_SECONDS", 3600)
+
+    calls = {"release": 0, "branch": 0}
+
+    async def fake_release(repo: str):
+        calls["release"] += 1
+        assert repo == "test/repo"
+        return "0.4.7"
+
+    async def fake_branch(repo: str):
+        calls["branch"] += 1
+        return "0.4.6"
+
+    monkeypatch.setattr(static_router, "_fetch_latest_release_version", fake_release)
+    monkeypatch.setattr(static_router, "_fetch_branch_version_text", fake_branch)
+
+    first = client.get("/api/version/latest")
+    assert first.status_code == 200
+    first_body = first.json()
+    assert first_body["latest_version"] == "0.4.7"
+    assert first_body["has_update"] is True
+    assert first_body["checked_at"]
+
+    second = client.get("/api/version/latest")
+    assert second.status_code == 200
+    assert second.json()["latest_version"] == "0.4.7"
+    assert second.json()["has_update"] is True
+    assert calls == {"release": 1, "branch": 0}
+
+
+def test_latest_version_falls_back_to_branch_version(client, monkeypatch):
+    static_router._latest_version_cache.update({"repo": None, "value": None, "fetched_at": 0.0})
+    monkeypatch.setattr(config, "ENABLE_VERSION_CHECK", True)
+    monkeypatch.setattr(config, "GITHUB_REPO", "test/repo")
+    monkeypatch.setattr(config, "APP_VERSION", "v0.4.6")
+    monkeypatch.setattr(config, "VERSION_CHECK_CACHE_SECONDS", 0)
+
+    async def fake_release(repo: str):
+        return None
+
+    async def fake_branch(repo: str):
+        return "0.4.8"
+
+    monkeypatch.setattr(static_router, "_fetch_latest_release_version", fake_release)
+    monkeypatch.setattr(static_router, "_fetch_branch_version_text", fake_branch)
+
+    response = client.get("/api/version/latest")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["latest_version"] == "0.4.8"
+    assert body["has_update"] is True
 
 
 def test_frontend_index_uses_csp_nonce(tmp_path, monkeypatch):
