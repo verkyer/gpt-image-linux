@@ -585,7 +585,7 @@
     loading={$galleryStore.loading}
     onFilter={galleryStore.updateFilter}
     onResetFilters={galleryStore.resetFilters}
-    onPage={(delta) => galleryStore.loadGallery($galleryStore.page + delta)}
+    onPage={galleryStore.loadGallery}
     onLoadStats={() => galleryStore.loadGallery($galleryStore.page, true)}
     onFavorite={toggleFavorite}
     onDelete={deleteImage}

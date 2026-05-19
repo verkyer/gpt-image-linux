@@ -165,6 +165,10 @@ const en = {
     emptyHint: 'Describe an image and hit Generate.',
     previous: 'Previous',
     next: 'Next',
+    pageInputPrefix: 'Page',
+    pageInputSuffix: (totalPages: number) => `/ ${totalPages}`,
+    jumpPageLabel: 'Jump to page',
+    jumpPageHint: (totalPages: number) => `Enter a page number from 1 to ${totalPages}, then press Enter`,
     page: (page: number, totalPages: number) => `Page ${page} / ${totalPages}`
   },
   lightbox: {
@@ -446,6 +450,10 @@ const zh: TranslationSchema<typeof en> = {
     emptyHint: '输入图像描述并点击生成。',
     previous: '上一页',
     next: '下一页',
+    pageInputPrefix: '第',
+    pageInputSuffix: (totalPages: number) => `/ ${totalPages} 页`,
+    jumpPageLabel: '跳转页码',
+    jumpPageHint: (totalPages: number) => `输入 1 到 ${totalPages} 的页码后按回车`,
     page: (page, totalPages) => `第 ${page} / ${totalPages} 页`
   },
   lightbox: {

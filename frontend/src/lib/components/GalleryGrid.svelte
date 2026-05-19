@@ -9,7 +9,7 @@
   export let loading = false;
   export let onFilter: (key: keyof GalleryFilters, value: string | boolean) => void = () => {};
   export let onResetFilters: () => void = () => {};
-  export let onPage: (delta: number) => void = () => {};
+  export let onPage: (page: number) => void = () => {};
   export let onLoadStats: () => void = () => {};
   export let onFavorite: (image: GalleryEntry) => void = () => {};
   export let onDelete: (image: GalleryEntry) => void = () => {};
@@ -30,10 +30,14 @@
   const skeletonCards = Array.from({ length: 6 });
 
   let importInput: HTMLInputElement;
+  let pageInput = '1';
 
   const EAGER_THUMB_COUNT = 6;
 
   $: images = gallery?.images || [];
+  $: currentPage = gallery?.page || 1;
+  $: totalPages = Math.max(gallery?.total_pages || 1, 1);
+  $: pageInput = String(currentPage);
   $: initialLoading = loading && images.length === 0;
   $: selectedCount = selectedIds.size;
   $: hasSelection = selectedCount > 0;
@@ -65,6 +69,29 @@
     event.preventDefault();
     event.stopPropagation();
     action();
+  }
+
+  function clampPage(page: number) {
+    return Math.min(Math.max(page, 1), totalPages);
+  }
+
+  function commitPageInput() {
+    const value = pageInput.trim();
+    const requestedPage = /^\d+$/.test(value) ? Number.parseInt(value, 10) : Number.NaN;
+    if (!Number.isFinite(requestedPage)) {
+      pageInput = String(currentPage);
+      return;
+    }
+
+    const nextPage = clampPage(requestedPage);
+    pageInput = String(nextPage);
+    if (nextPage !== currentPage) onPage(nextPage);
+  }
+
+  function handlePageInputKeydown(event: KeyboardEvent) {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    commitPageInput();
   }
 </script>
 
@@ -235,12 +262,28 @@
       </div>
     </div>
 
-    <div class="mt-5 flex items-center justify-between">
-      <button type="button" disabled={loading || !gallery?.has_prev} class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" on:click={() => onPage(-1)}>
+    <div class="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <button type="button" disabled={loading || !gallery?.has_prev} class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" on:click={() => onPage(clampPage(currentPage - 1))}>
         {$t.gallery.previous}
       </button>
-      <span class="text-xs text-zinc-500">{$t.gallery.page(gallery?.page || 1, gallery?.total_pages || 1)}</span>
-      <button type="button" disabled={loading || !gallery?.has_next} class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" on:click={() => onPage(1)}>
+      <label class="flex items-center justify-center gap-2 text-xs text-zinc-500">
+        <span>{$t.gallery.pageInputPrefix}</span>
+        <input
+          type="number"
+          min="1"
+          max={totalPages}
+          inputmode="numeric"
+          value={pageInput}
+          disabled={loading}
+          aria-label={$t.gallery.jumpPageLabel}
+          title={$t.gallery.jumpPageHint(totalPages)}
+          class="control-focus h-9 w-16 rounded-lg border border-zinc-800 bg-zinc-950 px-2 text-center text-sm text-zinc-100 focus:border-emerald-500 disabled:opacity-50"
+          on:input={(event) => (pageInput = event.currentTarget.value)}
+          on:keydown={handlePageInputKeydown}
+        />
+        <span>{$t.gallery.pageInputSuffix(totalPages)}</span>
+      </label>
+      <button type="button" disabled={loading || !gallery?.has_next} class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" on:click={() => onPage(clampPage(currentPage + 1))}>
         {$t.gallery.next}
       </button>
     </div>

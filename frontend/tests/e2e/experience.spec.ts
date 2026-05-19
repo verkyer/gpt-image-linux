@@ -5,14 +5,32 @@ const PNG_BYTES = Buffer.from(
   'base64'
 );
 
+type GalleryImageFixture = {
+  id: string;
+  prompt: string;
+  size: string;
+  filename: string;
+  thumbnail_url: string;
+  created_at: string;
+  completed_at: string;
+  image_width: number;
+  image_height: number;
+  model: string;
+  api_preset_name: string;
+  duration: string;
+  favorite: boolean;
+  bytes: number;
+};
+
 type MockOptions = {
   authenticated?: boolean;
   editUploadFailure?: boolean;
+  galleryImages?: GalleryImageFixture[];
   runningJobs?: unknown[];
   historyJobs?: unknown[];
 };
 
-const baseGalleryImages = [
+const baseGalleryImages: GalleryImageFixture[] = [
   {
     id: 'img-1',
     prompt: 'First gallery image',
@@ -79,16 +97,22 @@ function json(body: unknown, status = 200) {
   };
 }
 
-function galleryResponse(images = baseGalleryImages, includeTotalBytes = false) {
+function galleryResponse(images = baseGalleryImages, includeTotalBytes = false, requestedPage = 1) {
+  const pageSize = 9;
+  const totalPages = Math.max(Math.ceil(images.length / pageSize), 1);
+  const parsedPage = Number.isFinite(requestedPage) ? requestedPage : 1;
+  const page = Math.min(Math.max(parsedPage, 1), totalPages);
+  const pageImages = images.slice((page - 1) * pageSize, page * pageSize);
+
   return {
     total: images.length,
     total_bytes: includeTotalBytes ? images.reduce((sum, image) => sum + image.bytes, 0) : 0,
-    page: 1,
-    page_size: 9,
-    total_pages: 1,
-    has_prev: false,
-    has_next: false,
-    images,
+    page,
+    page_size: pageSize,
+    total_pages: totalPages,
+    has_prev: page > 1,
+    has_next: page < totalPages,
+    images: pageImages,
     filter_options: {
       models: ['gpt-image-2'],
       presets: ['Default'],
@@ -129,8 +153,19 @@ function manyJobs(count: number) {
   return Array.from({ length: count }, (_, index) => job(`job-${index}`, `history prompt ${index}`, 'running'));
 }
 
+function manyGalleryImages(count: number) {
+  return Array.from({ length: count }, (_, index) => ({
+    ...baseGalleryImages[index % baseGalleryImages.length],
+    id: `paged-img-${index + 1}`,
+    prompt: `Paged gallery image ${index + 1}`,
+    filename: `paged-img-${index + 1}.png`,
+    thumbnail_url: `/api/thumb/paged-img-${index + 1}.png`
+  }));
+}
+
 async function mockApi(page: Page, options: MockOptions = {}) {
   let authenticated = options.authenticated ?? true;
+  const galleryImages = options.galleryImages ?? baseGalleryImages;
   const runningJobs = options.runningJobs ?? [];
   const historyJobs = options.historyJobs ?? [job('history-1', 'saved prompt')];
 
@@ -170,10 +205,11 @@ async function mockApi(page: Page, options: MockOptions = {}) {
     }
     if (url.pathname === '/api/gallery' && request.method() === 'GET') {
       const prompt = url.searchParams.get('prompt') || '';
+      const requestedPage = Number.parseInt(url.searchParams.get('page') || '1', 10);
       const images = prompt
-        ? baseGalleryImages.filter((image) => image.prompt.toLowerCase().includes(prompt.toLowerCase()))
-        : baseGalleryImages;
-      await route.fulfill(json(galleryResponse(images, url.searchParams.get('include_total_bytes') === 'true')));
+        ? galleryImages.filter((image) => image.prompt.toLowerCase().includes(prompt.toLowerCase()))
+        : galleryImages;
+      await route.fulfill(json(galleryResponse(images, url.searchParams.get('include_total_bytes') === 'true', requestedPage)));
       return;
     }
     if (url.pathname.match(/^\/api\/gallery\/[^/]+$/) && request.method() === 'GET') {
@@ -358,6 +394,27 @@ test('gallery url state restores filters, lightbox, and job history tab', async 
 
   await page.getByLabel('Filter prompt').fill('First');
   await expect(page).toHaveURL(/prompt=First/);
+});
+
+test('gallery page input jumps to the requested page on Enter', async ({ page }) => {
+  await loadApp(page, { galleryImages: manyGalleryImages(10) });
+
+  await expect(page.getByRole('img', { name: 'Paged gallery image 1', exact: true })).toBeVisible();
+  const pageInput = page.getByLabel('Jump to page');
+  await expect(pageInput).toHaveValue('1');
+
+  const nextPageRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return request.method() === 'GET' && url.pathname === '/api/gallery' && url.searchParams.get('page') === '2';
+  });
+  await pageInput.fill('2');
+  await pageInput.press('Enter');
+  await nextPageRequest;
+
+  await expect(page.getByRole('img', { name: 'Paged gallery image 10', exact: true })).toBeVisible();
+  await expect(page.getByRole('img', { name: 'Paged gallery image 1', exact: true })).toBeHidden();
+  await expect(pageInput).toHaveValue('2');
+  await expect(page).toHaveURL(/page=2/);
 });
 
 test('single image delete uses custom confirmation and can be undone before the server delete', async ({ page }) => {
