@@ -111,6 +111,7 @@ def _resolve_export_metadata_for_entry(
 
 def build_gallery_export_metadata(
     entries: Iterable[GalleryEntry | dict[str, Any]],
+    skipped: Iterable[dict[str, Any]] | None = None,
 ) -> dict:
     exported_at = utc_now()
     images: list[dict[str, Any]] = []
@@ -122,7 +123,7 @@ def build_gallery_export_metadata(
             data = _entry_to_dict(entry)
         images.append(data)
 
-    return {
+    metadata = {
         "schema_version": 1,
         "exported_at": exported_at,
         "app": {
@@ -131,6 +132,10 @@ def build_gallery_export_metadata(
         },
         "images": images,
     }
+    skipped_entries = list(skipped or [])
+    if skipped_entries:
+        metadata["skipped"] = skipped_entries
+    return metadata
 
 
 def unique_export_name(path: Path, used_names: set[str]) -> str:
@@ -147,14 +152,23 @@ def unique_export_name(path: Path, used_names: set[str]) -> str:
 
 def iter_gallery_zip_chunks(
     entries: Iterable[GalleryEntry | dict[str, Any]],
+    skipped: Iterable[dict[str, Any]] | None = None,
 ) -> Iterator[bytes]:
     used_names: set[str] = set()
     exported_entries: list[GalleryEntry | dict[str, Any]] = []
+    skipped_entries: list[dict[str, Any]] = list(skipped or [])
     zs = ZipStream(compress_type=zipfile.ZIP_STORED)
 
     for entry in entries:
         path = storage.safe_image_path(_entry_filename(entry))
         if not path or not path.exists():
+            skipped_entries.append(
+                {
+                    "id": _entry_to_dict(entry).get("id"),
+                    "filename": _entry_filename(entry),
+                    "reason": "image_file_missing",
+                }
+            )
             continue
 
         name = unique_export_name(path, used_names)
@@ -164,7 +178,7 @@ def iter_gallery_zip_chunks(
             exported_entries.append(entry.model_copy(update={"filename": name}))
         zs.add_path(path, arcname=f"images/{name}")
 
-    metadata = build_gallery_export_metadata(exported_entries)
+    metadata = build_gallery_export_metadata(exported_entries, skipped_entries)
     zs.add(
         json.dumps(metadata, ensure_ascii=False, indent=2).encode("utf-8"),
         arcname="metadata.json",

@@ -1,12 +1,13 @@
 <script lang="ts">
   import type { GalleryEntry, GalleryResponse } from '$lib/api/types';
   import { t } from '$lib/i18n';
-  import type { GalleryFilters } from '$lib/stores/gallery';
+  import type { GalleryFilters, GalleryOperationStatus } from '$lib/stores/gallery';
   import { formatBytes, thumbnailUrl } from '$lib/utils/format';
 
   export let gallery: GalleryResponse | null = null;
   export let filters: GalleryFilters;
   export let loading = false;
+  export let operationStatus: GalleryOperationStatus | null = null;
   export let onFilter: (key: keyof GalleryFilters, value: string | boolean) => void = () => {};
   export let onResetFilters: () => void = () => {};
   export let onPage: (page: number) => void = () => {};
@@ -15,6 +16,7 @@
   export let onDelete: (image: GalleryEntry) => void = () => {};
   export let onDeleteAll: () => void = () => {};
   export let onImport: (file: File) => void = () => {};
+  export let onExport: () => void = () => {};
   export let onOpen: (image: GalleryEntry) => void = () => {};
   export let onEdit: (image: GalleryEntry) => void = () => {};
   export let selectionMode = false;
@@ -39,6 +41,7 @@
   $: totalPages = Math.max(gallery?.total_pages || 1, 1);
   $: pageInput = String(currentPage);
   $: initialLoading = loading && images.length === 0;
+  $: busy = loading || Boolean(operationStatus);
   $: selectedCount = selectedIds.size;
   $: hasSelection = selectedCount > 0;
   $: hasFilters = Boolean(
@@ -114,10 +117,12 @@
       <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800" on:click={() => onSelectionMode(!selectionMode)}>
         {selectionMode ? $t.gallery.cancelSelection : $t.gallery.select}
       </button>
-      <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800" on:click={() => importInput.click()}>
-        {$t.gallery.import}
+      <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" disabled={busy} on:click={() => importInput.click()}>
+        {operationStatus?.kind === 'import' ? $t.gallery.importing : $t.gallery.import}
       </button>
-      <a href="/api/download-all" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800">{$t.gallery.exportZip}</a>
+      <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" disabled={busy} on:click={onExport}>
+        {operationStatus?.kind === 'export' ? $t.gallery.exporting : $t.gallery.exportZip}
+      </button>
       <button type="button" class="control-focus rounded-lg border border-red-500/40 px-3 py-2 text-xs text-red-300 hover:bg-red-500/10" on:click={onDeleteAll}>
         {$t.gallery.deleteAll}
       </button>
@@ -186,10 +191,29 @@
       <div class="flex flex-wrap gap-2">
         <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800" on:click={onSelectPage}>{$t.gallery.selectAllPage}</button>
         <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" disabled={!hasSelection} on:click={onClearSelection}>{$t.gallery.clearSelection}</button>
-        <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" disabled={!hasSelection} on:click={onBatchDownload}>{$t.gallery.downloadSelected}</button>
-        <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" disabled={!hasSelection} on:click={() => onBatchFavorite(true)}>{$t.gallery.favoriteSelected}</button>
-        <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" disabled={!hasSelection} on:click={() => onBatchFavorite(false)}>{$t.gallery.unfavoriteSelected}</button>
-        <button type="button" class="control-focus rounded-lg border border-red-500/40 px-3 py-2 text-xs text-red-300 hover:bg-red-500/10 disabled:opacity-40" disabled={!hasSelection} on:click={onBatchDelete}>{$t.gallery.deleteSelected}</button>
+        <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" disabled={!hasSelection || busy} on:click={onBatchDownload}>{operationStatus?.kind === 'download' ? $t.gallery.downloading : $t.gallery.downloadSelected}</button>
+        <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" disabled={!hasSelection || busy} on:click={() => onBatchFavorite(true)}>{$t.gallery.favoriteSelected}</button>
+        <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" disabled={!hasSelection || busy} on:click={() => onBatchFavorite(false)}>{$t.gallery.unfavoriteSelected}</button>
+        <button type="button" class="control-focus rounded-lg border border-red-500/40 px-3 py-2 text-xs text-red-300 hover:bg-red-500/10 disabled:opacity-40" disabled={!hasSelection || busy} on:click={onBatchDelete}>{$t.gallery.deleteSelected}</button>
+      </div>
+    </div>
+  {/if}
+
+  {#if operationStatus}
+    <div class="mb-4 rounded-xl border border-sky-500/30 bg-sky-500/10 p-3" role="status" aria-live="polite">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <p class="text-xs font-semibold text-sky-100">{operationStatus.label}</p>
+          <p class="mt-1 text-xs text-sky-200/80">{operationStatus.detail}</p>
+        </div>
+        <div class="text-xs text-sky-200">{operationStatus.progress === null ? $t.gallery.notInterruptible : `${operationStatus.progress}%`}</div>
+      </div>
+      <div class="mt-3 h-1.5 overflow-hidden rounded-full bg-sky-950/70">
+        {#if operationStatus.progress === null}
+          <div class="h-full w-1/3 animate-pulse rounded-full bg-sky-300"></div>
+        {:else}
+          <div class="h-full rounded-full bg-sky-300 transition-[width]" style={`width: ${operationStatus.progress}%`}></div>
+        {/if}
       </div>
     </div>
   {/if}

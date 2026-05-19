@@ -19,10 +19,18 @@ export type GalleryFilters = {
 export type GalleryState = {
   gallery: GalleryResponse | null;
   loading: boolean;
+  operationStatus: GalleryOperationStatus | null;
   page: number;
   filters: GalleryFilters;
   selectionMode: boolean;
   selectedIds: Set<string>;
+};
+
+export type GalleryOperationStatus = {
+  kind: 'import' | 'export' | 'download';
+  label: string;
+  detail: string;
+  progress: number | null;
 };
 
 export const defaultGalleryFilters: GalleryFilters = {
@@ -38,6 +46,7 @@ export const defaultGalleryFilters: GalleryFilters = {
 const initialGalleryState: GalleryState = {
   gallery: null,
   loading: false,
+  operationStatus: null,
   page: 1,
   filters: { ...defaultGalleryFilters },
   selectionMode: false,
@@ -118,6 +127,21 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+function parseHeaderInt(headers: Headers, name: string) {
+  const parsed = Number.parseInt(headers.get(name) || '', 10);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function filenameFromContentDisposition(header: string | null, fallback: string) {
+  const match = header?.match(/filename="?([^";]+)"?/i);
+  return match?.[1] || fallback;
+}
+
+function operationProgressDetail(loaded: number, total: number) {
+  if (total > 0) return `${formatBytes(loaded)} / ${formatBytes(total)}`;
+  return loaded > 0 ? formatBytes(loaded) : '';
+}
+
 function isAbortError(error: unknown) {
   return error instanceof Error && error.name === 'AbortError';
 }
@@ -134,6 +158,50 @@ function createGalleryStore() {
   subscribe((value) => {
     state = value;
   });
+
+  function setOperationStatus(operationStatus: GalleryOperationStatus | null) {
+    update((current) => ({ ...current, operationStatus }));
+  }
+
+  function batchToastMessage(action: 'delete' | 'favorite', result: GalleryBatchResponse) {
+    const updatedCount = result.updated_count ?? result.count;
+    const missingCount = result.missing_count ?? Math.max(0, (result.requested_count || 0) - updatedCount);
+    if (action === 'delete') return get(t).messages.selectedImagesDeleted(updatedCount, missingCount);
+    return get(t).messages.selectedImagesFavorited(updatedCount, missingCount);
+  }
+
+  async function downloadResponseBlob(
+    response: Response,
+    kind: GalleryOperationStatus['kind'],
+    label: string,
+    initialDetail: string
+  ) {
+    const total = Number.parseInt(response.headers.get('Content-Length') || '0', 10);
+    if (!response.body) return response.blob();
+
+    const reader = response.body.getReader();
+    const chunks: BlobPart[] = [];
+    let loaded = 0;
+    setOperationStatus({ kind, label, detail: initialDetail, progress: total > 0 ? 0 : null });
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      const chunk = new Uint8Array(value.byteLength);
+      chunk.set(value);
+      chunks.push(chunk);
+      loaded += value.byteLength;
+      setOperationStatus({
+        kind,
+        label,
+        detail: operationProgressDetail(loaded, total) || initialDetail,
+        progress: total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : null
+      });
+    }
+
+    return new Blob(chunks, { type: response.headers.get('Content-Type') || 'application/zip' });
+  }
 
   function setPageAndFilters(page: number, filters: GalleryFilters) {
     update((current) => ({
@@ -267,7 +335,7 @@ function createGalleryStore() {
     );
     await loadGallery(state.page);
     onAffected?.(ids, favorite);
-    showToast(get(t).messages.selectedImagesFavorited(result.count));
+    showToast(batchToastMessage('favorite', result));
   }
 
   async function batchDelete(
@@ -304,22 +372,66 @@ function createGalleryStore() {
     onDeleted?.(ids);
     clearSelection();
     await loadGallery(state.page);
-    showToast(get(t).messages.selectedImagesDeleted(result.count));
+    showToast(batchToastMessage('delete', result));
   }
 
-  async function batchDownload() {
+  async function batchDownload(showToast?: (message: string) => void) {
     const ids = [...state.selectedIds];
     if (!ids.length) return;
-    const response = await fetch('/api/gallery/batch/download', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { Accept: 'application/zip', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids })
+    setOperationStatus({
+      kind: 'download',
+      label: get(t).gallery.downloadingSelected,
+      detail: get(t).gallery.downloadPreparing(ids.length),
+      progress: null
     });
-    if (!response.ok) {
-      throw new Error(get(t).messages.requestFailed);
+    try {
+      const response = await fetch('/api/gallery/batch/download', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { Accept: 'application/zip', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids })
+      });
+      if (!response.ok) {
+        throw new Error(get(t).messages.requestFailed);
+      }
+      const blob = await downloadResponseBlob(
+        response,
+        'download',
+        get(t).gallery.downloadingSelected,
+        get(t).gallery.browserSavingDownload
+      );
+      downloadBlob(blob, filenameFromContentDisposition(response.headers.get('Content-Disposition'), 'gpt-images-selected.zip'));
+      const requestedCount = parseHeaderInt(response.headers, 'X-Gallery-Requested-Count') || ids.length;
+      const exportedCount = parseHeaderInt(response.headers, 'X-Gallery-Exported-Count') || requestedCount;
+      const missingCount = parseHeaderInt(response.headers, 'X-Gallery-Missing-Count');
+      showToast?.(get(t).messages.selectedImagesDownloaded(exportedCount, missingCount));
+    } finally {
+      setOperationStatus(null);
     }
-    downloadBlob(await response.blob(), 'gpt-images-selected.zip');
+  }
+
+  async function exportArchive(showToast?: (message: string) => void) {
+    setOperationStatus({
+      kind: 'export',
+      label: get(t).gallery.exportingArchive,
+      detail: get(t).gallery.exportPreparing,
+      progress: null
+    });
+    try {
+      const response = await fetch('/api/download-all', {
+        method: 'GET',
+        credentials: 'same-origin',
+        headers: { Accept: 'application/zip' }
+      });
+      if (!response.ok) {
+        throw new Error(get(t).messages.requestFailed);
+      }
+      const blob = await downloadResponseBlob(response, 'export', get(t).gallery.exportingArchive, get(t).gallery.browserSavingDownload);
+      downloadBlob(blob, filenameFromContentDisposition(response.headers.get('Content-Disposition'), 'gpt-images.zip'));
+      showToast?.(get(t).messages.exportReady);
+    } finally {
+      setOperationStatus(null);
+    }
   }
 
   async function toggleFavorite(image: GalleryEntry, onChanged?: (image: GalleryEntry) => void) {
@@ -438,16 +550,32 @@ function createGalleryStore() {
   async function importArchive(file: File, showToast: (message: string) => void) {
     const formData = new FormData();
     formData.append('archive', file, file.name);
-    const result = await apiFetch<{ status: string; imported: number }>(
-      '/api/import',
-      {
-        method: 'POST',
-        body: formData
-      },
-      'importing archive'
-    );
-    await loadGallery(1);
-    showToast(get(t).messages.imported(result.imported));
+    setOperationStatus({
+      kind: 'import',
+      label: get(t).gallery.importingArchive,
+      detail: get(t).gallery.importingArchiveDetail(formatBytes(file.size)),
+      progress: null
+    });
+    try {
+      const result = await apiFetch<{ status: string; imported: number }>(
+        '/api/import',
+        {
+          method: 'POST',
+          body: formData
+        },
+        'importing archive'
+      );
+      setOperationStatus({
+        kind: 'import',
+        label: get(t).gallery.importingArchive,
+        detail: get(t).gallery.refreshingAfterImport,
+        progress: null
+      });
+      await loadGallery(1);
+      showToast(get(t).messages.imported(result.imported));
+    } finally {
+      setOperationStatus(null);
+    }
   }
 
   function cleanup() {
@@ -459,6 +587,7 @@ function createGalleryStore() {
     abortController?.abort();
     abortController = null;
     pendingRequestKey = '';
+    setOperationStatus(null);
   }
 
   return {
@@ -474,6 +603,7 @@ function createGalleryStore() {
     batchFavorite,
     batchDelete,
     batchDownload,
+    exportArchive,
     toggleFavorite,
     deleteImage,
     deleteAll,

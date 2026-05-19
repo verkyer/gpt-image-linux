@@ -244,6 +244,10 @@ class GalleryBatchResponse(BaseModel):
     status: str
     count: int
     file_count: int = 0
+    requested_count: int = 0
+    updated_count: int = 0
+    missing_count: int = 0
+    missing_ids: list[str] = Field(default_factory=list)
 
 
 class GalleryFilterOptions(BaseModel):

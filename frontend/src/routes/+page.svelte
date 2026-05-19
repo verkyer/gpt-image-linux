@@ -386,6 +386,10 @@
     await galleryStore.importArchive(file, showToast);
   }
 
+  async function exportArchive() {
+    await galleryStore.exportArchive(showToast);
+  }
+
   async function copyPrompt(image: GalleryEntry) {
     await copyText(image.prompt);
     showToast($t.messages.promptCopied);
@@ -583,6 +587,7 @@
     gallery={$galleryStore.gallery}
     filters={$galleryStore.filters}
     loading={$galleryStore.loading}
+    operationStatus={$galleryStore.operationStatus}
     onFilter={galleryStore.updateFilter}
     onResetFilters={galleryStore.resetFilters}
     onPage={galleryStore.loadGallery}
@@ -591,6 +596,7 @@
     onDelete={deleteImage}
     onDeleteAll={deleteAllImages}
     onImport={importArchive}
+    onExport={exportArchive}
     onOpen={openLightbox}
     onEdit={prepareGalleryImageForEdit}
     selectionMode={$galleryStore.selectionMode}
@@ -601,7 +607,7 @@
     onClearSelection={galleryStore.clearSelection}
     onBatchDelete={batchDeleteGallery}
     onBatchFavorite={batchFavoriteGallery}
-    onBatchDownload={galleryStore.batchDownload}
+    onBatchDownload={() => galleryStore.batchDownload(showToast)}
   />
 </main>
 

@@ -79,17 +79,27 @@ def build_gallery_filters(
 async def _gallery_zip_response(
     entries,
     filename_prefix: str,
+    skipped: list[dict] | None = None,
+    extra_headers: dict[str, str] | None = None,
 ) -> StreamingResponse:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     filename = f"{filename_prefix}-{timestamp}.zip"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "X-Content-Type-Options": "nosniff",
+    }
+    if extra_headers:
+        headers.update(extra_headers)
     return StreamingResponse(
-        iter_gallery_zip_chunks(entries),
+        iter_gallery_zip_chunks(entries, skipped=skipped),
         media_type="application/zip",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
-            "X-Content-Type-Options": "nosniff",
-        },
+        headers=headers,
     )
+
+
+def _missing_gallery_ids(requested_ids: list[str], entries: list[GalleryEntry]) -> list[str]:
+    found_ids = {entry.id for entry in entries}
+    return [image_id for image_id in requested_ids if image_id not in found_ids]
 
 
 @router.get("/api/gallery", response_model=GalleryResponse)
@@ -156,18 +166,39 @@ async def get_gallery_handler(
 
 @router.post("/api/gallery/batch/delete", response_model=GalleryBatchResponse)
 async def delete_gallery_batch(req: GalleryBatchRequest):
+    requested_count = len(req.ids)
+    entries = storage.get_gallery_entries_by_ids(req.ids)
+    missing_ids = _missing_gallery_ids(req.ids, entries)
     deleted_entries, deleted_files = storage.delete_gallery_images(req.ids)
     if deleted_entries == 0:
         raise HTTPException(status_code=404, detail="Gallery entries not found")
-    return GalleryBatchResponse(status="ok", count=deleted_entries, file_count=deleted_files)
+    return GalleryBatchResponse(
+        status="ok",
+        count=deleted_entries,
+        file_count=deleted_files,
+        requested_count=requested_count,
+        updated_count=deleted_entries,
+        missing_count=len(missing_ids),
+        missing_ids=missing_ids,
+    )
 
 
 @router.patch("/api/gallery/batch/favorite", response_model=GalleryBatchResponse)
 async def update_gallery_batch_favorite(req: GalleryBatchFavoriteRequest):
+    requested_count = len(req.ids)
+    entries = storage.get_gallery_entries_by_ids(req.ids)
+    missing_ids = _missing_gallery_ids(req.ids, entries)
     updated_entries = storage.update_gallery_entries_favorite(req.ids, req.favorite)
     if updated_entries == 0:
         raise HTTPException(status_code=404, detail="Gallery entries not found")
-    return GalleryBatchResponse(status="ok", count=updated_entries)
+    return GalleryBatchResponse(
+        status="ok",
+        count=updated_entries,
+        requested_count=requested_count,
+        updated_count=updated_entries,
+        missing_count=len(missing_ids),
+        missing_ids=missing_ids,
+    )
 
 
 @router.post("/api/gallery/batch/download")
@@ -176,7 +207,38 @@ async def download_gallery_batch(req: GalleryBatchRequest):
     if not entries:
         raise HTTPException(status_code=404, detail="Gallery entries not found")
 
-    return await _gallery_zip_response(entries, "gpt-images-selected")
+    missing_ids = _missing_gallery_ids(req.ids, entries)
+    exportable_entries: list[GalleryEntry] = []
+    skipped_entries = [
+        {
+            "id": image_id,
+            "reason": "gallery_entry_missing",
+        }
+        for image_id in missing_ids
+    ]
+    for entry in entries:
+        path = storage.safe_image_path(entry.filename)
+        if path and path.exists():
+            exportable_entries.append(entry)
+            continue
+        skipped_entries.append(
+            {
+                "id": entry.id,
+                "filename": entry.filename,
+                "reason": "image_file_missing",
+            }
+        )
+
+    return await _gallery_zip_response(
+        exportable_entries,
+        "gpt-images-selected",
+        skipped=skipped_entries,
+        extra_headers={
+            "X-Gallery-Requested-Count": str(len(req.ids)),
+            "X-Gallery-Exported-Count": str(len(exportable_entries)),
+            "X-Gallery-Missing-Count": str(len(skipped_entries)),
+        },
+    )
 
 
 @router.patch("/api/gallery/{image_id}/favorite", response_model=GalleryEntry)

@@ -147,5 +147,9 @@ export type MessageResponse = {
 export type GalleryBatchResponse = {
   status: string;
   count: number;
-  file_count: number;
+  file_count?: number;
+  requested_count?: number;
+  updated_count?: number;
+  missing_count?: number;
+  missing_ids?: string[];
 };

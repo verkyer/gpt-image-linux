@@ -1762,6 +1762,10 @@ def test_gallery_batch_delete_only_selected_entries(client):
     assert resp.status_code == 200
     assert resp.json()["count"] == 2
     assert resp.json()["file_count"] == 2
+    assert resp.json()["requested_count"] == 2
+    assert resp.json()["updated_count"] == 2
+    assert resp.json()["missing_count"] == 0
+    assert resp.json()["missing_ids"] == []
     assert storage.get_gallery_entry("batch-delete-1") is None
     assert storage.get_gallery_entry("batch-delete-2") is not None
     assert storage.get_gallery_entry("batch-delete-3") is None
@@ -1846,6 +1850,59 @@ def test_gallery_batch_favorite_and_download(client):
     assert unfavorite.status_code == 200
     assert storage.get_gallery_entry("batch-fav-1").favorite is False
     assert storage.get_gallery_entry("batch-fav-3").favorite is False
+
+
+def test_gallery_batch_operations_report_partial_missing(client):
+    _fake_gallery_entry("batch-partial-1", "one", "1024x1024", "batch-partial-1.png")
+
+    favorite = client.patch(
+        "/api/gallery/batch/favorite",
+        json={"ids": ["batch-partial-1", "batch-partial-missing"], "favorite": True},
+    )
+    assert favorite.status_code == 200
+    assert favorite.json()["count"] == 1
+    assert favorite.json()["requested_count"] == 2
+    assert favorite.json()["updated_count"] == 1
+    assert favorite.json()["missing_count"] == 1
+    assert favorite.json()["missing_ids"] == ["batch-partial-missing"]
+
+    delete = client.post(
+        "/api/gallery/batch/delete",
+        json={"ids": ["batch-partial-1", "batch-partial-missing"]},
+    )
+    assert delete.status_code == 200
+    assert delete.json()["count"] == 1
+    assert delete.json()["requested_count"] == 2
+    assert delete.json()["updated_count"] == 1
+    assert delete.json()["missing_count"] == 1
+    assert delete.json()["missing_ids"] == ["batch-partial-missing"]
+
+
+def test_gallery_batch_download_records_skipped_entries(client):
+    _fake_gallery_entry("batch-download-1", "one", "1024x1024", "batch-download-1.png")
+    _fake_gallery_entry("batch-download-missing-file", "two", "1024x1024", "batch-download-missing-file.png")
+    storage.safe_image_path("batch-download-missing-file.png").unlink()
+
+    archive = client.post(
+        "/api/gallery/batch/download",
+        json={"ids": ["batch-download-1", "batch-download-missing-file", "batch-download-missing-row"]},
+    )
+    assert archive.status_code == 200
+    assert archive.headers["x-gallery-requested-count"] == "3"
+    assert archive.headers["x-gallery-exported-count"] == "1"
+    assert archive.headers["x-gallery-missing-count"] == "2"
+    with zipfile.ZipFile(io.BytesIO(archive.content)) as zf:
+        assert "images/batch-download-1.png" in zf.namelist()
+        assert "images/batch-download-missing-file.png" not in zf.namelist()
+        metadata = json.loads(zf.read("metadata.json"))
+        assert metadata["skipped"] == [
+            {"id": "batch-download-missing-row", "reason": "gallery_entry_missing"},
+            {
+                "id": "batch-download-missing-file",
+                "filename": "batch-download-missing-file.png",
+                "reason": "image_file_missing",
+            },
+        ]
 
 
 def test_import_archive(client):
