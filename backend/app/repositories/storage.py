@@ -1468,11 +1468,9 @@ def _get_gallery_rows_on_conn(
     *,
     limit: int | None = None,
     offset: int | None = None,
-    include_total: bool = False,
 ) -> list[sqlite3.Row]:
-    total_column = "COUNT(*) OVER() AS __total, " if include_total else ""
     sql = f"""
-        SELECT {total_column}{", ".join(GALLERY_COLUMNS)}
+        SELECT {", ".join(GALLERY_COLUMNS)}
         FROM gallery_entries
         {where_sql}
         ORDER BY created_at DESC, rowid DESC
@@ -1615,31 +1613,19 @@ def get_gallery_page(
     query_started_at = time.perf_counter()
     with _connect() as conn:
         where_sql, params = _build_gallery_filter_where(filters)
+        total = _get_gallery_count_on_conn(conn, where_sql, params)
+
+        total_pages_check = max((total + page_size - 1) // page_size, 1)
+        page = min(requested_page, total_pages_check)
+        effective_offset = (page - 1) * page_size
+
         rows = _get_gallery_rows_on_conn(
             conn,
             where_sql,
             params,
             limit=page_size,
-            offset=offset,
-            include_total=True,
+            offset=effective_offset,
         )
-
-        if rows:
-            total = int(rows[0]["__total"])
-            page = requested_page
-        else:
-            total = _get_gallery_count_on_conn(conn, where_sql, params)
-            total_pages_for_offset = max((total + page_size - 1) // page_size, 1)
-            page = min(requested_page, total_pages_for_offset)
-            if total > 0 and page != requested_page:
-                rows = _get_gallery_rows_on_conn(
-                    conn,
-                    where_sql,
-                    params,
-                    limit=page_size,
-                    offset=(page - 1) * page_size,
-                    include_total=True,
-                )
 
         total_pages = max((total + page_size - 1) // page_size, 1)
         total_bytes = (
