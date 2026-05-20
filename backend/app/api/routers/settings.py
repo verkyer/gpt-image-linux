@@ -63,6 +63,15 @@ async def update_settings(req: SettingsRequest):
             apply_upstream_socks5_proxy(requested_proxy)
     apply_api_preset(preset)
     persist_api_settings()
+    if req.prompt_optimizer is not None:
+        from ..presets import (
+            apply_prompt_optimizer_settings,
+            get_prompt_optimizer_settings,
+        )
+        current_optimizer = get_prompt_optimizer_settings()
+        updated_optimizer = apply_prompt_optimizer_settings(current_optimizer, req.prompt_optimizer)
+        from ...repositories import storage as storage_repo
+        storage_repo.save_prompt_optimizer_settings(updated_optimizer)
     return build_settings_response()
 
 

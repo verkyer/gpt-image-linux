@@ -27,6 +27,35 @@ export type SettingsResponse = {
   has_upstream_socks5_proxy: boolean;
   upstream_socks5_proxy_masked: string;
   presets: ApiPreset[];
+  prompt_optimizer: PromptOptimizerSettings;
+};
+
+export type PromptOptimizerSettings = {
+  enabled: boolean;
+  api_url: string;
+  model: string;
+  api_key_masked: string;
+  has_api_key: boolean;
+  api_key_source: ApiKeySource;
+  api_key_env_var?: string | null;
+};
+
+export type PromptOptimizerSettingsInput = {
+  enabled?: boolean | null;
+  api_url?: string | null;
+  model?: string | null;
+  api_key?: string | null;
+};
+
+export type SettingsInput = {
+  active_preset_id?: string | null;
+  preset_name?: string | null;
+  api_url: string;
+  api_key?: string | null;
+  api_path: ApiPath;
+  default_model?: string | null;
+  upstream_socks5_proxy?: string | null;
+  prompt_optimizer?: PromptOptimizerSettingsInput | null;
 };
 
 export type PresetHealthCheck = {
@@ -55,6 +84,22 @@ export type GenerateRequestBody = {
   output_compression?: number | null;
   response_format?: 'url' | 'b64_json' | null;
   webhook_url?: string | null;
+  api_path?: ApiPath | null;
+};
+
+export type PromptOptimizeRequest = {
+  prompt: string;
+  target_language?: 'en' | 'zh-CN' | 'same';
+  api_path?: ApiPath | null;
+  model?: string | null;
+  size?: string | null;
+  quality?: 'auto' | 'low' | 'medium' | 'high' | null;
+};
+
+export type PromptOptimizeResponse = {
+  optimized_prompt: string;
+  model: string;
+  duration_ms: number;
 };
 
 export type GenerateJobResponse = {

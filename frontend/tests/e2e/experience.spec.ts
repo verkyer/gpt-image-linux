@@ -16,6 +16,12 @@ type GalleryImageFixture = {
   image_width: number;
   image_height: number;
   model: string;
+  quality?: string;
+  output_format?: string;
+  output_compression?: number | null;
+  response_format?: string | null;
+  n?: number | null;
+  api_path?: string | null;
   api_preset_name: string;
   duration: string;
   favorite: boolean;
@@ -43,6 +49,12 @@ const baseGalleryImages: GalleryImageFixture[] = [
     image_width: 1,
     image_height: 1,
     model: 'gpt-image-2',
+    quality: 'high',
+    output_format: 'webp',
+    output_compression: 80,
+    response_format: 'url',
+    n: 2,
+    api_path: '/v1/responses',
     api_preset_name: 'Default',
     duration: '1.00s',
     favorite: false,
@@ -59,6 +71,12 @@ const baseGalleryImages: GalleryImageFixture[] = [
     image_width: 1,
     image_height: 1,
     model: 'gpt-image-2',
+    quality: 'auto',
+    output_format: 'png',
+    output_compression: null,
+    response_format: 'url',
+    n: 1,
+    api_path: '/v1/images/edits',
     api_preset_name: 'Default',
     duration: '1.10s',
     favorite: true,
@@ -76,6 +94,15 @@ const settingsResponse = {
   default_model: 'preset-default-model',
   has_upstream_socks5_proxy: false,
   upstream_socks5_proxy_masked: '',
+  prompt_optimizer: {
+    enabled: true,
+    api_url: 'https://example.com/v1/chat/completions',
+    model: 'gpt-4o-mini',
+    api_key_masked: '********',
+    has_api_key: true,
+    api_key_source: 'stored',
+    api_key_env_var: null
+  },
   presets: [
     {
       id: 'default',
@@ -232,6 +259,17 @@ async function mockApi(page: Page, options: MockOptions = {}) {
       await route.fulfill(json(settingsResponse));
       return;
     }
+    if (url.pathname === '/api/prompt/optimize' && request.method() === 'POST') {
+      const body = JSON.parse(request.postData() || '{}');
+      await route.fulfill(
+        json({
+          optimized_prompt: `Optimized ${body.prompt}`,
+          model: 'gpt-4o-mini',
+          duration_ms: 12
+        })
+      );
+      return;
+    }
     if (url.pathname.endsWith('/health') && url.pathname.startsWith('/api/settings/presets/')) {
       await route.fulfill(json({ status: 'ok', checks: [{ name: 'api_url', status: 'ok', message: 'ok' }] }));
       return;
@@ -339,7 +377,7 @@ async function mockApi(page: Page, options: MockOptions = {}) {
 async function loadApp(page: Page, options: MockOptions = {}) {
   await mockApi(page, options);
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Prompt' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Prompt', exact: true })).toBeVisible();
 }
 
 test('access gate unlocks before loading the app', async ({ page }) => {
@@ -350,7 +388,7 @@ test('access gate unlocks before loading the app', async ({ page }) => {
   await page.getByLabel('Access Key').fill('open-sesame');
   await page.getByRole('button', { name: 'Unlock' }).click();
 
-  await expect(page.getByRole('heading', { name: 'Prompt' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Prompt', exact: true })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Prompt', exact: true })).toBeVisible();
 });
 
@@ -402,6 +440,68 @@ test('generation, gallery edit source, batch favorite, and lightbox flows work w
   await expect(lightbox).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(lightbox).toBeHidden();
+});
+
+test('prompt helper tags append once and optimizer replaces prompt with undo', async ({ page }) => {
+  await loadApp(page);
+
+  const prompt = page.getByRole('textbox', { name: 'Prompt', exact: true });
+  await prompt.fill('small cabin');
+  await page.getByRole('button', { name: 'High detail' }).click();
+  await expect(prompt).toHaveValue('small cabin, high detail');
+
+  await page.getByRole('button', { name: 'High detail' }).click();
+  await expect(prompt).toHaveValue('small cabin, high detail');
+  await expect(page.getByRole('status')).toContainText('Tag already exists');
+
+  const optimizeRequest = page.waitForRequest((request) => new URL(request.url()).pathname === '/api/prompt/optimize');
+  await page.getByRole('button', { name: 'Optimize' }).click();
+  const request = await optimizeRequest;
+  expect(request.postDataJSON()).toMatchObject({
+    prompt: 'small cabin, high detail',
+    api_path: '/v1/images/generations'
+  });
+  await expect(prompt).toHaveValue('Optimized small cabin, high detail');
+  await page.getByRole('button', { name: 'Undo' }).click();
+  await expect(prompt).toHaveValue('small cabin, high detail');
+});
+
+test('gallery cards can reuse prompt or full generation parameters', async ({ page }) => {
+  await loadApp(page);
+
+  const prompt = page.getByRole('textbox', { name: 'Prompt', exact: true });
+  await page.locator('.gallery-card').first().getByRole('button', { name: 'Use prompt' }).click();
+  await expect(prompt).toHaveValue('First gallery image');
+  await expect(page.getByRole('textbox', { name: 'Model' })).toHaveValue('preset-default-model');
+  await expect(page.getByLabel('API path')).toHaveValue('/v1/images/generations');
+
+  await page.locator('.gallery-card').first().getByRole('button', { name: 'Use all' }).click();
+  await expect(prompt).toHaveValue('First gallery image');
+  await expect(page.getByRole('textbox', { name: 'Model' })).toHaveValue('gpt-image-2');
+  await expect(page.getByLabel('API path')).toHaveValue('/v1/responses');
+
+  const generateRequest = page.waitForRequest((request) => new URL(request.url()).pathname === '/api/generate');
+  await page.getByRole('button', { name: 'Generate', exact: true }).click();
+  const request = await generateRequest;
+  expect(request.postDataJSON()).toMatchObject({
+    prompt: 'First gallery image',
+    api_path: '/v1/responses',
+    model: 'gpt-image-2'
+  });
+});
+
+test('lightbox use all reuses parameters and edit api path is ignored', async ({ page }) => {
+  await loadApp(page);
+
+  await page.locator('.gallery-card').nth(1).getByRole('img', { name: 'Second gallery image' }).click();
+  const lightbox = page.getByRole('dialog', { name: 'Image Details' });
+  await expect(lightbox).toBeVisible();
+  await lightbox.getByRole('button', { name: 'Use all' }).click();
+
+  await expect(lightbox).toBeHidden();
+  await expect(page.getByRole('textbox', { name: 'Prompt', exact: true })).toHaveValue('Second gallery image');
+  await expect(page.getByLabel('API path')).toHaveValue('/v1/images/generations');
+  await expect(page.getByRole('status')).toContainText('edit API path was ignored');
 });
 
 test('multi-image job results can be previewed individually', async ({ page }) => {

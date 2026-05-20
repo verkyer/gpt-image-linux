@@ -35,6 +35,7 @@ Key characteristics:
 ## Features
 
 - API preset management: base URL/path/key, per-preset default model, and global SOCKS5 upstream proxy
+- prompt helper tags, server-side prompt optimization, and gallery prompt/parameter reuse
 - generation and image-editing (`/v1/images/edits`) with size/quality/format/compression/quantity controls and up to 16 edit reference images
 - preview + job history with SSE progress, multi-image result previews, `completed_at`, elapsed time, per-job stage timings, loading states, detailed terminal statuses, cancel for queued/running jobs, and reuse/retry from persisted history
 - shared queue and concurrency limits for generation/edit jobs
@@ -73,7 +74,7 @@ It uses:
 - `src/lib/api/client.ts` for same-origin fetch calls to existing `/api/*` endpoints
 - `src/lib/api/events.ts` for SSE wrappers
 - stores split across access, settings, gallery, jobs, preview, and UI state
-- components for access, header, settings drawer, job history drawer, preview, gallery, lightbox, and size selection
+- components for access, header, settings drawer, prompt helper, job history drawer, preview, gallery, lightbox, and size selection
 
 Frontend build:
 
@@ -250,14 +251,18 @@ curl http://localhost:9090/health
 7. enter the preset default model; the Generate/Edit form's Model field defaults to the active preset's value
 8. enter the API key, or an env ref such as `${OPENAI_API_KEY}`; literal keys are stored as plaintext in SQLite, so prefer env refs
 9. optionally enter a global SOCKS5 proxy such as `socks5://127.0.0.1:1080`
-10. optionally run Health check for the saved preset
-11. click Save Preset
-12. enter a prompt
-13. choose generation options
-14. click Generate
-15. optionally upload one or more edit reference images, pick "Edit this image" in Gallery/Lightbox, or combine both; uploads append to the current edit sources and Clear removes all edit sources
-16. click Edits to run image-to-image
-17. view preview and gallery
+10. optionally configure Prompt Optimizer with an endpoint URL, model, and API key/env ref
+11. optionally run Health check for the saved preset
+12. click Save Preset
+13. enter a prompt
+14. click Prompt Helper tags to append common modifiers
+15. click Optimize to rewrite the prompt through the server-side optimizer
+16. choose generation options, including API path for per-request upstream routing
+17. click Generate
+18. optionally upload one or more edit reference images, pick "Edit this image" in Gallery/Lightbox, or combine both; uploads append to the current edit sources and Clear removes all edit sources
+19. click Edits to run image-to-image
+20. use Gallery/Lightbox "Use prompt" or "Use all" to reuse historical prompt text or full parameters
+21. view preview and gallery
 
 ## API paths
 
@@ -339,6 +344,13 @@ The panel supports these upstream paths. The API base URL may either omit or inc
 | `DEFAULT_API_PATH` | `/v1/images/generations` | Default upstream path; supported values are `/v1/images/generations`, `/v1/responses`, and `/v1/chat/completions` |
 | `DEFAULT_RESPONSES_MODEL` | `gpt-5.4` | Fallback top-level model used for `/v1/responses` when no request/preset model is provided |
 | `DEFAULT_UPSTREAM_SOCKS5_PROXY` | empty | Optional default global SOCKS5 proxy for generation/edit upstream API calls |
+| `PROMPT_OPTIMIZER_ENABLED` | `false` | Enable the server-side prompt optimizer |
+| `PROMPT_OPTIMIZER_API_URL` | empty | Full Chat Completions-compatible endpoint URL used by the prompt optimizer |
+| `PROMPT_OPTIMIZER_API_KEY` | empty | Prompt optimizer API key; prefer an env ref such as `${OPENAI_API_KEY}` because literal keys are stored as plaintext in SQLite |
+| `PROMPT_OPTIMIZER_MODEL` | `gpt-4o-mini` | Prompt optimizer model |
+| `PROMPT_OPTIMIZER_TIMEOUT_SECONDS` | `20` | Prompt optimizer request timeout in seconds |
+| `PROMPT_OPTIMIZER_MAX_OUTPUT_CHARS` | `4000` | Max optimized prompt length returned to the textarea |
+| `PROMPT_OPTIMIZER_HOST_ALLOWLIST` | empty | Optional comma-separated hostname allowlist for the optimizer endpoint |
 | `APP_VERSION` | `VERSION` file | Override the app version shown in the UI and returned by `/api/version`; read on each request |
 | `GITHUB_REPO` | `Z1rconium/gpt-image-linux` | GitHub `owner/repo` used for latest-release update detection; set empty to disable latest-version checks |
 | `ENABLE_VERSION_CHECK` | `true` | Enable per-request GitHub latest-version checks for the header `New` badge |
@@ -384,6 +396,7 @@ The panel supports these upstream paths. The API base URL may either omit or inc
 | `POST` | `/api/access` | Unlock access for 3 hours |
 | `POST` | `/api/settings` | Save the active API preset |
 | `GET` | `/api/settings` | Get current settings and presets |
+| `POST` | `/api/prompt/optimize` | Rewrite a prompt through the server-side optimizer |
 | `POST` | `/api/settings/presets` | Create and activate an API preset |
 | `POST` | `/api/settings/presets/{preset_id}/activate` | Activate an API preset |
 | `POST` | `/api/settings/presets/{preset_id}/health` | Validate a saved API preset and run a low-cost upstream probe |
@@ -415,6 +428,7 @@ The panel supports these upstream paths. The API base URL may either omit or inc
 - presets and gallery/job data persist only in `DATABASE_FILE`
 - SQLite repository operations use short-lived connections with WAL enabled at startup; app shutdown and tests call the storage close hook so connection lifecycle stays explicit
 - generation and edit share one queue (`MAX_ACTIVE_GENERATE_JOBS` + `MAX_QUEUED_GENERATE_JOBS`), all edit source images are staged under `DATA_DIR/edit-sources` and additionally capped by `MAX_PENDING_EDIT_SOURCE_MB`, support cancellation, and persist terminal history including `completed_at`
+- Prompt Optimizer uses its own server-side Chat Completions-compatible endpoint config, resolves API key env refs on the backend, and does not consume generation/edit queue capacity.
 - SSE is the primary progress channel; `/api/generate/jobs` provides list/history (`include_finished=true`, optional `limit`/`offset`), and `/api/generate/jobs/events` streams debounced live job-list changes from memory
 - terminal job history includes `stage_timings` for `upstream_wait`, `download_decode`, `validate`, `thumbnail`, and `db_insert`; slow gallery queries are logged with query filters and totals and counted in metrics; optional metrics include queue depth, running jobs, failure ratios, job-stage latencies, and slow SQLite query counters; terminal job statuses distinguish `cancelled`, `interrupted`, and `upstream_error` in addition to the generic `error`
 - upstream JSON/SSE bodies are read with a `MAX_UPSTREAM_JSON_MB` cap before parsing, and upstream image URL downloads are revalidated (SSRF-aware, no blind redirect follow) and bounded by `MAX_FILE_SIZE_MB`
@@ -497,6 +511,7 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 ## 功能
 
 - API 预设管理：base URL/path/key、每个预设的默认 model、全局 SOCKS5 上游代理
+- 提示词助手标签、服务端提示词优化器，以及 Gallery 提示词/参数复用
 - 图像生成 + 图生图编辑（`/v1/images/edits`），支持尺寸/质量/格式/压缩率/数量等参数，并支持最多 16 张编辑参考图
 - 预览 + 历史任务：SSE 进度、多图结果预览、`completed_at`、耗时、任务分段耗时、加载状态、细分终态状态、排队/运行任务取消，以及从持久化历史复用/重试
 - 生成与编辑共享并发和排队限制
@@ -535,7 +550,7 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 - `src/lib/api/client.ts` 封装同源 `/api/*` fetch
 - `src/lib/api/events.ts` 封装 SSE
 - stores 拆分为 access、settings、gallery、gallery actions、edit source、jobs、preview、lightbox、version 和 UI
-- 组件拆分为 access、header、settings drawer、job history drawer、preview、gallery、lightbox 和 size dialog
+- 组件拆分为 access、header、settings drawer、prompt helper、job history drawer、preview、gallery、lightbox 和 size dialog
 
 前端构建命令：
 
@@ -712,14 +727,18 @@ curl http://localhost:9090/health
 7. 填写该预设的默认模型；Generate/Edit 表单里的 Model 默认值会使用当前预设的值
 8. 填写 API Key，或填写 `${OPENAI_API_KEY}` 这类环境变量引用；直接填写的 key 会以明文保存到 SQLite，优先用环境变量引用
 9. 可选：填写全局 SOCKS5 代理，例如 `socks5://127.0.0.1:1080`
-10. 可选：对已保存预设执行 Health check
-11. 点击 Save Preset
-12. 输入提示词
-13. 选择生成参数
-14. 点击 Generate
-15. 也可以上传一张或多张编辑参考图、在 Gallery/Lightbox 中选择 “Edit this image”，或两者组合；上传会追加到当前编辑源，Clear 会清空全部编辑源
-16. 点击 Edits 执行图生图
-17. 查看预览和 Gallery
+10. 可选：配置提示词优化器的 endpoint URL、模型和 API Key/环境变量引用
+11. 可选：对已保存预设执行 Health check
+12. 点击 Save Preset
+13. 输入提示词
+14. 点击提示词助手标签追加常用修饰词
+15. 点击 Optimize 通过服务端优化器改写提示词
+16. 选择生成参数；需要逐次复用不同上游路径时可直接选择 API Path
+17. 点击 Generate
+18. 也可以上传一张或多张编辑参考图、在 Gallery/Lightbox 中选择 “Edit this image”，或两者组合；上传会追加到当前编辑源，Clear 会清空全部编辑源
+19. 点击 Edits 执行图生图
+20. 在 Gallery/Lightbox 使用 “Use prompt” 或 “Use all” 复用历史提示词或完整参数
+21. 查看预览和 Gallery
 
 ## 支持的 API Path
 
@@ -801,6 +820,13 @@ curl http://localhost:9090/health
 | `DEFAULT_API_PATH` | `/v1/images/generations` | 默认上游路径；支持 `/v1/images/generations`、`/v1/responses` 和 `/v1/chat/completions` |
 | `DEFAULT_RESPONSES_MODEL` | `gpt-5.4` | 当请求/预设没有提供模型时，`/v1/responses` 使用的兜底顶层模型 |
 | `DEFAULT_UPSTREAM_SOCKS5_PROXY` | 空 | 可选的全局 SOCKS5 代理默认值，仅用于生成/编辑的上游 API 请求 |
+| `PROMPT_OPTIMIZER_ENABLED` | `false` | 是否启用服务端提示词优化器 |
+| `PROMPT_OPTIMIZER_API_URL` | 空 | 提示词优化器使用的完整 Chat Completions 兼容 endpoint URL |
+| `PROMPT_OPTIMIZER_API_KEY` | 空 | 提示词优化器 API Key；优先使用 `${OPENAI_API_KEY}` 这类环境变量引用，直接填写的 key 会以明文保存到 SQLite |
+| `PROMPT_OPTIMIZER_MODEL` | `gpt-4o-mini` | 提示词优化器模型 |
+| `PROMPT_OPTIMIZER_TIMEOUT_SECONDS` | `20` | 提示词优化请求超时时间（秒） |
+| `PROMPT_OPTIMIZER_MAX_OUTPUT_CHARS` | `4000` | 回填到文本框的优化后提示词最大长度 |
+| `PROMPT_OPTIMIZER_HOST_ALLOWLIST` | 空 | 可选的优化器 endpoint 主机名白名单，逗号分隔 |
 | `APP_VERSION` | `VERSION` 文件 | 覆盖界面显示和 `/api/version` 返回的当前应用版本；每次请求实时读取 |
 | `GITHUB_REPO` | `Z1rconium/gpt-image-linux` | 用于检测 latest release 新版本的 GitHub `owner/repo`；设为空可禁用最新版本检查 |
 | `ENABLE_VERSION_CHECK` | `true` | 启用每次请求的 GitHub 最新版本检测，用于 Header 的 `New` 标记 |
@@ -846,6 +872,7 @@ curl http://localhost:9090/health
 | `POST` | `/api/access` | 解锁访问 3 小时 |
 | `POST` | `/api/settings` | 保存当前 API 预设 |
 | `GET` | `/api/settings` | 获取当前设置和预设列表 |
+| `POST` | `/api/prompt/optimize` | 通过服务端提示词优化器改写提示词 |
 | `POST` | `/api/settings/presets` | 新建并激活 API 预设 |
 | `POST` | `/api/settings/presets/{preset_id}/activate` | 激活 API 预设 |
 | `POST` | `/api/settings/presets/{preset_id}/health` | 校验已保存 API 预设并执行低成本上游探测 |
@@ -877,6 +904,7 @@ curl http://localhost:9090/health
 - 预设与 Gallery/Job 数据只保存在 `DATABASE_FILE`
 - SQLite 仓储操作使用短连接，并在启动时启用 WAL；应用 shutdown 和测试 reset 会调用 storage close hook，连接生命周期保持显式
 - 生成与编辑共用队列（`MAX_ACTIVE_GENERATE_JOBS` + `MAX_QUEUED_GENERATE_JOBS`）；所有编辑源图先落到 `DATA_DIR/edit-sources` 并额外受 `MAX_PENDING_EDIT_SOURCE_MB` 总量限制；支持取消，并持久化终态历史（含 `completed_at`）
+- 提示词优化器使用独立的服务端 Chat Completions 兼容 endpoint 配置，在后端解析 API Key 环境变量引用，不占用生成/编辑任务队列容量。
 - SSE 是主进度通道；`/api/generate/jobs` 提供列表/历史（`include_finished=true`，可选 `limit`/`offset`），`/api/generate/jobs/events` 从内存推送 debounce 后的实时任务列表变化
 - 任务终态历史包含 `stage_timings`：`upstream_wait`、`download_decode`、`validate`、`thumbnail`、`db_insert`；慢 Gallery 查询日志会带筛选条件与 total，并计入 metrics；可选 metrics 包含队列深度、运行中任务数、失败率、任务分段耗时和慢 SQLite 查询数；终态状态区分 `cancelled`、`interrupted` 和 `upstream_error`，同时保留通用 `error`
 - 上游 JSON/SSE 响应会在解析前受 `MAX_UPSTREAM_JSON_MB` 限制；上游图片 URL 下载会做 SSRF/重定向目标复核，并受 `MAX_FILE_SIZE_MB` 限制

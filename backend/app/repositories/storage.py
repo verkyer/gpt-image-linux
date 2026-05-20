@@ -81,10 +81,12 @@ __all__ = [
     "import_gallery_entries",
     "iter_gallery_export_rows",
     "list_generate_jobs",
+    "load_prompt_optimizer_settings",
     "load_settings",
     "mark_active_generate_jobs_interrupted",
     "safe_image_path",
     "safe_thumbnail_path",
+    "save_prompt_optimizer_settings",
     "save_settings",
     "sync_gallery_with_image_files",
     "trim_generate_jobs",
@@ -165,6 +167,7 @@ INTEGER_GENERATE_JOB_COLUMNS = {
 }
 SETTINGS_ACTIVE_PRESET_KEY = "active_preset_id"
 UPSTREAM_SOCKS5_PROXY_KEY = "upstream_socks5_proxy"
+PROMPT_OPTIMIZER_SETTINGS_KEY = "prompt_optimizer_settings"
 SQLITE_TIMEOUT_SECONDS = 30.0
 GALLERY_FTS_VERSION_KEY = "gallery_fts_version"
 GALLERY_FTS_VERSION = "trigram-v1"
@@ -230,6 +233,37 @@ def _default_settings() -> dict:
                 "default_model": default_model_for_api_path(config.DEFAULT_API_PATH),
             }
         ],
+        "prompt_optimizer": _default_prompt_optimizer_settings(),
+    }
+
+
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _default_prompt_optimizer_settings() -> dict:
+    return {
+        "enabled": config.PROMPT_OPTIMIZER_ENABLED,
+        "api_url": config.PROMPT_OPTIMIZER_API_URL,
+        "api_key": config.PROMPT_OPTIMIZER_API_KEY,
+        "model": config.PROMPT_OPTIMIZER_MODEL,
+    }
+
+
+def _normalize_prompt_optimizer_settings(settings: dict | None) -> dict:
+    default = _default_prompt_optimizer_settings()
+    if not isinstance(settings, dict):
+        return default
+    return {
+        "enabled": _coerce_bool(settings.get("enabled"), default["enabled"]),
+        "api_url": str(settings.get("api_url") or "").strip(),
+        "api_key": str(settings.get("api_key") or "").strip(),
+        "model": str(settings.get("model") or default["model"]).strip()
+        or default["model"],
     }
 
 
@@ -638,6 +672,11 @@ def _normalize_settings(settings: dict | None) -> dict:
         "active_preset_id": active_preset_id,
         "upstream_socks5_proxy": upstream_socks5_proxy,
         "presets": presets,
+        "prompt_optimizer": (
+            _normalize_prompt_optimizer_settings(settings.get("prompt_optimizer"))
+            if "prompt_optimizer" in settings
+            else None
+        ),
     }
 
 
@@ -685,6 +724,9 @@ def _replace_settings_on_conn(conn: sqlite3.Connection, settings: dict):
         UPSTREAM_SOCKS5_PROXY_KEY,
         normalized.get("upstream_socks5_proxy", ""),
     )
+    optimizer = normalized.get("prompt_optimizer")
+    if optimizer is not None:
+        _set_setting_value(conn, PROMPT_OPTIMIZER_SETTINGS_KEY, json.dumps(optimizer))
 
 
 def _load_settings_from_conn(conn: sqlite3.Connection) -> dict | None:
@@ -716,10 +758,21 @@ def _load_settings_from_conn(conn: sqlite3.Connection) -> dict | None:
     if upstream_socks5_proxy is None:
         upstream_socks5_proxy = config.DEFAULT_UPSTREAM_SOCKS5_PROXY
 
+    optimizer_json = _get_setting_value(conn, PROMPT_OPTIMIZER_SETTINGS_KEY)
+    optimizer = None
+    if optimizer_json:
+        try:
+            optimizer = _normalize_prompt_optimizer_settings(json.loads(optimizer_json))
+        except (json.JSONDecodeError, TypeError):
+            optimizer = _default_prompt_optimizer_settings()
+    else:
+        optimizer = _default_prompt_optimizer_settings()
+
     return {
         "active_preset_id": active_preset_id,
         "upstream_socks5_proxy": upstream_socks5_proxy,
         "presets": presets,
+        "prompt_optimizer": optimizer,
     }
 
 
@@ -1018,6 +1071,26 @@ def save_settings(settings: dict):
     with _connect() as conn:
         with _transaction(conn):
             _replace_settings_on_conn(conn, settings)
+
+
+def load_prompt_optimizer_settings() -> dict:
+    _ensure_database()
+    with _connect() as conn:
+        raw = _get_setting_value(conn, PROMPT_OPTIMIZER_SETTINGS_KEY)
+        if raw:
+            try:
+                return _normalize_prompt_optimizer_settings(json.loads(raw))
+            except (json.JSONDecodeError, TypeError):
+                return _default_prompt_optimizer_settings()
+        return _default_prompt_optimizer_settings()
+
+
+def save_prompt_optimizer_settings(settings: dict):
+    _ensure_database()
+    normalized = _normalize_prompt_optimizer_settings(settings)
+    with _connect() as conn:
+        _set_setting_value(conn, PROMPT_OPTIMIZER_SETTINGS_KEY, json.dumps(normalized))
+        conn.commit()
 
 
 def _attach_gallery_thumbnail_url(entry: dict[str, Any]) -> dict[str, Any]:

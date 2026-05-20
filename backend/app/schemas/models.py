@@ -69,6 +69,7 @@ class SettingsRequest(BaseModel):
             "Null keeps the current value; an empty string clears it."
         ),
     )
+    prompt_optimizer: Optional["PromptOptimizerSettingsRequest"] = None
 
     @field_validator("upstream_socks5_proxy")
     @classmethod
@@ -90,6 +91,7 @@ class SettingsResponse(BaseModel):
     has_upstream_socks5_proxy: bool = False
     upstream_socks5_proxy_masked: str = ""
     presets: list[ApiPresetResponse]
+    prompt_optimizer: "PromptOptimizerSettingsResponse" = Field(default_factory=lambda: PromptOptimizerSettingsResponse())
 
 
 class PresetHealthCheck(BaseModel):
@@ -150,6 +152,38 @@ def validate_image_size(size: str) -> str:
     return f"{width}x{height}"
 
 
+class PromptOptimizerSettingsResponse(BaseModel):
+    enabled: bool = False
+    api_url: str = ""
+    model: str = "gpt-4o-mini"
+    api_key_masked: str = "***"
+    has_api_key: bool = False
+    api_key_source: ApiKeySource = "empty"
+    api_key_env_var: Optional[str] = None
+
+
+class PromptOptimizerSettingsRequest(BaseModel):
+    enabled: Optional[bool] = None
+    api_url: Optional[str] = None
+    model: Optional[str] = None
+    api_key: Optional[str] = None
+
+
+class PromptOptimizeRequest(BaseModel):
+    prompt: str = Field(..., min_length=1, max_length=4000)
+    target_language: Literal["en", "zh-CN", "same"] = "en"
+    api_path: Optional[ApiPath] = None
+    model: Optional[str] = None
+    size: Optional[str] = None
+    quality: Optional[Literal["auto", "low", "medium", "high"]] = None
+
+
+class PromptOptimizeResponse(BaseModel):
+    optimized_prompt: str
+    model: str
+    duration_ms: int
+
+
 class GenerateRequest(BaseModel):
     prompt: str = Field(..., max_length=4000)
     size: str = "auto"
@@ -160,6 +194,7 @@ class GenerateRequest(BaseModel):
     output_compression: Optional[int] = Field(default=None, ge=0, le=100)
     response_format: Optional[Literal["url", "b64_json"]] = None
     webhook_url: Optional[str] = Field(default=None, max_length=2048)
+    api_path: Optional[ApiPath] = None
 
     @field_validator("size")
     @classmethod

@@ -15,7 +15,7 @@
   import ToastHost from '$lib/components/ToastHost.svelte';
   import { apiFetch } from '$lib/api/client';
   import { t } from '$lib/i18n';
-  import type { GalleryEntry, GenerateJobStatus, SettingsResponse } from '$lib/api/types';
+  import type { ApiPath, GalleryEntry, GenerateJobStatus, PromptOptimizeResponse, SettingsInput, SettingsResponse } from '$lib/api/types';
   import { accessStore } from '$lib/stores/access';
   import { confirmStore } from '$lib/stores/confirm';
   import { editSourceStore, MAX_EDIT_SOURCE_IMAGES } from '$lib/stores/editSource';
@@ -28,7 +28,7 @@
   import { uiStore, type ToastOptions } from '$lib/stores/ui';
   import { versionStore } from '$lib/stores/version';
   import { copyText, galleryImageSize, imageUrl } from '$lib/utils/format';
-  import { jobToPromptForm } from '$lib/utils/promptForm';
+  import { galleryEntryToPromptForm, galleryEntryToPromptOnly, jobToPromptForm, normalizeApiPath } from '$lib/utils/promptForm';
 
   type JobsTab = 'running' | 'history';
 
@@ -44,8 +44,17 @@
   let urlSyncQueued = false;
   let queuedUrlSyncMode: 'replace' | 'push' = 'replace';
   let lightboxLookupSeq = 0;
+  let lastActivePresetApiPath: ApiPath = initialPromptFormState.apiPath;
+  let optimizingPrompt = false;
 
   $: activeJobsCount = $jobsStore.jobs.length;
+  $: optimizerSettings = $settingsStore.settings?.prompt_optimizer || null;
+  $: optimizerAvailable = Boolean(
+    optimizerSettings?.enabled &&
+      optimizerSettings.api_url.trim() &&
+      optimizerSettings.model.trim() &&
+      optimizerSettings.has_api_key
+  );
   $: syncFormModelToActivePreset($settingsStore.settings);
 
   async function loadInitialData() {
@@ -184,21 +193,41 @@
     return (preset?.default_model || settings?.default_model || DEFAULT_PROMPT_MODEL).trim() || DEFAULT_PROMPT_MODEL;
   }
 
+  function presetApiPath(settings: SettingsResponse | null): ApiPath {
+    const preset = activePreset(settings);
+    return normalizeApiPath(preset?.api_path || settings?.api_path, initialPromptFormState.apiPath);
+  }
+
   function syncFormModelToActivePreset(settings: SettingsResponse | null) {
     const preset = activePreset(settings);
     const nextPresetId = preset?.id || '';
     const nextDefaultModel = presetDefaultModel(settings);
-    if (nextPresetId === lastActivePresetId && nextDefaultModel === lastActivePresetDefaultModel) return;
+    const nextApiPath = presetApiPath(settings);
+    if (
+      nextPresetId === lastActivePresetId &&
+      nextDefaultModel === lastActivePresetDefaultModel &&
+      nextApiPath === lastActivePresetApiPath
+    ) {
+      return;
+    }
 
     const currentModel = form.model.trim();
+    const updates: Partial<PromptFormState> = {};
     if (!currentModel || currentModel === lastActivePresetDefaultModel) {
-      form = { ...form, model: nextDefaultModel };
+      updates.model = nextDefaultModel;
+    }
+    if (!form.apiPath || form.apiPath === lastActivePresetApiPath) {
+      updates.apiPath = nextApiPath;
+    }
+    if (Object.keys(updates).length) {
+      form = { ...form, ...updates };
     }
     lastActivePresetId = nextPresetId;
     lastActivePresetDefaultModel = nextDefaultModel;
+    lastActivePresetApiPath = nextApiPath;
   }
 
-  function saveSettings(body: Record<string, unknown>) {
+  function saveSettings(body: SettingsInput) {
     void settingsStore.saveSettings(body, showToast).then(() => setUi('settingsOpen', false));
   }
 
@@ -237,6 +266,68 @@
 
   function editImage() {
     void previewStore.editImage(form, $editSourceStore, jobsStore.makeQueuedPreview, trackJob, jobsStore.loadJobs);
+  }
+
+  function promptContainsTag(prompt: string, value: string) {
+    const normalized = value.trim().toLowerCase();
+    return prompt
+      .split(',')
+      .map((item) => item.trim().toLowerCase())
+      .includes(normalized);
+  }
+
+  function appendPromptTag(value: string) {
+    const tag = value.trim();
+    if (!tag) return;
+    if (promptContainsTag(form.prompt, tag)) {
+      showToast($t.messages.promptTagExists);
+      return;
+    }
+    const prefix = form.prompt.trim();
+    form = { ...form, prompt: prefix ? `${prefix}, ${tag}` : tag };
+  }
+
+  async function optimizePrompt() {
+    const originalPrompt = form.prompt;
+    const prompt = originalPrompt.trim();
+    if (!prompt || optimizingPrompt) return;
+    if (!optimizerAvailable) {
+      showToast($t.messages.promptOptimizerUnavailable, 'error');
+      return;
+    }
+
+    optimizingPrompt = true;
+    try {
+      const response = await apiFetch<PromptOptimizeResponse>(
+        '/api/prompt/optimize',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt,
+            target_language: 'en',
+            api_path: form.apiPath,
+            model: form.model.trim() || null,
+            size: form.size,
+            quality: form.quality
+          })
+        },
+        'optimizing prompt'
+      );
+      form = { ...form, prompt: response.optimized_prompt };
+      showToast($t.messages.promptOptimized, 'status', {
+        actionLabel: $t.common.undo,
+        onAction: () => {
+          form = { ...form, prompt: originalPrompt };
+        },
+        durationMs: 6000
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : $t.messages.promptOptimizeFailed;
+      showToast(message || $t.messages.promptOptimizeFailed, 'error');
+    } finally {
+      optimizingPrompt = false;
+    }
   }
 
   function regenerate() {
@@ -360,6 +451,26 @@
     showToast($t.messages.imageUrlCopied);
   }
 
+  function copyPromptBestEffort(prompt: string) {
+    if (!prompt) return;
+    void copyText(prompt).catch(() => {});
+  }
+
+  function useGalleryPrompt(image: GalleryEntry) {
+    form = galleryEntryToPromptOnly(image, form);
+    copyPromptBestEffort(image.prompt);
+    closeLightbox();
+    showToast($t.messages.galleryPromptLoaded);
+  }
+
+  function useGalleryParams(image: GalleryEntry) {
+    const ignoredEditPath = image.api_path === '/v1/images/edits';
+    form = galleryEntryToPromptForm(image, lastActivePresetDefaultModel, form.apiPath);
+    copyPromptBestEffort(image.prompt);
+    closeLightbox();
+    showToast(ignoredEditPath ? $t.messages.galleryEditApiPathIgnored : $t.messages.galleryParamsLoaded);
+  }
+
   function useJobAsPrompt(job: GenerateJobStatus) {
     form = jobToPromptForm(job, lastActivePresetDefaultModel);
     closeJobsDrawer();
@@ -477,10 +588,13 @@
 
   <PromptForm
     bind:form
-    apiPath={$settingsStore.settings?.api_path || '/v1/images/generations'}
     loading={$previewStore.loading}
+    optimizing={optimizingPrompt}
+    optimizerEnabled={optimizerAvailable}
     onGenerate={generateImage}
     onEdit={editImage}
+    onOptimize={optimizePrompt}
+    onAppendPromptTag={appendPromptTag}
     onOpenSize={() => setUi('sizeDialogOpen', true)}
   >
     <EditSourcePicker
@@ -535,6 +649,8 @@
     onExport={exportArchive}
     onOpen={openLightbox}
     onEdit={prepareGalleryImageForEdit}
+    onUsePrompt={useGalleryPrompt}
+    onUseAll={useGalleryParams}
     selectionMode={$galleryStore.selectionMode}
     selectedIds={$galleryStore.selectedIds}
     onSelectionMode={galleryStore.setSelectionMode}
@@ -556,6 +672,8 @@
   onDelete={deleteImage}
   onCopyPrompt={copyPrompt}
   onCopyUrl={copyImageUrl}
+  onUsePrompt={useGalleryPrompt}
+  onUseAll={useGalleryParams}
 />
 
 <EditPreviewModal

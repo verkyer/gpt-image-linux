@@ -8,11 +8,15 @@ from ..core import settings as config
 from ..core.api_paths import normalize_api_path, normalize_api_preset, normalize_default_model
 from ..core.validators import mask_socks5_proxy_url, normalize_socks5_proxy_url
 from ..repositories import storage
-from ..schemas.models import ApiPresetResponse, SettingsResponse
+from ..schemas.models import ApiPresetResponse, PromptOptimizerSettingsResponse, SettingsResponse
+
+MASKED_API_KEY_VALUE = "********"
 
 
 def get_exception_message(error: Exception) -> str:
     return str(error) or repr(error) or error.__class__.__name__
+
+
 def mask_key(key: str) -> str:
     if not key or len(key) <= 8:
         return "***"
@@ -92,12 +96,35 @@ def get_effective_preset_api_key(preset: dict) -> str:
     )
 
 
+def _default_prompt_optimizer_settings() -> dict:
+    return {
+        "enabled": config.PROMPT_OPTIMIZER_ENABLED,
+        "api_url": config.PROMPT_OPTIMIZER_API_URL,
+        "api_key": config.PROMPT_OPTIMIZER_API_KEY,
+        "model": config.PROMPT_OPTIMIZER_MODEL,
+    }
+
+
+def normalize_prompt_optimizer_settings(raw: dict | None) -> dict:
+    defaults = _default_prompt_optimizer_settings()
+    if not isinstance(raw, dict):
+        return defaults
+    return {
+        "enabled": bool(raw.get("enabled", defaults["enabled"])),
+        "api_url": str(raw.get("api_url") or "").strip(),
+        "api_key": str(raw.get("api_key") or "").strip(),
+        "model": str(raw.get("model") or defaults["model"]).strip()
+        or defaults["model"],
+    }
+
+
 def persist_api_settings():
     storage.save_settings(
         {
             "active_preset_id": getattr(app.state, "active_preset_id", "default"),
             "upstream_socks5_proxy": get_upstream_socks5_proxy(),
             "presets": get_api_presets(),
+            "prompt_optimizer": get_prompt_optimizer_settings(),
         }
     )
 
@@ -203,6 +230,7 @@ def serialize_api_preset(preset: dict) -> ApiPresetResponse:
 def build_settings_response() -> SettingsResponse:
     active_preset = get_active_preset()
     key_fields = api_key_response_fields(active_preset.get("api_key", ""))
+    optimizer_raw = get_prompt_optimizer_settings()
     return SettingsResponse(
         active_preset_id=active_preset["id"],
         api_url=active_preset.get("api_url", ""),
@@ -216,4 +244,67 @@ def build_settings_response() -> SettingsResponse:
         ),
         **upstream_socks5_proxy_response_fields(),
         presets=[serialize_api_preset(preset) for preset in get_api_presets()],
+        prompt_optimizer=build_prompt_optimizer_settings_response(optimizer_raw),
     )
+
+
+def build_prompt_optimizer_settings_response(raw: dict | None) -> PromptOptimizerSettingsResponse:
+    raw = normalize_prompt_optimizer_settings(raw)
+    key_fields = api_key_response_fields(raw.get("api_key", ""))
+    return PromptOptimizerSettingsResponse(
+        enabled=bool(raw.get("enabled", False)),
+        api_url=str(raw.get("api_url", "")).strip(),
+        model=str(raw.get("model") or config.PROMPT_OPTIMIZER_MODEL).strip()
+        or config.PROMPT_OPTIMIZER_MODEL,
+        **key_fields,
+    )
+
+
+def resolve_prompt_optimizer_api_key(raw: dict | None) -> str:
+    settings = normalize_prompt_optimizer_settings(raw)
+    api_key = str(settings.get("api_key") or "").strip()
+    env_var = get_api_key_env_var(api_key)
+    if is_malformed_api_key_env_ref(api_key):
+        raise HTTPException(
+            status_code=400,
+            detail="Prompt optimizer API Key env ref must be formatted as ${ENV_VAR_NAME}.",
+        )
+    resolved_key = resolve_api_key(api_key)
+    if resolved_key:
+        return resolved_key
+    if env_var:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Prompt optimizer API Key environment variable {env_var} is not set or empty. "
+                "Set it in the server environment."
+            ),
+        )
+    if not api_key:
+        return ""
+    return api_key
+
+
+def get_prompt_optimizer_settings() -> dict:
+    return storage.load_prompt_optimizer_settings()
+
+
+def apply_prompt_optimizer_settings(
+    current: dict | None, req_optimizer: object
+) -> dict:
+    current = normalize_prompt_optimizer_settings(current)
+    if req_optimizer is None:
+        return current
+    if hasattr(req_optimizer, "enabled") and req_optimizer.enabled is not None:
+        current["enabled"] = req_optimizer.enabled
+    if hasattr(req_optimizer, "api_url") and req_optimizer.api_url is not None:
+        current["api_url"] = req_optimizer.api_url.strip()
+    if hasattr(req_optimizer, "model") and req_optimizer.model is not None:
+        current["model"] = req_optimizer.model.strip()
+    if hasattr(req_optimizer, "api_key") and req_optimizer.api_key is not None:
+        key = req_optimizer.api_key.strip()
+        if key and key != MASKED_API_KEY_VALUE:
+            current["api_key"] = key
+        elif key == "":
+            current["api_key"] = ""
+    return current

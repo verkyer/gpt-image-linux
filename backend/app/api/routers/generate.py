@@ -56,7 +56,7 @@ async def generate(req: GenerateRequest):
         req=req,
         operation="generation",
         api_path=lambda preset: normalize_api_path(
-            str(preset.get("api_path") or "/v1/images/generations")
+            req.api_path or str(preset.get("api_path") or "/v1/images/generations")
         ),
         queued_message="Queued image generation",
         task_factory=start_generate_job,

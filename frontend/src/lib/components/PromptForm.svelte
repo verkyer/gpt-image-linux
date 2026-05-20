@@ -1,24 +1,29 @@
 <script lang="ts">
+  import PromptHelperPanel from '$lib/components/PromptHelperPanel.svelte';
   import { t } from '$lib/i18n';
   import type { PromptFormState } from '$lib/stores/preview';
 
   export let form: PromptFormState;
-  export let apiPath = '/v1/images/generations';
   export let loading = false;
+  export let optimizing = false;
+  export let optimizerEnabled = false;
   export let onGenerate: () => void = () => {};
   export let onEdit: () => void = () => {};
   export let onOpenSize: () => void = () => {};
+  export let onOptimize: () => void = () => {};
+  export let onAppendPromptTag: (value: string) => void = () => {};
 
   $: promptLen = form.prompt.length;
-  $: promptOnlyMode = apiPath === '/v1/responses' || apiPath === '/v1/chat/completions';
-  $: modeLabel = apiPath === '/v1/chat/completions' ? $t.promptForm.chatCompletionsMode : $t.promptForm.responsesMode;
+  $: promptOnlyMode = form.apiPath === '/v1/responses' || form.apiPath === '/v1/chat/completions';
+  $: modeLabel = form.apiPath === '/v1/chat/completions' ? $t.promptForm.chatCompletionsMode : $t.promptForm.responsesMode;
   $: disabledModeLabel =
-    apiPath === '/v1/chat/completions' ? $t.promptForm.disabledForChatCompletions : $t.promptForm.disabledForResponses;
+    form.apiPath === '/v1/chat/completions' ? $t.promptForm.disabledForChatCompletions : $t.promptForm.disabledForResponses;
   $: compressionPlaceholder = promptOnlyMode
     ? disabledModeLabel
     : form.outputFormat === 'png'
       ? $t.promptForm.disabledForPng
       : '0-100';
+  $: optimizeDisabled = loading || optimizing || !optimizerEnabled || !form.prompt.trim();
 
   function clampQuantity() {
     form = { ...form, quantity: Math.min(Math.max(Number(form.quantity) || 1, 1), 10) };
@@ -43,21 +48,47 @@
     {/if}
   </div>
 
-  <label for="prompt" class="sr-only">{$t.common.prompt}</label>
-  <textarea
-    id="prompt"
-    name="prompt"
-    bind:value={form.prompt}
-    maxlength="4000"
-    rows="5"
-    autocomplete="off"
-    aria-label={$t.common.prompt}
-    placeholder={$t.promptForm.placeholder}
-    class="control-focus w-full resize-y rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm leading-6 text-zinc-100 focus:border-emerald-500"
-  ></textarea>
-  <div class="mt-2 flex justify-end text-xs text-zinc-500">{promptLen}/4000</div>
+  <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
+    <div class="min-w-0">
+      <div class="mb-2 flex items-center justify-between gap-3">
+        <label for="prompt" class="text-xs font-medium text-zinc-400">{$t.common.prompt}</label>
+        <button
+          type="button"
+          disabled={optimizeDisabled}
+          class="control-focus rounded-lg border border-emerald-500/40 px-3 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/10 disabled:cursor-not-allowed disabled:border-zinc-700 disabled:text-zinc-500 disabled:opacity-60"
+          title={optimizerEnabled ? $t.promptForm.optimize : $t.promptForm.optimizerUnavailable}
+          on:click={onOptimize}
+        >
+          {optimizing ? $t.promptForm.optimizing : $t.promptForm.optimize}
+        </button>
+      </div>
+      <textarea
+        id="prompt"
+        name="prompt"
+        bind:value={form.prompt}
+        maxlength="4000"
+        rows="8"
+        autocomplete="off"
+        aria-label={$t.common.prompt}
+        placeholder={$t.promptForm.placeholder}
+        class="control-focus w-full resize-y rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm leading-6 text-zinc-100 focus:border-emerald-500"
+      ></textarea>
+      <div class="mt-2 flex justify-end text-xs text-zinc-500">{promptLen}/4000</div>
+    </div>
+
+    <PromptHelperPanel onAppend={onAppendPromptTag} />
+  </div>
 
   <div class="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <label class="block">
+      <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.promptForm.apiPath}</span>
+      <select bind:value={form.apiPath} disabled={loading} class="control-focus w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 font-mono text-sm text-zinc-100 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-50">
+        <option value="/v1/images/generations">/v1/images/generations</option>
+        <option value="/v1/responses">/v1/responses</option>
+        <option value="/v1/chat/completions">/v1/chat/completions</option>
+      </select>
+    </label>
+
     <label class="block">
       <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.common.model}</span>
       <input bind:value={form.model} class="control-focus w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 font-mono text-sm text-zinc-100 focus:border-emerald-500" />

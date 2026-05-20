@@ -2,7 +2,7 @@ import { get, writable } from 'svelte/store';
 import { apiFetch } from '$lib/api/client';
 import { t } from '$lib/i18n';
 import { MAX_EDIT_SOURCE_IMAGES, editSourceCount, editSourceStore, type EditSourceState } from '$lib/stores/editSource';
-import type { GenerateJobResponse, GenerateJobStatus, GenerateRequestBody } from '$lib/api/types';
+import type { ApiPath, GenerateJobResponse, GenerateJobStatus, GenerateRequestBody } from '$lib/api/types';
 
 export type PreviewState = {
   loading: boolean;
@@ -15,6 +15,7 @@ export type PreviewState = {
 
 export type PromptFormState = {
   prompt: string;
+  apiPath: ApiPath;
   size: string;
   model: string;
   quality: GenerateRequestBody['quality'];
@@ -38,6 +39,7 @@ export const DEFAULT_PROMPT_MODEL = 'gpt-image-2';
 
 export const initialPromptFormState: PromptFormState = {
   prompt: '',
+  apiPath: '/v1/images/generations',
   size: 'auto',
   model: DEFAULT_PROMPT_MODEL,
   quality: 'auto',
@@ -58,7 +60,8 @@ function buildRequestBody(form: PromptFormState): GenerateRequestBody {
     output_format: form.outputFormat,
     output_compression: null,
     response_format: form.responseFormat ? (form.responseFormat as 'url' | 'b64_json') : null,
-    webhook_url: form.webhookUrl.trim() || null
+    webhook_url: form.webhookUrl.trim() || null,
+    api_path: form.apiPath
   };
 
   if (form.outputFormat !== 'png' && form.outputCompression !== '') {
@@ -151,6 +154,7 @@ function createPreviewStore() {
 
     const formData = new FormData();
     Object.entries(body).forEach(([key, value]) => {
+      if (key === 'api_path') return;
       if (value !== null && value !== undefined && value !== '') {
         formData.append(key, String(value));
       }
@@ -185,6 +189,7 @@ function createPreviewStore() {
     if (!lastRequest) return;
     setForm({
       prompt: lastRequest.prompt,
+      apiPath: lastRequest.api_path || initialPromptFormState.apiPath,
       size: lastRequest.size,
       model: lastRequest.model,
       quantity: lastRequest.n,

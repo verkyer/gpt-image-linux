@@ -73,6 +73,13 @@ def _configure_runtime(tmp_path: Path, *, access_key: str = "", allow_unauthenti
     config.SLOW_GALLERY_QUERY_MS = 200
     config.THUMBNAILS_DIR = str(images_dir / "thumbs")
     config.THUMBNAIL_MAX_SIDE = 512
+    config.PROMPT_OPTIMIZER_ENABLED = False
+    config.PROMPT_OPTIMIZER_API_URL = ""
+    config.PROMPT_OPTIMIZER_API_KEY = ""
+    config.PROMPT_OPTIMIZER_MODEL = "gpt-4o-mini"
+    config.PROMPT_OPTIMIZER_TIMEOUT_SECONDS = 20
+    config.PROMPT_OPTIMIZER_MAX_OUTPUT_CHARS = 4000
+    config.PROMPT_OPTIMIZER_HOST_ALLOWLIST = ""
 
     storage.close_database_connections()
     storage._db_initialized = False
@@ -239,6 +246,49 @@ class _FakePostSession:
         self.data = kwargs.get("data")
         self.headers = kwargs.get("headers") or {}
         self.allow_redirects = kwargs.get("allow_redirects")
+        return self.response
+
+
+class _FakeOptimizerResponse:
+    def __init__(
+        self,
+        status: int = 200,
+        payload: dict | None = None,
+        json_error: Exception | None = None,
+        peer_ip: str | None = "93.184.216.34",
+    ):
+        self.status = status
+        self.payload = payload or {}
+        self.json_error = json_error
+        self.connection = _FakeConnection(peer_ip) if peer_ip else None
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def json(self, **_kwargs):
+        if self.json_error:
+            raise self.json_error
+        return self.payload
+
+
+class _FakeOptimizerSession:
+    def __init__(self, response):
+        self.response = response
+        self.requested_url = ""
+        self.json_payload = None
+        self.headers = {}
+        self.allow_redirects = None
+        self.timeout = None
+
+    def post(self, url, **kwargs):
+        self.requested_url = url
+        self.json_payload = kwargs.get("json")
+        self.headers = kwargs.get("headers") or {}
+        self.allow_redirects = kwargs.get("allow_redirects")
+        self.timeout = kwargs.get("timeout")
         return self.response
 
 
@@ -748,6 +798,173 @@ def test_settings_global_socks5_proxy_save_mask_preserve_and_clear(client):
     assert storage.load_settings()["upstream_socks5_proxy"] == ""
 
 
+def _settings_payload(settings: dict, **overrides):
+    payload = {
+        "active_preset_id": settings["active_preset_id"],
+        "preset_name": "Primary",
+        "api_url": "https://api.example.com",
+        "api_key": None,
+        "api_path": settings["api_path"],
+        "default_model": settings["default_model"],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_prompt_optimizer_settings_mask_preserve_and_clear(client):
+    settings = client.get("/api/settings").json()
+    assert settings["prompt_optimizer"]["enabled"] is False
+    assert settings["prompt_optimizer"]["has_api_key"] is False
+
+    updated = client.post(
+        "/api/settings",
+        json=_settings_payload(
+            settings,
+            prompt_optimizer={
+                "enabled": True,
+                "api_url": "https://example.com/v1/chat/completions",
+                "model": "gpt-4o-mini",
+                "api_key": "optimizer-secret",
+            },
+        ),
+    )
+
+    assert updated.status_code == 200
+    body = updated.json()
+    optimizer = body["prompt_optimizer"]
+    assert optimizer["enabled"] is True
+    assert optimizer["api_url"] == "https://example.com/v1/chat/completions"
+    assert optimizer["model"] == "gpt-4o-mini"
+    assert optimizer["has_api_key"] is True
+    assert optimizer["api_key_source"] == "stored"
+    assert "optimizer-secret" not in json.dumps(body)
+    assert storage.load_prompt_optimizer_settings()["api_key"] == "optimizer-secret"
+
+    preserved = client.post(
+        "/api/settings",
+        json=_settings_payload(
+            body,
+            prompt_optimizer={
+                "enabled": True,
+                "api_url": "https://example.com/v1/chat/completions",
+                "model": "gpt-4o-mini",
+                "api_key": "********",
+            },
+        ),
+    )
+    assert preserved.status_code == 200
+    assert storage.load_prompt_optimizer_settings()["api_key"] == "optimizer-secret"
+
+    cleared = client.post(
+        "/api/settings",
+        json=_settings_payload(
+            preserved.json(),
+            prompt_optimizer={
+                "enabled": False,
+                "api_url": "",
+                "model": "gpt-4o-mini",
+                "api_key": "",
+            },
+        ),
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["prompt_optimizer"]["has_api_key"] is False
+    assert storage.load_prompt_optimizer_settings()["api_key"] == ""
+
+
+def test_prompt_optimize_disabled_returns_400(client):
+    resp = client.post("/api/prompt/optimize", json={"prompt": "tiny robot"})
+
+    assert resp.status_code == 400
+    assert "not enabled" in resp.json()["detail"]
+
+
+def test_prompt_optimize_success_uses_configured_upstream(client, monkeypatch):
+    from backend.app.api.routers import prompt as prompt_router
+
+    monkeypatch.setattr(prompt_router, "validate_optimizer_endpoint", lambda _url: None)
+    settings = client.get("/api/settings").json()
+    configured = client.post(
+        "/api/settings",
+        json=_settings_payload(
+            settings,
+            prompt_optimizer={
+                "enabled": True,
+                "api_url": "https://example.com/v1/chat/completions",
+                "model": "prompt-model",
+                "api_key": "optimizer-key",
+            },
+        ),
+    )
+    assert configured.status_code == 200
+    seen: dict[str, object] = {}
+
+    async def fake_optimize_prompt(**kwargs):
+        seen.update(kwargs)
+        return ("Optimized prompt text", "prompt-model", 42)
+
+    monkeypatch.setattr(prompt_router, "optimize_prompt", fake_optimize_prompt)
+
+    resp = client.post(
+        "/api/prompt/optimize",
+        json={
+            "prompt": "tiny robot",
+            "target_language": "en",
+            "api_path": "/v1/responses",
+            "model": "gpt-image-2",
+            "size": "1024x1024",
+            "quality": "high",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "optimized_prompt": "Optimized prompt text",
+        "model": "prompt-model",
+        "duration_ms": 42,
+    }
+    assert seen["api_url"] == "https://example.com/v1/chat/completions"
+    assert seen["api_key"] == "optimizer-key"
+    assert seen["model"] == "prompt-model"
+    assert seen["image_api_path"] == "/v1/responses"
+
+
+def test_prompt_optimize_upstream_error_and_timeout(client, monkeypatch):
+    from backend.app.api.routers import prompt as prompt_router
+
+    monkeypatch.setattr(prompt_router, "validate_optimizer_endpoint", lambda _url: None)
+    settings = client.get("/api/settings").json()
+    configured = client.post(
+        "/api/settings",
+        json=_settings_payload(
+            settings,
+            prompt_optimizer={
+                "enabled": True,
+                "api_url": "https://example.com/v1/chat/completions",
+                "model": "prompt-model",
+                "api_key": "optimizer-key",
+            },
+        ),
+    )
+    assert configured.status_code == 200
+
+    async def fake_upstream_error(**_kwargs):
+        raise prompt_router.UpstreamOptimizerError("bad optimizer response")
+
+    monkeypatch.setattr(prompt_router, "optimize_prompt", fake_upstream_error)
+    upstream_error = client.post("/api/prompt/optimize", json={"prompt": "tiny robot"})
+    assert upstream_error.status_code == 502
+    assert "bad optimizer response" in upstream_error.json()["detail"]
+
+    async def fake_timeout(**_kwargs):
+        raise prompt_router.OptimizerTimeoutError("optimizer timeout")
+
+    monkeypatch.setattr(prompt_router, "optimize_prompt", fake_timeout)
+    timeout = client.post("/api/prompt/optimize", json={"prompt": "tiny robot"})
+    assert timeout.status_code == 504
+    assert "optimizer timeout" in timeout.json()["detail"]
+
+
 def test_settings_rejects_invalid_socks5_proxy(client):
     settings = client.get("/api/settings").json()
 
@@ -1018,6 +1235,29 @@ def test_generate_and_sse_contract(client):
     assert events.headers["content-type"].startswith("text/event-stream")
     assert "event: job" in events.text
     assert job_id in events.text
+
+
+def test_generate_request_api_path_overrides_active_preset(client):
+    resp = client.post(
+        "/api/generate",
+        json={
+            "prompt": "responses override",
+            "size": "1024x1024",
+            "model": "gpt-image-2",
+            "n": 1,
+            "quality": "auto",
+            "output_format": "png",
+            "api_path": "/v1/responses",
+        },
+    )
+
+    assert resp.status_code == 202
+    job = _wait_for_job(client, resp.json()["job_id"])
+    assert job["status"] == "success"
+    assert job["api_path"] == "/v1/responses"
+    entry = storage.get_gallery_entry(job["image_id"])
+    assert entry is not None
+    assert entry.api_path == "/v1/responses"
 
 
 def test_multi_image_job_returns_all_results(client):

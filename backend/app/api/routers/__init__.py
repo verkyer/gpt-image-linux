@@ -1,4 +1,4 @@
-from . import access, edits, gallery, generate, metrics, settings, static
+from . import access, edits, gallery, generate, metrics, prompt, settings, static
 
 
 routers = (
@@ -7,6 +7,7 @@ routers = (
     generate.router,
     edits.router,
     gallery.router,
+    prompt.router,
     metrics.router,
     static.router,
 )

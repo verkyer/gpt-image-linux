@@ -2,7 +2,7 @@ import { derived, get, writable } from 'svelte/store';
 import { apiFetch } from '$lib/api/client';
 import { t } from '$lib/i18n';
 import { confirmStore } from '$lib/stores/confirm';
-import type { PresetHealthResponse, SettingsResponse } from '$lib/api/types';
+import type { PresetHealthResponse, SettingsInput, SettingsResponse } from '$lib/api/types';
 import type { ToastVariant } from '$lib/stores/ui';
 
 type ShowToast = (message: string, variant?: ToastVariant) => void;
@@ -29,7 +29,7 @@ function createSettingsStore() {
     update((state) => ({ ...state, settings }));
   }
 
-  async function saveSettings(body: Record<string, unknown>, showToast: ShowToast) {
+  async function saveSettings(body: SettingsInput, showToast: ShowToast) {
     if (!String(body.api_url || '').trim()) {
       showToast(get(t).messages.apiUrlRequired, 'error');
       return;

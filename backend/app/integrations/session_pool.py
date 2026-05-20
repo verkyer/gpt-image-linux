@@ -2,6 +2,8 @@ import aiohttp
 import logging
 from typing import Any
 
+from ..core import settings as config
+
 logger = logging.getLogger(__name__)
 
 _UPSTREAM_TIMEOUT = aiohttp.ClientTimeout(
@@ -19,11 +21,29 @@ _PROBE_TIMEOUT = aiohttp.ClientTimeout(
 
 TIMEOUT_UPSTREAM = "upstream"
 TIMEOUT_PROBE = "probe"
+TIMEOUT_PROMPT_OPTIMIZER = "prompt_optimizer"
 
 _TIMEOUTS = {
     TIMEOUT_UPSTREAM: _UPSTREAM_TIMEOUT,
     TIMEOUT_PROBE: _PROBE_TIMEOUT,
 }
+
+
+def _prompt_optimizer_timeout() -> aiohttp.ClientTimeout:
+    total = max(float(config.PROMPT_OPTIMIZER_TIMEOUT_SECONDS or 20), 0.1)
+    connect = min(total, 10.0)
+    return aiohttp.ClientTimeout(
+        total=total,
+        connect=connect,
+        sock_connect=connect,
+        sock_read=total,
+    )
+
+
+def _timeout_for_kind(timeout_kind: str) -> aiohttp.ClientTimeout:
+    if timeout_kind == TIMEOUT_PROMPT_OPTIMIZER:
+        return _prompt_optimizer_timeout()
+    return _TIMEOUTS.get(timeout_kind, _UPSTREAM_TIMEOUT)
 
 
 def _build_socks5_connector(socks5_proxy: str | None):
@@ -56,7 +76,7 @@ class SessionPool:
         session = self._sessions.get(key)
         if session is not None and not session.closed:
             return session
-        timeout = _TIMEOUTS.get(timeout_kind, _UPSTREAM_TIMEOUT)
+        timeout = _timeout_for_kind(timeout_kind)
         connector = _build_socks5_connector(proxy_key or None)
         session = aiohttp.ClientSession(timeout=timeout, connector=connector)
         self._sessions[key] = session

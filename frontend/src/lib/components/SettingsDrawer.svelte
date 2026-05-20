@@ -1,6 +1,6 @@
 <script lang="ts">
   import { t } from '$lib/i18n';
-  import type { ApiPath, ApiPreset, PresetHealthResponse, PresetHealthStatus, SettingsResponse } from '$lib/api/types';
+  import type { ApiPath, ApiPreset, PresetHealthResponse, PresetHealthStatus, SettingsInput, SettingsResponse } from '$lib/api/types';
   import { dialog } from '$lib/actions/dialog';
 
   const MASKED_API_KEY_VALUE = '********';
@@ -11,7 +11,7 @@
   export let health: PresetHealthResponse | null = null;
   export let healthChecking = false;
   export let onClose: () => void = () => {};
-  export let onSave: (body: Record<string, unknown>) => Promise<void> | void = () => {};
+  export let onSave: (body: SettingsInput) => Promise<void> | void = () => {};
   export let onCreate: () => Promise<void> | void = () => {};
   export let onActivate: (presetId: string) => Promise<void> | void = () => {};
   export let onDelete: () => Promise<void> | void = () => {};
@@ -25,6 +25,11 @@
   let apiPath: ApiPath = '/v1/images/generations';
   let upstreamSocks5Proxy = '';
   let apiKeyInputType = 'password';
+  let promptOptimizerEnabled = false;
+  let promptOptimizerApiUrl = '';
+  let promptOptimizerModel = 'gpt-4o-mini';
+  let promptOptimizerApiKey = '';
+  let promptOptimizerApiKeyInputType = 'password';
 
   $: activePreset = settings?.presets.find((preset) => preset.id === settings.active_preset_id) || settings?.presets[0] || null;
   $: if (settings && activePreset) {
@@ -40,8 +45,18 @@
           : '';
     apiPath = activePreset.api_path || settings.api_path || '/v1/images/generations';
     upstreamSocks5Proxy = settings.has_upstream_socks5_proxy ? settings.upstream_socks5_proxy_masked : '';
+    promptOptimizerEnabled = Boolean(settings.prompt_optimizer?.enabled);
+    promptOptimizerApiUrl = settings.prompt_optimizer?.api_url || '';
+    promptOptimizerModel = settings.prompt_optimizer?.model || 'gpt-4o-mini';
+    promptOptimizerApiKey =
+      settings.prompt_optimizer?.api_key_source === 'env' && settings.prompt_optimizer.api_key_env_var
+        ? `\${${settings.prompt_optimizer.api_key_env_var}}`
+        : settings.prompt_optimizer?.has_api_key
+          ? MASKED_API_KEY_VALUE
+          : '';
   }
   $: apiKeyInputType = apiKey.trim().startsWith('${') && apiKey.trim().endsWith('}') ? 'text' : 'password';
+  $: promptOptimizerApiKeyInputType = promptOptimizerApiKey.trim().startsWith('${') && promptOptimizerApiKey.trim().endsWith('}') ? 'text' : 'password';
 
   async function save() {
     const proxyValue = upstreamSocks5Proxy.trim();
@@ -53,7 +68,13 @@
       default_model: defaultModel.trim(),
       api_key: apiKey.trim() === MASKED_API_KEY_VALUE ? null : apiKey.trim(),
       api_path: apiPath,
-      upstream_socks5_proxy: proxyValue === currentProxyMask ? null : proxyValue
+      upstream_socks5_proxy: proxyValue === currentProxyMask ? null : proxyValue,
+      prompt_optimizer: {
+        enabled: promptOptimizerEnabled,
+        api_url: promptOptimizerApiUrl.trim(),
+        model: promptOptimizerModel.trim(),
+        api_key: promptOptimizerApiKey.trim() === MASKED_API_KEY_VALUE ? null : promptOptimizerApiKey.trim()
+      }
     });
   }
 
@@ -181,6 +202,34 @@
             <input bind:value={upstreamSocks5Proxy} class="control-focus w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 font-mono text-sm text-zinc-100 focus:border-emerald-500" placeholder="socks5://127.0.0.1:1080" />
             <span class="mt-1.5 block text-xs text-zinc-500">{$t.settings.upstreamSocks5ProxyHint}</span>
           </label>
+
+          <section class="border-t border-zinc-800 pt-4">
+            <div class="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <h3 class="text-sm font-semibold text-zinc-200">{$t.settings.promptOptimizer}</h3>
+                <p class="mt-1 text-xs text-zinc-500">{$t.settings.promptOptimizerHint}</p>
+              </div>
+              <label class="flex items-center gap-2 text-xs font-medium text-zinc-300">
+                <input bind:checked={promptOptimizerEnabled} type="checkbox" class="control-focus accent-emerald-500" />
+                {$t.settings.promptOptimizerEnabled}
+              </label>
+            </div>
+            <div class="space-y-4">
+              <label class="block">
+                <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.settings.promptOptimizerApiUrl}</span>
+                <input bind:value={promptOptimizerApiUrl} class="control-focus w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 font-mono text-sm text-zinc-100 focus:border-emerald-500" placeholder="https://api.openai.com/v1/chat/completions" />
+              </label>
+              <label class="block">
+                <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.settings.promptOptimizerModel}</span>
+                <input bind:value={promptOptimizerModel} class="control-focus w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 font-mono text-sm text-zinc-100 focus:border-emerald-500" placeholder="gpt-4o-mini" />
+              </label>
+              <label class="block">
+                <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.settings.promptOptimizerApiKey}</span>
+                <input bind:value={promptOptimizerApiKey} type={promptOptimizerApiKeyInputType} class="control-focus w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 font-mono text-sm text-zinc-100 focus:border-emerald-500" />
+                <span class="mt-1.5 block text-xs text-zinc-500">{$t.settings.apiKeyHint}</span>
+              </label>
+            </div>
+          </section>
         </div>
       </div>
 

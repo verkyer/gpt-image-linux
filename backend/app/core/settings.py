@@ -82,3 +82,12 @@ THUMBNAILS_DIR = os.getenv("THUMBNAILS_DIR", os.path.join(IMAGES_DIR, "thumbs"))
 THUMBNAIL_MAX_SIDE = max(1, int(os.getenv("THUMBNAIL_MAX_SIDE", "512")))
 DATA_DIR = os.getenv("DATA_DIR", "./data")
 DATABASE_FILE = os.getenv("DATABASE_FILE", os.path.join(DATA_DIR, "app.sqlite3"))
+
+# ── Prompt optimizer ────────────────────────────────────────────
+PROMPT_OPTIMIZER_ENABLED = env_flag("PROMPT_OPTIMIZER_ENABLED")
+PROMPT_OPTIMIZER_API_URL = os.getenv("PROMPT_OPTIMIZER_API_URL", "").strip()
+PROMPT_OPTIMIZER_API_KEY = os.getenv("PROMPT_OPTIMIZER_API_KEY", "").strip()
+PROMPT_OPTIMIZER_MODEL = os.getenv("PROMPT_OPTIMIZER_MODEL", "gpt-4o-mini").strip()
+PROMPT_OPTIMIZER_TIMEOUT_SECONDS = int(os.getenv("PROMPT_OPTIMIZER_TIMEOUT_SECONDS", "20"))
+PROMPT_OPTIMIZER_MAX_OUTPUT_CHARS = int(os.getenv("PROMPT_OPTIMIZER_MAX_OUTPUT_CHARS", "4000"))
+PROMPT_OPTIMIZER_HOST_ALLOWLIST = os.getenv("PROMPT_OPTIMIZER_HOST_ALLOWLIST", "").strip()

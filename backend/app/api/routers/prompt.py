@@ -1,0 +1,68 @@
+import logging
+
+from fastapi import APIRouter, HTTPException
+
+from ..presets import (
+    get_prompt_optimizer_settings,
+    resolve_prompt_optimizer_api_key,
+)
+from ...integrations.prompt_optimizer_client import (
+    OptimizerTimeoutError,
+    UpstreamOptimizerError,
+    optimize_prompt,
+    validate_optimizer_endpoint,
+)
+from ...schemas.models import PromptOptimizeRequest, PromptOptimizeResponse
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+
+@router.post("/api/prompt/optimize", response_model=PromptOptimizeResponse)
+async def optimize_prompt_endpoint(req: PromptOptimizeRequest):
+    settings = get_prompt_optimizer_settings()
+    if not settings or not settings.get("enabled"):
+        raise HTTPException(status_code=400, detail="Prompt optimizer is not enabled")
+
+    api_url = str(settings.get("api_url", "")).strip()
+    model = str(settings.get("model", "gpt-4o-mini")).strip() or "gpt-4o-mini"
+    api_key = resolve_prompt_optimizer_api_key(settings)
+
+    if not api_url:
+        raise HTTPException(status_code=400, detail="Prompt optimizer endpoint URL is not configured")
+    if not model:
+        raise HTTPException(status_code=400, detail="Prompt optimizer model is not configured")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Prompt optimizer API key is not configured")
+
+    try:
+        validate_optimizer_endpoint(api_url)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    try:
+        optimized_prompt, model_used, duration_ms = await optimize_prompt(
+            api_url=api_url,
+            api_key=api_key,
+            model=model,
+            prompt=req.prompt,
+            target_language=req.target_language,
+            image_api_path=req.api_path,
+            image_model=req.model,
+            size=req.size,
+            quality=req.quality,
+        )
+    except OptimizerTimeoutError as e:
+        raise HTTPException(status_code=504, detail=str(e)) from e
+    except UpstreamOptimizerError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Prompt optimizer unexpected error")
+        raise HTTPException(status_code=502, detail="Prompt optimizer failed") from e
+
+    return PromptOptimizeResponse(
+        optimized_prompt=optimized_prompt,
+        model=model_used,
+        duration_ms=duration_ms,
+    )

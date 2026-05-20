@@ -12,6 +12,8 @@
   export let onDelete: (image: GalleryEntry) => void = () => {};
   export let onCopyPrompt: (image: GalleryEntry) => void = () => {};
   export let onCopyUrl: (image: GalleryEntry) => void = () => {};
+  export let onUsePrompt: (image: GalleryEntry) => void = () => {};
+  export let onUseAll: (image: GalleryEntry) => void = () => {};
 </script>
 
 {#if open && image}
@@ -72,6 +74,8 @@
         <div class="grid grid-cols-2 gap-2 border-t border-zinc-800 p-5">
           <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800" on:click={() => onEdit(image)}>{$t.common.edit}</button>
           <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800" on:click={() => onFavorite(image)}>{image.favorite ? $t.common.unfavorite : $t.common.favorite}</button>
+          <button type="button" class="control-focus rounded-lg border border-emerald-500/40 px-3 py-2 text-xs text-emerald-200 hover:bg-emerald-500/10" on:click={() => onUsePrompt(image)}>{$t.common.usePrompt}</button>
+          <button type="button" class="control-focus rounded-lg border border-emerald-500/40 px-3 py-2 text-xs text-emerald-200 hover:bg-emerald-500/10" on:click={() => onUseAll(image)}>{$t.common.useAllParams}</button>
           <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800" on:click={() => onCopyPrompt(image)}>{$t.common.copyPrompt}</button>
           <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800" on:click={() => onCopyUrl(image)}>{$t.common.copyUrl}</button>
           <a href={downloadUrl(image.filename)} class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-center text-xs text-zinc-300 hover:bg-zinc-800">{$t.common.download}</a>

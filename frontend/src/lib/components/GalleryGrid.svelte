@@ -19,6 +19,8 @@
   export let onExport: () => void = () => {};
   export let onOpen: (image: GalleryEntry) => void = () => {};
   export let onEdit: (image: GalleryEntry) => void = () => {};
+  export let onUsePrompt: (image: GalleryEntry) => void = () => {};
+  export let onUseAll: (image: GalleryEntry) => void = () => {};
   export let selectionMode = false;
   export let selectedIds: Set<string> = new Set();
   export let onSelectionMode: (enabled: boolean) => void = () => {};
@@ -275,6 +277,8 @@
                 <p class="mt-1 text-xs text-zinc-500">{image.size} / {image.model || '-'}</p>
               </div>
               <div class="flex flex-wrap gap-2">
+                <button type="button" class="control-focus rounded-md border border-emerald-500/40 px-2 py-1 text-xs text-emerald-200 hover:bg-emerald-500/10" on:click={(event) => handleGalleryAction(event, () => onUsePrompt(image))}>{$t.common.usePrompt}</button>
+                <button type="button" class="control-focus rounded-md border border-emerald-500/40 px-2 py-1 text-xs text-emerald-200 hover:bg-emerald-500/10" on:click={(event) => handleGalleryAction(event, () => onUseAll(image))}>{$t.common.useAllParams}</button>
                 <button type="button" class="control-focus rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800" on:click={(event) => handleGalleryAction(event, () => onEdit(image))}>{$t.common.edit}</button>
                 <button type="button" class="control-focus rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800" on:click={(event) => handleGalleryAction(event, () => onFavorite(image))}>{image.favorite ? $t.common.unfavorite : $t.common.favorite}</button>
                 <a href={`/api/download/${encodeURIComponent(image.filename)}`} class="control-focus rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800" on:click|stopPropagation>{$t.common.download}</a>
