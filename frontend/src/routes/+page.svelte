@@ -1,0 +1,686 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import AccessGate from '$lib/components/AccessGate.svelte';
+  import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+  import EditPreviewModal from '$lib/components/EditPreviewModal.svelte';
+  import EditSourcePicker from '$lib/components/EditSourcePicker.svelte';
+  import GalleryGrid from '$lib/components/GalleryGrid.svelte';
+  import Header from '$lib/components/Header.svelte';
+  import JobHistoryDrawer from '$lib/components/JobHistoryDrawer.svelte';
+  import Lightbox from '$lib/components/Lightbox.svelte';
+  import PreviewPanel from '$lib/components/PreviewPanel.svelte';
+  import PromptForm from '$lib/components/PromptForm.svelte';
+  import SettingsDrawer from '$lib/components/SettingsDrawer.svelte';
+  import SizeDialog from '$lib/components/SizeDialog.svelte';
+  import ToastHost from '$lib/components/ToastHost.svelte';
+  import { apiFetch } from '$lib/api/client';
+  import { t } from '$lib/i18n';
+  import type { ApiPath, GalleryEntry, GenerateJobStatus, PromptOptimizeResponse, SettingsInput, SettingsResponse } from '$lib/api/types';
+  import { accessStore } from '$lib/stores/access';
+  import { confirmStore } from '$lib/stores/confirm';
+  import { editSourceStore, MAX_EDIT_SOURCE_IMAGES } from '$lib/stores/editSource';
+  import { galleryStore } from '$lib/stores/gallery';
+  import { readGalleryUrlState, writeGalleryUrlState } from '$lib/stores/galleryUrlState';
+  import { jobsStore } from '$lib/stores/jobs';
+  import { lightboxStore } from '$lib/stores/lightbox';
+  import { DEFAULT_PROMPT_MODEL, initialPromptFormState, previewStore, type PromptFormState } from '$lib/stores/preview';
+  import { settingsStore } from '$lib/stores/settings';
+  import { uiStore, type ToastOptions } from '$lib/stores/ui';
+  import { versionStore } from '$lib/stores/version';
+  import { copyText, galleryImageSize, imageUrl } from '$lib/utils/format';
+  import { galleryEntryToPromptForm, galleryEntryToPromptOnly, jobToPromptForm, normalizeApiPath } from '$lib/utils/promptForm';
+
+  type JobsTab = 'running' | 'history';
+
+  let jobsTab: JobsTab = 'running';
+  let form: PromptFormState = { ...initialPromptFormState };
+  let editPicker: EditSourcePicker;
+  let editPreviewUrl = '';
+  let editPreviewLabel = '';
+  let lastActivePresetId = '';
+  let lastActivePresetDefaultModel = DEFAULT_PROMPT_MODEL;
+  let urlSyncReady = false;
+  let applyingUrlState = false;
+  let urlSyncQueued = false;
+  let queuedUrlSyncMode: 'replace' | 'push' = 'replace';
+  let lightboxLookupSeq = 0;
+  let lastActivePresetApiPath: ApiPath = initialPromptFormState.apiPath;
+  let optimizingPrompt = false;
+
+  $: activeJobsCount = $jobsStore.jobs.length;
+  $: optimizerSettings = $settingsStore.settings?.prompt_optimizer || null;
+  $: optimizerAvailable = Boolean(
+    optimizerSettings?.enabled &&
+      optimizerSettings.api_url.trim() &&
+      optimizerSettings.model.trim() &&
+      optimizerSettings.has_api_key
+  );
+  $: syncFormModelToActivePreset($settingsStore.settings);
+
+  async function loadInitialData() {
+    await Promise.all([settingsStore.loadSettings(), jobsStore.loadJobs(), applyUrlStateToApp()]);
+    urlSyncReady = true;
+    syncUrlState();
+    jobsStore.startJobsEvents();
+  }
+
+  function showToast(message: string, variant?: 'status' | 'error', options?: ToastOptions) {
+    uiStore.showToast(message, variant, options);
+  }
+
+  function syncUrlState(mode: 'replace' | 'push' = 'replace') {
+    if (!urlSyncReady || applyingUrlState || typeof window === 'undefined') return;
+
+    const url = new URL(window.location.href);
+    writeGalleryUrlState(url.searchParams, $galleryStore.page, $galleryStore.filters);
+
+    if ($lightboxStore.image) url.searchParams.set('image', $lightboxStore.image.id);
+    else url.searchParams.delete('image');
+
+    if ($uiStore.jobsOpen) url.searchParams.set('jobs', jobsTab);
+    else url.searchParams.delete('jobs');
+
+    const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (nextUrl === currentUrl) return;
+    window.history[mode === 'push' ? 'pushState' : 'replaceState']({}, '', nextUrl);
+  }
+
+  function queueUrlSync(mode: 'replace' | 'push' = 'replace') {
+    if (mode === 'push') queuedUrlSyncMode = 'push';
+    if (urlSyncQueued) return;
+    urlSyncQueued = true;
+    queueMicrotask(() => {
+      urlSyncQueued = false;
+      const nextMode = queuedUrlSyncMode;
+      queuedUrlSyncMode = 'replace';
+      syncUrlState(nextMode);
+    });
+  }
+
+  function parseJobsTab(value: string | null): JobsTab | null {
+    if (value === 'history' || value === 'running') return value;
+    return null;
+  }
+
+  async function syncLightboxFromUrl(imageId: string | null | undefined) {
+    const nextImageId = String(imageId || '').trim();
+    if (!nextImageId) {
+      lightboxStore.close();
+      return;
+    }
+
+    const existing = $galleryStore.gallery?.images.find((image) => image.id === nextImageId);
+    if (existing) {
+      lightboxStore.open(existing);
+      return;
+    }
+
+    const seq = ++lightboxLookupSeq;
+    try {
+      const image = await apiFetch<GalleryEntry>(`/api/gallery/${encodeURIComponent(nextImageId)}`, {}, 'loading gallery image');
+      if (seq === lightboxLookupSeq) lightboxStore.open(image);
+    } catch {
+      if (seq !== lightboxLookupSeq) return;
+      lightboxStore.close();
+      showToast($t.messages.galleryImageNotFound, 'error');
+    }
+  }
+
+  function openLightbox(image: GalleryEntry) {
+    lightboxStore.open(image);
+    queueUrlSync('push');
+  }
+
+  function closeLightbox() {
+    lightboxStore.close();
+    queueUrlSync('replace');
+  }
+
+  function openJobsDrawer(tab: JobsTab = jobsTab) {
+    jobsTab = tab;
+    setUi('jobsOpen', true);
+    if (tab === 'history' && !$jobsStore.historyLoaded && !$jobsStore.historyLoading) void jobsStore.loadJobHistory();
+    queueUrlSync();
+  }
+
+  function closeJobsDrawer() {
+    setUi('jobsOpen', false);
+    queueUrlSync();
+  }
+
+  function setJobsTab(tab: JobsTab) {
+    jobsTab = tab;
+    if (tab === 'history' && !$jobsStore.historyLoaded && !$jobsStore.historyLoading) void jobsStore.loadJobHistory();
+    queueUrlSync();
+  }
+
+  async function applyUrlStateToApp() {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    const state = readGalleryUrlState(url.searchParams);
+    const nextJobsTab = parseJobsTab(url.searchParams.get('jobs'));
+    const imageId = url.searchParams.get('image');
+
+    applyingUrlState = true;
+    try {
+      galleryStore.setPageAndFilters(state.page, state.filters);
+      jobsTab = nextJobsTab || 'running';
+      setUi('jobsOpen', Boolean(nextJobsTab));
+
+      if (nextJobsTab === 'history' && !$jobsStore.historyLoaded && !$jobsStore.historyLoading) {
+        void jobsStore.loadJobHistory();
+      }
+
+      await galleryStore.loadGallery(state.page);
+      await syncLightboxFromUrl(imageId);
+    } finally {
+      applyingUrlState = false;
+    }
+    syncUrlState();
+  }
+
+  function setUi<K extends keyof typeof $uiStore>(key: K, value: (typeof $uiStore)[K]) {
+    uiStore.setKey(key, value);
+  }
+
+  function activePreset(settings: SettingsResponse | null) {
+    return settings?.presets.find((preset) => preset.id === settings.active_preset_id) || settings?.presets[0] || null;
+  }
+
+  function presetDefaultModel(settings: SettingsResponse | null) {
+    const preset = activePreset(settings);
+    return (preset?.default_model || settings?.default_model || DEFAULT_PROMPT_MODEL).trim() || DEFAULT_PROMPT_MODEL;
+  }
+
+  function presetApiPath(settings: SettingsResponse | null): ApiPath {
+    const preset = activePreset(settings);
+    return normalizeApiPath(preset?.api_path || settings?.api_path, initialPromptFormState.apiPath);
+  }
+
+  function syncFormModelToActivePreset(settings: SettingsResponse | null) {
+    const preset = activePreset(settings);
+    const nextPresetId = preset?.id || '';
+    const nextDefaultModel = presetDefaultModel(settings);
+    const nextApiPath = presetApiPath(settings);
+    if (
+      nextPresetId === lastActivePresetId &&
+      nextDefaultModel === lastActivePresetDefaultModel &&
+      nextApiPath === lastActivePresetApiPath
+    ) {
+      return;
+    }
+
+    const currentModel = form.model.trim();
+    const updates: Partial<PromptFormState> = {};
+    if (!currentModel || currentModel === lastActivePresetDefaultModel) {
+      updates.model = nextDefaultModel;
+    }
+    if (!form.apiPath || form.apiPath === lastActivePresetApiPath) {
+      updates.apiPath = nextApiPath;
+    }
+    if (Object.keys(updates).length) {
+      form = { ...form, ...updates };
+    }
+    lastActivePresetId = nextPresetId;
+    lastActivePresetDefaultModel = nextDefaultModel;
+    lastActivePresetApiPath = nextApiPath;
+  }
+
+  function saveSettings(body: SettingsInput) {
+    void settingsStore.saveSettings(body, showToast).then(() => setUi('settingsOpen', false));
+  }
+
+  function createPreset() {
+    void settingsStore.createPreset(showToast);
+  }
+
+  function activatePreset(presetId: string) {
+    void settingsStore.activatePreset(presetId, showToast);
+  }
+
+  function deleteActivePreset() {
+    void settingsStore.deleteActivePreset(showToast);
+  }
+
+  function checkPresetHealth(presetId: string) {
+    void settingsStore.checkPresetHealth(presetId);
+  }
+
+  function updatePreviewFromJob(job: GenerateJobStatus) {
+    previewStore.setPreview(jobsStore.previewFromJob(job, $previewStore));
+    if (job.status !== 'queued' && job.status !== 'running') {
+      void jobsStore.loadJobs();
+      void jobsStore.refreshHistoryIfLoaded();
+      if (job.status === 'success') void galleryStore.loadGallery(1);
+    }
+  }
+
+  function trackJob(jobId: string) {
+    jobsStore.trackJob(jobId, async (job) => updatePreviewFromJob(job), previewStore.setError);
+  }
+
+  function generateImage() {
+    void previewStore.generateImage(form, jobsStore.makeQueuedPreview, trackJob, jobsStore.loadJobs);
+  }
+
+  function editImage() {
+    void previewStore.editImage(form, $editSourceStore, jobsStore.makeQueuedPreview, trackJob, jobsStore.loadJobs);
+  }
+
+  function promptContainsTag(prompt: string, value: string) {
+    const normalized = value.trim().toLowerCase();
+    return prompt
+      .split(',')
+      .map((item) => item.trim().toLowerCase())
+      .includes(normalized);
+  }
+
+  function appendPromptTag(value: string) {
+    const tag = value.trim();
+    if (!tag) return;
+    if (promptContainsTag(form.prompt, tag)) {
+      showToast($t.messages.promptTagExists);
+      return;
+    }
+    const prefix = form.prompt.trim();
+    form = { ...form, prompt: prefix ? `${prefix}, ${tag}` : tag };
+  }
+
+  async function optimizePrompt() {
+    const originalPrompt = form.prompt;
+    const prompt = originalPrompt.trim();
+    if (!prompt || optimizingPrompt) return;
+    if (!optimizerAvailable) {
+      showToast($t.messages.promptOptimizerUnavailable, 'error');
+      return;
+    }
+
+    optimizingPrompt = true;
+    try {
+      const response = await apiFetch<PromptOptimizeResponse>(
+        '/api/prompt/optimize',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt,
+            target_language: 'en',
+            api_path: form.apiPath,
+            model: form.model.trim() || null,
+            size: form.size,
+            quality: form.quality
+          })
+        },
+        'optimizing prompt'
+      );
+      form = { ...form, prompt: response.optimized_prompt };
+      showToast($t.messages.promptOptimized, 'status', {
+        actionLabel: $t.common.undo,
+        onAction: () => {
+          form = { ...form, prompt: originalPrompt };
+        },
+        durationMs: 6000
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : $t.messages.promptOptimizeFailed;
+      showToast(message || $t.messages.promptOptimizeFailed, 'error');
+    } finally {
+      optimizingPrompt = false;
+    }
+  }
+
+  function regenerate() {
+    previewStore.regenerate(
+      (next) => (form = { ...next, model: next.model.trim() || lastActivePresetDefaultModel || initialPromptFormState.model }),
+      generateImage,
+      editImage
+    );
+  }
+
+  function clearPreview() {
+    previewStore.clearPreview(jobsStore.closeActiveJobSource);
+  }
+
+  function prepareGalleryImageForEdit(image: GalleryEntry) {
+    const nextLabel = $t.messages.galleryEditLabel(image.filename);
+    if (!editSourceStore.setGallerySource(image.id, nextLabel, imageUrl(image.filename), nextLabel, previewStore.setError)) {
+      showToast($t.messages.editSourceLimit(MAX_EDIT_SOURCE_IMAGES), 'error');
+      return;
+    }
+    form = { ...form, size: galleryImageSize(image) };
+    closeLightbox();
+    showToast($t.messages.galleryImageReady);
+  }
+
+  function handleEditFile(event: Event) {
+    editSourceStore.handleFile(event, previewStore.setError);
+  }
+
+  function openEditPreview(sourceId: string) {
+    const upload = $editSourceStore.files.find((source) => source.id === sourceId);
+    if (upload) {
+      editPreviewUrl = upload.previewUrl;
+      editPreviewLabel = upload.previewLabel;
+      setUi('editPreviewOpen', true);
+      return;
+    }
+    if ($editSourceStore.selectedGalleryImageId === sourceId && $editSourceStore.galleryPreviewUrl) {
+      editPreviewUrl = $editSourceStore.galleryPreviewUrl;
+      editPreviewLabel = $editSourceStore.galleryPreviewLabel || $editSourceStore.galleryLabel;
+      setUi('editPreviewOpen', true);
+    }
+  }
+
+  function clearEditSource() {
+    editSourceStore.clear();
+    editPicker?.reset();
+    setUi('editPreviewOpen', false);
+    editPreviewUrl = '';
+    editPreviewLabel = '';
+  }
+
+  async function batchFavoriteGallery(favorite: boolean) {
+    await galleryStore.batchFavorite(favorite, showToast, (ids, nextFavorite) => {
+      ids.forEach((id) => lightboxStore.updateFavorite(id, nextFavorite));
+    });
+  }
+
+  async function batchDeleteGallery() {
+    await galleryStore.batchDelete(showToast, (ids) => {
+      if ($lightboxStore.image && ids.includes($lightboxStore.image.id)) closeLightbox();
+      if ($editSourceStore.selectedGalleryImageId && ids.includes($editSourceStore.selectedGalleryImageId)) {
+        editSourceStore.clearGallerySource($editSourceStore.selectedGalleryImageId);
+        setUi('editPreviewOpen', false);
+        editPreviewUrl = '';
+        editPreviewLabel = '';
+      }
+    });
+  }
+
+  async function toggleFavorite(image: GalleryEntry) {
+    await galleryStore.toggleFavorite(image, (next) => {
+      if ($lightboxStore.image?.id === image.id) lightboxStore.open(next);
+    });
+  }
+
+  async function deleteImage(image: GalleryEntry) {
+    await galleryStore.deleteImage(
+      image,
+      showToast,
+      () => {
+        if ($lightboxStore.image?.id === image.id) closeLightbox();
+      },
+      () => {
+        if ($editSourceStore.selectedGalleryImageId === image.id) {
+          editSourceStore.clearGallerySource(image.id);
+          setUi('editPreviewOpen', false);
+          editPreviewUrl = '';
+          editPreviewLabel = '';
+        }
+      }
+    );
+  }
+
+  async function deleteAllImages() {
+    await galleryStore.deleteAll(showToast, () => {
+      closeLightbox();
+      editSourceStore.clearGallerySource($editSourceStore.selectedGalleryImageId);
+      setUi('editPreviewOpen', false);
+      editPreviewUrl = '';
+      editPreviewLabel = '';
+      clearPreview();
+    });
+  }
+
+  async function importArchive(file: File) {
+    await galleryStore.importArchive(file, showToast);
+  }
+
+  async function exportArchive() {
+    await galleryStore.exportArchive(showToast);
+  }
+
+  async function copyPrompt(image: GalleryEntry) {
+    await copyText(image.prompt);
+    showToast($t.messages.promptCopied);
+  }
+
+  async function copyImageUrl(image: GalleryEntry) {
+    await copyText(new URL(imageUrl(image.filename), window.location.origin).href);
+    showToast($t.messages.imageUrlCopied);
+  }
+
+  function copyPromptBestEffort(prompt: string) {
+    if (!prompt) return;
+    void copyText(prompt).catch(() => {});
+  }
+
+  function useGalleryPrompt(image: GalleryEntry) {
+    form = galleryEntryToPromptOnly(image, form);
+    copyPromptBestEffort(image.prompt);
+    closeLightbox();
+    showToast($t.messages.galleryPromptLoaded);
+  }
+
+  function useGalleryParams(image: GalleryEntry) {
+    const ignoredEditPath = image.api_path === '/v1/images/edits';
+    form = galleryEntryToPromptForm(image, lastActivePresetDefaultModel, form.apiPath);
+    copyPromptBestEffort(image.prompt);
+    closeLightbox();
+    showToast(ignoredEditPath ? $t.messages.galleryEditApiPathIgnored : $t.messages.galleryParamsLoaded);
+  }
+
+  function useJobAsPrompt(job: GenerateJobStatus) {
+    form = jobToPromptForm(job, lastActivePresetDefaultModel);
+    closeJobsDrawer();
+    showToast($t.messages.jobLoadedIntoPrompt);
+  }
+
+  function retryJob(job: GenerateJobStatus) {
+    form = jobToPromptForm(job, lastActivePresetDefaultModel);
+    closeJobsDrawer();
+    if (job.operation === 'edit') {
+      if (!$editSourceStore.files.length && !$editSourceStore.selectedGalleryImageId) {
+        previewStore.setError($t.messages.editRetryNeedsSource);
+        showToast($t.messages.editRetryNeedsSource, 'error');
+        return;
+      }
+      editImage();
+      return;
+    }
+    generateImage();
+  }
+
+  $: if (urlSyncReady) {
+    $galleryStore.page;
+    $galleryStore.filters;
+    $uiStore.jobsOpen;
+    jobsTab;
+    $lightboxStore.image?.id;
+    queueUrlSync();
+  }
+
+  onMount(() => {
+    accessStore.installUnauthorizedHandler();
+    void versionStore.loadVersion();
+    void accessStore.checkAccess(loadInitialData);
+
+    const popstate = () => {
+      void applyUrlStateToApp();
+    };
+    window.addEventListener('popstate', popstate);
+
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if ($uiStore.editPreviewOpen) setUi('editPreviewOpen', false);
+      else if ($lightboxStore.image) closeLightbox();
+      else if ($uiStore.sizeDialogOpen) setUi('sizeDialogOpen', false);
+      else if ($uiStore.jobsOpen) closeJobsDrawer();
+      else if ($uiStore.settingsOpen) setUi('settingsOpen', false);
+    };
+    window.addEventListener('keydown', keydown);
+    return () => {
+      window.removeEventListener('popstate', popstate);
+      window.removeEventListener('keydown', keydown);
+      jobsStore.cleanup();
+      galleryStore.cleanup();
+      previewStore.cleanup();
+      uiStore.cleanup();
+    };
+  });
+</script>
+
+<svelte:head>
+  <title>GPT Image Panel</title>
+</svelte:head>
+
+<AccessGate visible={$accessStore.gateVisible} error={$accessStore.error} loading={$accessStore.loading} onUnlock={(key) => accessStore.unlockAccess(key, loadInitialData)} />
+<Header
+  version={$versionStore.version}
+  latestVersion={$versionStore.latestVersion}
+  hasVersionUpdate={$versionStore.hasUpdate}
+  releaseUrl={$versionStore.releaseUrl}
+  {activeJobsCount}
+  onOpenJobs={openJobsDrawer}
+  onOpenSettings={() => setUi('settingsOpen', true)}
+/>
+
+<ConfirmDialog request={$confirmStore.request} />
+
+<SettingsDrawer
+  open={$uiStore.settingsOpen}
+  settings={$settingsStore.settings}
+  saving={$settingsStore.saving}
+  health={$settingsStore.health}
+  healthChecking={$settingsStore.healthChecking}
+  onClose={() => setUi('settingsOpen', false)}
+  onSave={saveSettings}
+  onCreate={createPreset}
+  onActivate={activatePreset}
+  onDelete={deleteActivePreset}
+  onHealthCheck={checkPresetHealth}
+/>
+
+<JobHistoryDrawer
+  open={$uiStore.jobsOpen}
+  activeTab={jobsTab}
+  jobs={$jobsStore.jobs}
+  historyJobs={$jobsStore.historyJobs}
+  historyLoading={$jobsStore.historyLoading}
+  historyLoaded={$jobsStore.historyLoaded}
+  historyHasMore={$jobsStore.historyHasMore}
+  selectedIds={$jobsStore.selectedIds}
+  onClose={closeJobsDrawer}
+  onTabChange={setJobsTab}
+  onRefresh={jobsStore.loadJobs}
+  onRefreshHistory={jobsStore.loadJobHistory}
+  onLoadMoreHistory={jobsStore.loadMoreJobHistory}
+  onToggle={jobsStore.toggleSelection}
+  onToggleAll={jobsStore.toggleAll}
+  onCancelSelected={jobsStore.cancelSelected}
+  onUseJob={useJobAsPrompt}
+  onRetryJob={retryJob}
+/>
+
+<main class="mx-auto max-w-5xl space-y-6 px-4 py-6 sm:px-6">
+  <ToastHost toast={$uiStore.toast} />
+
+  <PromptForm
+    bind:form
+    loading={$previewStore.loading}
+    optimizing={optimizingPrompt}
+    optimizerEnabled={optimizerAvailable}
+    onGenerate={generateImage}
+    onEdit={editImage}
+    onOptimize={optimizePrompt}
+    onAppendPromptTag={appendPromptTag}
+    onOpenSize={() => setUi('sizeDialogOpen', true)}
+  >
+    <EditSourcePicker
+      slot="edit-source"
+      bind:this={editPicker}
+      sources={[
+        ...($editSourceStore.selectedGalleryImageId
+          ? [
+              {
+                id: $editSourceStore.selectedGalleryImageId,
+                label: $editSourceStore.galleryLabel || $editSourceStore.galleryPreviewLabel,
+                kind: 'gallery' as const
+              }
+            ]
+          : []),
+        ...$editSourceStore.files.map((source) => ({
+          id: source.id,
+          label: source.label,
+          kind: 'upload' as const
+        }))
+      ]}
+      onChange={handleEditFile}
+      onPreview={openEditPreview}
+      onClear={clearEditSource}
+    />
+  </PromptForm>
+
+  <PreviewPanel
+    loading={$previewStore.loading}
+    error={$previewStore.error}
+    job={$previewStore.job}
+    imageUrl={$previewStore.imageUrl}
+    filename={$previewStore.filename}
+    prompt={$previewStore.prompt}
+    onRegenerate={regenerate}
+    onClear={clearPreview}
+  />
+
+  <GalleryGrid
+    gallery={$galleryStore.gallery}
+    filters={$galleryStore.filters}
+    loading={$galleryStore.loading}
+    operationStatus={$galleryStore.operationStatus}
+    onFilter={galleryStore.updateFilter}
+    onResetFilters={galleryStore.resetFilters}
+    onPage={galleryStore.loadGallery}
+    onLoadStats={() => galleryStore.loadGallery($galleryStore.page, true)}
+    onFavorite={toggleFavorite}
+    onDelete={deleteImage}
+    onDeleteAll={deleteAllImages}
+    onImport={importArchive}
+    onExport={exportArchive}
+    onOpen={openLightbox}
+    onEdit={prepareGalleryImageForEdit}
+    onUsePrompt={useGalleryPrompt}
+    onUseAll={useGalleryParams}
+    selectionMode={$galleryStore.selectionMode}
+    selectedIds={$galleryStore.selectedIds}
+    onSelectionMode={galleryStore.setSelectionMode}
+    onToggleSelection={galleryStore.toggleSelection}
+    onSelectPage={galleryStore.selectPage}
+    onClearSelection={galleryStore.clearSelection}
+    onBatchDelete={batchDeleteGallery}
+    onBatchFavorite={batchFavoriteGallery}
+    onBatchDownload={() => galleryStore.batchDownload(showToast)}
+  />
+</main>
+
+<Lightbox
+  open={Boolean($lightboxStore.image)}
+  image={$lightboxStore.image}
+  onClose={closeLightbox}
+  onEdit={prepareGalleryImageForEdit}
+  onFavorite={toggleFavorite}
+  onDelete={deleteImage}
+  onCopyPrompt={copyPrompt}
+  onCopyUrl={copyImageUrl}
+  onUsePrompt={useGalleryPrompt}
+  onUseAll={useGalleryParams}
+/>
+
+<EditPreviewModal
+  open={$uiStore.editPreviewOpen}
+  url={editPreviewUrl}
+  label={editPreviewLabel}
+  onClose={() => setUi('editPreviewOpen', false)}
+/>
+
+<SizeDialog open={$uiStore.sizeDialogOpen} value={form.size} onApply={(nextSize) => (form = { ...form, size: nextSize })} onClose={() => setUi('sizeDialogOpen', false)} />

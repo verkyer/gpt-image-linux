@@ -1,8 +1,31 @@
 CLAUDE.md
 
+# Claude Code local config
+.claude/
+
 .DS_Store
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
+*.pyc
+
+# Test cache and coverage
+.pytest_cache/
+.coverage
+htmlcov/
+backend/**/__pycache__/
+backend/tests/__pycache__/
+
+# Temp / editor
+*.swp
+*.swo
+*.tmp
+*.bak
+*.orig
+.idea/
+.vscode/
+reports/
 
 data/*
 !data/.gitkeep
@@ -11,3 +34,17 @@ images/*
 !images/.gitkeep
 
 app/__pycache__
+
+node_modules/
+frontend/node_modules/
+frontend/.svelte-kit/
+frontend/build/
+npm-debug.log*
+security_performance_feature_plan.md
+code_review_report.md
+architecture_code_review_2026-05-12.md
+REVIEW.md
+AGENTS.md
+CODE_REVIEW.md
+PERFORMANCE_UX_AUDIT.md
+CODE_REVIEW_OPTIMIZATION_PLAN.md

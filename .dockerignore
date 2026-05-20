@@ -2,6 +2,10 @@ __pycache__/
 *.py[cod]
 .git/
 .env
+node_modules/
+frontend/node_modules/
+frontend/.svelte-kit/
+frontend/build/
 data/
 images/
 docker-compose.yml
