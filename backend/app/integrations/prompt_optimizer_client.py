@@ -12,19 +12,31 @@ from .session_pool import TIMEOUT_PROMPT_OPTIMIZER, get_pool
 
 logger = logging.getLogger(__name__)
 
-PROMPT_OPTIMIZER_SYSTEM_PROMPT = """You are an expert prompt engineer for AI image generation models.
+PROMPT_OPTIMIZER_SYSTEM_PROMPT = """# Role
+You are an expert Prompt Engineer specializing in generative AI art for the "gpt-image-2" model.
 
-Your task: take the user's short image description and rewrite it into a detailed, high-quality image generation prompt.
+# Goal
+Take the user's short image description and rewrite it into a detailed, high-quality, and visually rich image generation prompt optimized specifically for "gpt-image-2".
 
-Rules:
-- Preserve the user's original subject and intent.
-- Add details about composition, lighting, style, materials, background, and quality.
-- Output a single paragraph, plain text only.
-- No Markdown, no bullet points, no numbering, no explanations.
-- No negative prompt section.
-- Output in English unless the user says otherwise.
-- If Target language is zh-CN, output Simplified Chinese. If it is same, match the user's language.
-- Keep the output under 800 words."""
+# Style Guidelines for gpt-image-2
+- **Natural Language**: Write a coherent, descriptive natural language paragraph. Focus on storytelling and descriptive scene building.
+- **Detailed Elements**: Enrich the prompt by elaborating on:
+  - **Subject**: Specific appearance, textures, details, and expressions.
+  - **Medium & Style**: Photo, oil painting, digital art, 3D render, etc. (match the user's intended medium).
+  - **Environment & Composition**: Background details, foreground elements, camera angle, and depth of field.
+  - **Lighting & Color**: Lighting style (e.g., golden hour lighting, cinematic rim light) and a harmonious color palette.
+- **Buzzwords to Avoid**: Avoid generic quality buzzwords like "photorealistic", "ultra HD", "4K", or "masterpiece". Describe details rather than stating quality.
+
+# Output Rules
+- Preserve the user's original subject, action, and intent.
+- Output ONLY the final optimized prompt. Do NOT wrap in markdown code blocks. No explanations, no introductory text.
+- No negative prompt sections.
+- Keep the output under 800 words.
+
+# Language Rule
+- Output in the language specified by "Target language" (defaulting to English if unspecified or "en").
+- If Target language is "zh-CN", output in Simplified Chinese (简体中文).
+"""
 
 _MARKDOWN_FENCE_RE = re.compile(r"^```[a-z]*\n|\n```$", re.MULTILINE)
 
@@ -56,6 +68,15 @@ def validate_optimizer_endpoint(api_url: str) -> None:
     ssrf.validate_upstream_url(api_url, config.PROMPT_OPTIMIZER_HOST_ALLOWLIST)
 
 
+def _target_language_instruction(target_language: str | None) -> str:
+    normalized = (target_language or "").strip()
+    if normalized == "zh-CN":
+        return "zh-CN"
+    if normalized == "same":
+        return "same as user's input language"
+    return "en"
+
+
 def _build_user_prompt(
     prompt: str,
     *,
@@ -66,7 +87,7 @@ def _build_user_prompt(
     quality: str | None = None,
 ) -> str:
     context = [
-        f"Target language: {target_language or 'en'}",
+        f"Target language: {_target_language_instruction(target_language)}",
         f"Image API path: {image_api_path or 'unspecified'}",
         f"Image model: {image_model or 'unspecified'}",
         f"Size: {size or 'unspecified'}",
