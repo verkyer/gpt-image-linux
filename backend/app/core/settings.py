@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -26,12 +27,22 @@ def env_flag(name: str, default: str = "false") -> bool:
         "on",
     }
 
+
+def _validate_github_repo(value: str) -> str:
+    val = value.strip()
+    if not val:
+        return ""
+    if not re.match(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$", val):
+        raise ValueError(f"Invalid GITHUB_REPO format: '{val}'. Expected 'owner/repo'.")
+    return val
+
+
 DEFAULT_API_URL = os.getenv("DEFAULT_API_URL", "")
 DEFAULT_API_KEY = os.getenv("DEFAULT_API_KEY", "")
 DEFAULT_API_PATH = os.getenv("DEFAULT_API_PATH", "/v1/images/generations")
 DEFAULT_RESPONSES_MODEL = os.getenv("DEFAULT_RESPONSES_MODEL", "gpt-5.4")
 DEFAULT_UPSTREAM_SOCKS5_PROXY = os.getenv("DEFAULT_UPSTREAM_SOCKS5_PROXY", "").strip()
-GITHUB_REPO = os.getenv("GITHUB_REPO", "Z1rconium/gpt-image-linux").strip()
+GITHUB_REPO = _validate_github_repo(os.getenv("GITHUB_REPO", "Z1rconium/gpt-image-linux"))
 ENABLE_VERSION_CHECK = env_flag("ENABLE_VERSION_CHECK", "true")
 VERSION_CHECK_TIMEOUT_SECONDS = float(os.getenv("VERSION_CHECK_TIMEOUT_SECONDS", "3"))
 VERSION_CHECK_BRANCH = os.getenv("VERSION_CHECK_BRANCH", "main").strip() or "main"

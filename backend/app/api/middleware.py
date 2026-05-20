@@ -113,7 +113,9 @@ def csrf_origin_allowed(request: Request) -> bool:
     if referer:
         return normalize_origin(referer) == expected_origin
 
-    return True
+    cookie_name = config.ACCESS_KEY_COOKIE_NAME
+    has_auth_cookie = bool(cookie_name and request.cookies.get(cookie_name))
+    return not has_auth_cookie
 
 
 

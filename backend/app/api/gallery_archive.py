@@ -327,12 +327,14 @@ def _iter_zip_import_entries(zf: zipfile.ZipFile) -> Iterator[tuple[bytes, dict]
             continue
 
         try:
-            image_bytes = zf.read(zip_name)
+            with zf.open(zip_name) as f:
+                limit = max_upload_bytes()
+                image_bytes = f.read(limit + 1)
         except KeyError:
             continue
         if not image_bytes:
             continue
-        if len(image_bytes) > max_upload_bytes():
+        if len(image_bytes) > limit:
             raise HTTPException(
                 status_code=400,
                 detail="Imported image is too large",
