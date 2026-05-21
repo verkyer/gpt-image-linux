@@ -48,8 +48,8 @@
     {/if}
   </div>
 
-  <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
-    <div class="min-w-0 h-full flex flex-col">
+  <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px] lg:items-stretch">
+    <div class="min-w-0 flex h-full flex-col">
       <div class="mb-2 flex items-center justify-between gap-3">
         <label for="prompt" class="text-xs font-medium text-zinc-400">{$t.common.prompt}</label>
         <button
@@ -62,18 +62,20 @@
           {optimizing ? $t.promptForm.optimizing : $t.promptForm.optimize}
         </button>
       </div>
-      <textarea
-        id="prompt"
-        name="prompt"
-        bind:value={form.prompt}
-        maxlength="4000"
-        rows="8"
-        autocomplete="off"
-        aria-label={$t.common.prompt}
-        placeholder={$t.promptForm.placeholder}
-        class="control-focus min-h-[13rem] flex-1 w-full resize-y rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm leading-6 text-zinc-100 focus:border-emerald-500"
-      ></textarea>
-      <div class="mt-auto pt-2 flex justify-end text-xs text-zinc-500">{promptLen}/4000</div>
+      <div class="relative flex min-h-[13rem] flex-1">
+        <textarea
+          id="prompt"
+          name="prompt"
+          bind:value={form.prompt}
+          maxlength="4000"
+          rows="8"
+          autocomplete="off"
+          aria-label={$t.common.prompt}
+          placeholder={$t.promptForm.placeholder}
+          class="control-focus h-full min-h-[13rem] w-full flex-1 resize-y rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 pb-8 text-sm leading-6 text-zinc-100 focus:border-emerald-500 lg:resize-none"
+        ></textarea>
+        <div class="pointer-events-none absolute bottom-3 right-4 text-xs text-zinc-500">{promptLen}/4000</div>
+      </div>
     </div>
 
     <PromptHelperPanel onAppend={onAppendPromptTag} />
