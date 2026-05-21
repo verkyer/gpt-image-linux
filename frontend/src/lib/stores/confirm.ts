@@ -33,9 +33,10 @@ function createConfirmStore() {
   let resolver: ((confirmed: boolean) => void) | null = null;
 
   function finish(confirmed: boolean) {
-    resolver?.(confirmed);
+    const currentResolver = resolver;
     resolver = null;
     set(initialState);
+    currentResolver?.(confirmed);
   }
 
   function confirm(options: ConfirmOptions) {

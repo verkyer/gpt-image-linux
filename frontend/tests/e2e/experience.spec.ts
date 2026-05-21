@@ -225,7 +225,7 @@ function manyGalleryImages(count: number) {
 
 async function mockApi(page: Page, options: MockOptions = {}) {
   let authenticated = options.authenticated ?? true;
-  const galleryImages = options.galleryImages ?? baseGalleryImages;
+  let galleryImages = [...(options.galleryImages ?? baseGalleryImages)];
   const runningJobs = options.runningJobs ?? [];
   const historyJobs = options.historyJobs ?? [job('history-1', 'saved prompt')];
 
@@ -285,20 +285,25 @@ async function mockApi(page: Page, options: MockOptions = {}) {
     }
     if (url.pathname.match(/^\/api\/gallery\/[^/]+$/) && request.method() === 'GET') {
       const id = decodeURIComponent(url.pathname.split('/').pop() || '');
-      const image = baseGalleryImages.find((entry) => entry.id === id);
+      const image = galleryImages.find((entry) => entry.id === id);
       await route.fulfill(image ? json(image) : json({ detail: 'Gallery entry not found' }, 404));
       return;
     }
     if (url.pathname.match(/^\/api\/gallery\/[^/]+$/) && request.method() === 'DELETE') {
+      const id = decodeURIComponent(url.pathname.split('/').pop() || '');
+      galleryImages = galleryImages.filter((entry) => entry.id !== id);
       await route.fulfill(json({ status: 'ok', message: 'Deleted gallery entry and 1 image file(s)' }));
       return;
     }
     if (url.pathname === '/api/gallery' && request.method() === 'DELETE') {
+      galleryImages = [];
       await route.fulfill(json({ status: 'ok', message: 'Deleted all images' }));
       return;
     }
     if (url.pathname === '/api/gallery/batch/delete') {
       const body = JSON.parse(request.postData() || '{}');
+      const ids = new Set<string>(body.ids || []);
+      galleryImages = galleryImages.filter((entry) => !ids.has(entry.id));
       await route.fulfill(json({ status: 'ok', count: body.ids?.length || 0, file_count: body.ids?.length || 0 }));
       return;
     }
@@ -308,7 +313,13 @@ async function mockApi(page: Page, options: MockOptions = {}) {
       return;
     }
     if (url.pathname.match(/^\/api\/gallery\/[^/]+\/favorite$/)) {
-      await route.fulfill(json({ ...baseGalleryImages[0], favorite: true }));
+      const id = decodeURIComponent(url.pathname.split('/').at(-2) || '');
+      const body = JSON.parse(request.postData() || '{}');
+      const image = galleryImages.find((entry) => entry.id === id) || galleryImages[0];
+      if (image) {
+        galleryImages = galleryImages.map((entry) => (entry.id === image.id ? { ...entry, favorite: body.favorite ?? true } : entry));
+      }
+      await route.fulfill(json(image ? { ...image, favorite: body.favorite ?? true } : { ...baseGalleryImages[0], favorite: true }));
       return;
     }
     if (url.pathname.startsWith('/api/thumb/') || url.pathname.startsWith('/api/image/')) {
@@ -624,6 +635,70 @@ test('single image delete uses custom confirmation and can be undone before the 
   await expect(page.getByRole('img', { name: 'First gallery image' })).toBeVisible();
   await page.waitForTimeout(5200);
   expect(deleteRequests).toHaveLength(0);
+});
+
+test('single image delete is not revived by a stale gallery refresh', async ({ page }) => {
+  await loadApp(page);
+
+  let interceptStaleRefresh = false;
+  let resolveStaleRefreshStarted: () => void = () => {};
+  let releaseStaleRefresh: () => void = () => {};
+  let resolveStaleRefreshFinished: () => void = () => {};
+  const staleRefreshStarted = new Promise<void>((resolve) => {
+    resolveStaleRefreshStarted = resolve;
+  });
+  const staleRefreshCanFinish = new Promise<void>((resolve) => {
+    releaseStaleRefresh = resolve;
+  });
+  const staleRefreshFinished = new Promise<void>((resolve) => {
+    resolveStaleRefreshFinished = resolve;
+  });
+
+  await page.route('**/api/gallery?*', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const isPageRefresh =
+      request.method() === 'GET' &&
+      url.pathname === '/api/gallery' &&
+      url.searchParams.get('page') === '1' &&
+      url.searchParams.get('page_size') === '9' &&
+      !url.searchParams.has('include_total_bytes');
+
+    if (!interceptStaleRefresh || !isPageRefresh) {
+      await route.fallback();
+      return;
+    }
+
+    interceptStaleRefresh = false;
+    const staleResponse = galleryResponse(baseGalleryImages, false, 1);
+    resolveStaleRefreshStarted();
+    await staleRefreshCanFinish;
+    try {
+      await route.fulfill(json(staleResponse));
+    } catch {
+      // The fixed code aborts this stale request before starting the post-delete refresh.
+    }
+    resolveStaleRefreshFinished();
+  });
+
+  await page.locator('.gallery-card').first().getByRole('button', { name: 'Delete' }).click();
+  const confirmDialog = page.getByRole('dialog', { name: 'Delete image?' });
+  await confirmDialog.getByRole('button', { name: 'Delete' }).click();
+  await expect(page.getByRole('img', { name: 'First gallery image' })).toBeHidden();
+
+  interceptStaleRefresh = true;
+  await page.evaluate(() => window.dispatchEvent(new PopStateEvent('popstate')));
+  await staleRefreshStarted;
+
+  await page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return response.request().method() === 'DELETE' && url.pathname === '/api/gallery/img-1';
+  });
+  releaseStaleRefresh();
+  await staleRefreshFinished;
+
+  await expect(page.getByRole('status')).toContainText('Image deleted');
+  await expect(page.getByRole('img', { name: 'First gallery image' })).toBeHidden();
 });
 
 test('delete all requires typed confirmation before submitting', async ({ page }) => {
