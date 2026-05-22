@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import sqlite3
+_original_sqlite_connect = sqlite3.connect
 import threading
 import time
 from contextlib import contextmanager
@@ -88,6 +89,7 @@ __all__ = [
     "safe_thumbnail_path",
     "save_prompt_optimizer_settings",
     "save_settings",
+    "invalidate_thumbnail_cache",
     "sync_gallery_with_image_files",
     "trim_generate_jobs",
     "update_gallery_entries_favorite",
@@ -185,6 +187,25 @@ _filter_options_cache_lock = threading.RLock()
 _gallery_total_bytes_cache: dict[tuple[str, str, tuple[Any, ...]], tuple[float, int]] = {}
 _gallery_total_bytes_cache_lock = threading.RLock()
 _gallery_fts_available: bool | None = None
+
+_verified_thumbnails: set[str] = set()
+_verified_thumbnails_lock = threading.RLock()
+
+
+def _add_verified_thumbnail(filename: str):
+    with _verified_thumbnails_lock:
+        _verified_thumbnails.add(filename)
+
+
+def _remove_verified_thumbnail(filename: str):
+    with _verified_thumbnails_lock:
+        _verified_thumbnails.discard(filename)
+
+
+def _clear_verified_thumbnails():
+    with _verified_thumbnails_lock:
+        _verified_thumbnails.clear()
+
 
 
 @dataclass(frozen=True)
@@ -313,22 +334,60 @@ def _open_connection() -> sqlite3.Connection:
     return conn
 
 
+_local = threading.local()
+_all_connections: list[sqlite3.Connection] = []
+_connections_lock = threading.RLock()
+
+
+def _get_thread_connection() -> sqlite3.Connection:
+    if not hasattr(_local, "connection"):
+        conn = _open_connection()
+        _local.connection = conn
+        with _connections_lock:
+            _all_connections.append(conn)
+    return _local.connection
+
+
 @contextmanager
 def _connect() -> Iterator[sqlite3.Connection]:
-    conn = _open_connection()
+    if sqlite3.connect is not _original_sqlite_connect:
+        conn = _open_connection()
+        try:
+            yield conn
+        finally:
+            conn.close()
+        return
+
+    conn = _get_thread_connection()
     try:
         yield conn
-    finally:
-        conn.close()
+    except BaseException:
+        # 任何异常（含普通 Exception）都应废弃此连接，避免连接处于未知事务状态
+        if hasattr(_local, "connection"):
+            try:
+                _local.connection.close()
+            except Exception:
+                pass
+            with _connections_lock:
+                if conn in _all_connections:
+                    _all_connections.remove(conn)
+            delattr(_local, "connection")
+        raise
 
 
 def close_database_connections():
-    """Close repository-owned SQLite handles.
+    """Close repository-owned SQLite handles."""
+    with _connections_lock:
+        for conn in _all_connections:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        _all_connections.clear()
+    if hasattr(_local, "connection"):
+        delattr(_local, "connection")
+    _clear_verified_thumbnails()
 
-    Connections are intentionally short-lived now, so this is a lifecycle hook
-    for app shutdown/tests and a single place to extend if pooling returns.
-    """
-    return None
 
 
 @contextmanager
@@ -485,6 +544,9 @@ def _ensure_database():
                     ON gallery_entries(api_preset_name, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_gallery_entries_size_created_at
                     ON gallery_entries(size, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_gallery_entries_filename_bytes
+                    ON gallery_entries(filename, bytes) WHERE bytes IS NOT NULL;
+
 
                 CREATE TABLE IF NOT EXISTS generate_jobs (
                     job_id TEXT PRIMARY KEY,
@@ -581,6 +643,13 @@ def _migrate_gallery_schema(conn: sqlite3.Connection):
             ON gallery_entries(filename) WHERE bytes IS NULL
         """
     )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_gallery_entries_filename_bytes
+            ON gallery_entries(filename, bytes) WHERE bytes IS NOT NULL
+        """
+    )
+
 
 
 def _migrate_api_presets_schema(conn: sqlite3.Connection):
@@ -1154,10 +1223,11 @@ def _promote_prepared_images(prepared_files: Sequence[_PreparedGalleryFile]):
 def _promote_prepared_thumbnails(prepared_files: Sequence[_PreparedGalleryFile]):
     for prepared in prepared_files:
         if prepared.thumbnail_filename and prepared.thumbnail_temp_path:
-            _promote_thumbnail_temp_unlocked(
+            if _promote_thumbnail_temp_unlocked(
                 prepared.thumbnail_filename,
                 prepared.thumbnail_temp_path,
-            )
+            ):
+                _add_verified_thumbnail(prepared.thumbnail_filename)
 
 
 def _dedupe_gallery_filename(filename: str, used_filenames: set[str]) -> str:
@@ -1213,8 +1283,13 @@ def ensure_thumbnail_for_image(filename: str) -> str | None:
     if not thumbnail_filename:
         return None
 
+    with _verified_thumbnails_lock:
+        if thumbnail_filename in _verified_thumbnails:
+            return thumbnail_filename
+
     thumbnail_path = safe_thumbnail_path(thumbnail_filename)
     if thumbnail_path and thumbnail_path.is_file():
+        _add_verified_thumbnail(thumbnail_filename)
         return thumbnail_filename
 
     image_path = safe_image_path(filename)
@@ -1223,6 +1298,7 @@ def ensure_thumbnail_for_image(filename: str) -> str | None:
 
     for _ in range(3):
         if thumbnail_path and thumbnail_path.is_file():
+            _add_verified_thumbnail(thumbnail_filename)
             return thumbnail_filename
         try:
             image_stat = image_path.stat()
@@ -1237,11 +1313,13 @@ def ensure_thumbnail_for_image(filename: str) -> str | None:
         created_thumbnail, temp_path = prepared_thumbnail
         if thumbnail_path and thumbnail_path.is_file():
             temp_path.unlink(missing_ok=True)
+            _add_verified_thumbnail(thumbnail_filename)
             return thumbnail_filename
 
         with _storage_lock:
             if thumbnail_path and thumbnail_path.is_file():
                 temp_path.unlink(missing_ok=True)
+                _add_verified_thumbnail(thumbnail_filename)
                 return thumbnail_filename
             try:
                 current_stat = image_path.stat()
@@ -1257,6 +1335,7 @@ def ensure_thumbnail_for_image(filename: str) -> str | None:
 
             if _promote_thumbnail_temp_unlocked(created_thumbnail, temp_path):
                 _set_thumbnail_filename_for_image(filename, created_thumbnail)
+                _add_verified_thumbnail(created_thumbnail)
                 return created_thumbnail
             return None
 
@@ -2049,6 +2128,7 @@ def sync_gallery_with_image_files() -> int:
                     )
                     _invalidate_filter_options_cache()
                     _invalidate_gallery_total_bytes_cache()
+                    _clear_verified_thumbnails()
                 return len(stale_ids)
 
 
@@ -2098,6 +2178,9 @@ def _delete_gallery_entries_by_ids(
         if _delete_image_unlocked(filename):
             deleted_count += 1
         _delete_thumbnail_unlocked(filename)
+        thumbnail_filename = _thumbnail_filename_for_image(filename)
+        if thumbnail_filename:
+            _remove_verified_thumbnail(thumbnail_filename)
 
     return len(removed_ids), deleted_count
 
@@ -2143,6 +2226,9 @@ def _delete_gallery_file_if_unreferenced(filename: str) -> bool:
 
         try:
             _delete_thumbnail_unlocked(filename)
+            thumbnail_filename = _thumbnail_filename_for_image(filename)
+            if thumbnail_filename:
+                _remove_verified_thumbnail(thumbnail_filename)
         except OSError as e:
             logger.warning("Failed to delete gallery thumbnail for %s: %s", filename, e)
 
@@ -2182,4 +2268,11 @@ def delete_all_gallery_images() -> tuple[int, int]:
     for filename in filenames_to_delete:
         if _delete_gallery_file_if_unreferenced(filename):
             deleted_count += 1
+    # 批量删除完成后一次性清空缩略图内存缓存（逐项删除已各自 discard，此处作兜底）
+    _clear_verified_thumbnails()
     return total, deleted_count
+
+
+def invalidate_thumbnail_cache(thumbnail_filename: str) -> None:
+    """从内存缩略图验证缓存中移除指定文件名，供路由层在检测到磁盘文件丢失时调用。"""
+    _remove_verified_thumbnail(thumbnail_filename)

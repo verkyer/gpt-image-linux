@@ -84,6 +84,31 @@
   function jobMeta(job: GenerateJobStatus) {
     return [job.model, job.size, job.api_preset_name].filter(Boolean).join(' / ');
   }
+
+  let visibleJobIds = new Set<string>();
+
+  $: if (!open) {
+    visibleJobIds = new Set<string>();
+  }
+
+  function lazyRender(node: HTMLElement, jobId: string) {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          visibleJobIds.add(jobId);
+          visibleJobIds = visibleJobIds;
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '300px' }
+    );
+    observer.observe(node);
+    return {
+      destroy() {
+        observer.disconnect();
+      }
+    };
+  }
 </script>
 
 {#if open}
@@ -157,37 +182,43 @@
         {:else}
           <div class="space-y-3" aria-busy={historyLoading}>
             {#each historyJobs as job (job.job_id)}
-              <article class="deferred-list-item rounded-xl border border-zinc-800 bg-zinc-950/45 p-4">
-                <div class="flex items-center justify-between gap-3">
-                  <span class="rounded-md border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-400">{operationLabel(job.operation, $t.operations)}</span>
-                  <span class={`text-xs font-medium ${statusClass(job)}`}>{statusLabel(job.status, $t.statuses)}</span>
-                </div>
-                <p class="mt-2 line-clamp-2 text-sm text-zinc-200">{job.prompt || $t.common.untitledJob}</p>
-                <p class="mt-1 truncate text-xs text-zinc-500">{stageLabel(job, $t.stages)}</p>
-                <div class="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-zinc-500">
-                  {#if jobMeta(job)}
-                    <span>{jobMeta(job)}</span>
-                  {/if}
-                  <span>{formatBeijingTime(job.completed_at || job.updated_at || job.created_at)}</span>
-                  {#if job.duration}
-                    <span>{$t.common.duration}: {job.duration}</span>
-                  {/if}
-                </div>
-                <div class="mt-4 flex flex-wrap justify-end gap-2">
-                  <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800" on:click={() => onUseJob(job)}>
-                    {$t.jobs.useAsPrompt}
-                  </button>
-                  <button
-                    type="button"
-                    class="control-focus rounded-lg border border-emerald-500/40 px-3 py-2 text-xs font-medium text-emerald-200 hover:bg-emerald-500/10 disabled:cursor-not-allowed disabled:opacity-40"
-                    disabled={isActiveJob(job)}
-                    title={isActiveJob(job) ? $t.jobs.retryUnavailable : $t.jobs.retry}
-                    on:click={() => onRetryJob(job)}
-                  >
-                    {$t.jobs.retry}
-                  </button>
-                </div>
-              </article>
+              <div class="min-h-[175px]" use:lazyRender={job.job_id}>
+                {#if visibleJobIds.has(job.job_id)}
+                  <article class="deferred-list-item rounded-xl border border-zinc-800 bg-zinc-950/45 p-4">
+                    <div class="flex items-center justify-between gap-3">
+                      <span class="rounded-md border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-400">{operationLabel(job.operation, $t.operations)}</span>
+                      <span class={`text-xs font-medium ${statusClass(job)}`}>{statusLabel(job.status, $t.statuses)}</span>
+                    </div>
+                    <p class="mt-2 line-clamp-2 text-sm text-zinc-200">{job.prompt || $t.common.untitledJob}</p>
+                    <p class="mt-1 truncate text-xs text-zinc-500">{stageLabel(job, $t.stages)}</p>
+                    <div class="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-zinc-500">
+                      {#if jobMeta(job)}
+                        <span>{jobMeta(job)}</span>
+                      {/if}
+                      <span>{formatBeijingTime(job.completed_at || job.updated_at || job.created_at)}</span>
+                      {#if job.duration}
+                        <span>{$t.common.duration}: {job.duration}</span>
+                      {/if}
+                    </div>
+                    <div class="mt-4 flex flex-wrap justify-end gap-2">
+                      <button type="button" class="control-focus rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800" on:click={() => onUseJob(job)}>
+                        {$t.jobs.useAsPrompt}
+                      </button>
+                      <button
+                        type="button"
+                        class="control-focus rounded-lg border border-emerald-500/40 px-3 py-2 text-xs font-medium text-emerald-200 hover:bg-emerald-500/10 disabled:cursor-not-allowed disabled:opacity-40"
+                        disabled={isActiveJob(job)}
+                        title={isActiveJob(job) ? $t.jobs.retryUnavailable : $t.jobs.retry}
+                        on:click={() => onRetryJob(job)}
+                      >
+                        {$t.jobs.retry}
+                      </button>
+                    </div>
+                  </article>
+                {:else}
+                  <div class="h-[175px] rounded-xl border border-zinc-800/40 bg-zinc-950/20"></div>
+                {/if}
+              </div>
             {/each}
             {#if historyLoading}
               <div class="rounded-xl border border-zinc-800 bg-zinc-950/35 px-4 py-4 text-center text-xs text-zinc-400">

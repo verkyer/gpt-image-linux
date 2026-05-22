@@ -245,7 +245,7 @@ def store_generate_job(job_id: str, updates: dict, *, persist: bool = True) -> d
     publish_generate_job(
         job,
         list_debounce=not is_terminal,
-        list_reconcile=is_terminal,
+        list_reconcile=False,
     )
     if is_terminal:
         dispatch_job_webhook(job)

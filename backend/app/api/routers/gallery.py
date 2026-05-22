@@ -298,7 +298,16 @@ async def serve_thumbnail(filename: str):
 
     path = storage.safe_thumbnail_path(thumbnail_filename)
     if not path or not path.exists():
-        raise HTTPException(status_code=404, detail="Thumbnail not found")
+        await asyncio.to_thread(storage.invalidate_thumbnail_cache, thumbnail_filename)
+        thumbnail_filename = await asyncio.to_thread(
+            storage.ensure_thumbnail_for_image,
+            filename,
+        )
+        if not thumbnail_filename:
+            raise HTTPException(status_code=404, detail="Thumbnail not found")
+        path = storage.safe_thumbnail_path(thumbnail_filename)
+        if not path or not path.exists():
+            raise HTTPException(status_code=404, detail="Thumbnail not found")
 
     return FileResponse(
         path,
