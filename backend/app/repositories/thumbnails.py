@@ -81,7 +81,7 @@ def _write_thumbnail_file(
                 _get_thumbnail_resampling_filter(),
             )
             thumbnail_path.parent.mkdir(parents=True, exist_ok=True)
-            thumbnail.save(thumbnail_path, "WEBP", quality=82, method=6)
+            thumbnail.save(thumbnail_path, "WEBP", quality=82, method=4)
     except (OSError, UnidentifiedImageError, ValueError) as e:
         thumbnail_path.unlink(missing_ok=True)
         logger.warning("Failed to generate thumbnail for %s: %s", filename, e)
@@ -114,7 +114,7 @@ def _write_thumbnail_from_path(
                 _get_thumbnail_resampling_filter(),
             )
             thumbnail_path.parent.mkdir(parents=True, exist_ok=True)
-            thumbnail.save(thumbnail_path, "WEBP", quality=82, method=6)
+            thumbnail.save(thumbnail_path, "WEBP", quality=82, method=4)
     except (OSError, UnidentifiedImageError, ValueError) as e:
         thumbnail_path.unlink(missing_ok=True)
         logger.warning("Failed to generate thumbnail for %s: %s", filename, e)

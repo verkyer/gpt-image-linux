@@ -125,7 +125,8 @@ async def get_gallery_handler(
         favorite=favorite,
     )
     started_at = time.perf_counter()
-    gallery_page = storage.get_gallery_page(
+    gallery_page = await asyncio.to_thread(
+        storage.get_gallery_page,
         page=page,
         page_size=page_size,
         filters=filters,
@@ -168,9 +169,9 @@ async def get_gallery_handler(
 @router.post("/api/gallery/batch/delete", response_model=GalleryBatchResponse)
 async def delete_gallery_batch(req: GalleryBatchRequest):
     requested_count = len(req.ids)
-    entries = storage.get_gallery_entries_by_ids(req.ids)
+    entries = await asyncio.to_thread(storage.get_gallery_entries_by_ids, req.ids)
     missing_ids = _missing_gallery_ids(req.ids, entries)
-    deleted_entries, deleted_files = storage.delete_gallery_images(req.ids)
+    deleted_entries, deleted_files = await asyncio.to_thread(storage.delete_gallery_images, req.ids)
     if deleted_entries == 0:
         raise HTTPException(status_code=404, detail="Gallery entries not found")
     return GalleryBatchResponse(
@@ -187,9 +188,9 @@ async def delete_gallery_batch(req: GalleryBatchRequest):
 @router.patch("/api/gallery/batch/favorite", response_model=GalleryBatchResponse)
 async def update_gallery_batch_favorite(req: GalleryBatchFavoriteRequest):
     requested_count = len(req.ids)
-    entries = storage.get_gallery_entries_by_ids(req.ids)
+    entries = await asyncio.to_thread(storage.get_gallery_entries_by_ids, req.ids)
     missing_ids = _missing_gallery_ids(req.ids, entries)
-    updated_entries = storage.update_gallery_entries_favorite(req.ids, req.favorite)
+    updated_entries = await asyncio.to_thread(storage.update_gallery_entries_favorite, req.ids, req.favorite)
     if updated_entries == 0:
         raise HTTPException(status_code=404, detail="Gallery entries not found")
     return GalleryBatchResponse(
@@ -204,7 +205,7 @@ async def update_gallery_batch_favorite(req: GalleryBatchFavoriteRequest):
 
 @router.post("/api/gallery/batch/download")
 async def download_gallery_batch(req: GalleryBatchRequest):
-    entries = storage.get_gallery_entries_by_ids(req.ids)
+    entries = await asyncio.to_thread(storage.get_gallery_entries_by_ids, req.ids)
     if not entries:
         raise HTTPException(status_code=404, detail="Gallery entries not found")
 
@@ -218,8 +219,8 @@ async def download_gallery_batch(req: GalleryBatchRequest):
         for image_id in missing_ids
     ]
     for entry in entries:
-        path = storage.safe_image_path(entry.filename)
-        if path and path.exists():
+        path = await asyncio.to_thread(storage.safe_image_path, entry.filename)
+        if path and await asyncio.to_thread(path.exists):
             exportable_entries.append(entry)
             continue
         skipped_entries.append(
@@ -247,7 +248,7 @@ async def update_gallery_favorite(
     image_id: str,
     req: GalleryFavoriteRequest,
 ):
-    entry = storage.update_gallery_entry(image_id, {"favorite": req.favorite})
+    entry = await asyncio.to_thread(storage.update_gallery_entry, image_id, {"favorite": req.favorite})
     if not entry:
         raise HTTPException(status_code=404, detail="Gallery entry not found")
     return entry
@@ -255,15 +256,15 @@ async def update_gallery_favorite(
 
 @router.get("/api/gallery/{image_id}", response_model=GalleryEntry)
 async def get_gallery_item(image_id: str):
-    entry = storage.get_gallery_entry(image_id)
+    entry = await asyncio.to_thread(storage.get_gallery_entry, image_id)
     if not entry:
         raise HTTPException(status_code=404, detail="Gallery entry not found")
     return entry
 
 
 async def _image_file_response(filename: str, *, download: bool = False):
-    path = storage.safe_image_path(filename)
-    if not path or not path.exists():
+    path = await asyncio.to_thread(storage.safe_image_path, filename)
+    if not path or not await asyncio.to_thread(path.exists):
         raise HTTPException(status_code=404, detail="Image not found")
 
     media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
@@ -323,7 +324,8 @@ async def download_image(filename: str):
 
 @router.get("/api/download-all")
 async def download_all_images():
-    if storage.get_gallery_count() == 0:
+    gallery_count = await asyncio.to_thread(storage.get_gallery_count)
+    if gallery_count == 0:
         raise HTTPException(status_code=404, detail="No images in gallery")
 
     return await _gallery_zip_response(
@@ -353,7 +355,7 @@ async def import_gallery_archive(archive: UploadFile = File(...)):
 
 @router.delete("/api/gallery", response_model=MessageResponse)
 async def delete_all_gallery_images():
-    total, deleted_count = storage.delete_all_gallery_images()
+    total, deleted_count = await asyncio.to_thread(storage.delete_all_gallery_images)
     return MessageResponse(
         status="ok",
         message=f"Deleted {deleted_count} image file(s) and {total} gallery entries",
@@ -362,7 +364,7 @@ async def delete_all_gallery_images():
 
 @router.delete("/api/gallery/{image_id}", response_model=MessageResponse)
 async def delete_gallery_item(image_id: str):
-    deleted_entry, deleted_file_count = storage.delete_gallery_image(image_id)
+    deleted_entry, deleted_file_count = await asyncio.to_thread(storage.delete_gallery_image, image_id)
 
     if not deleted_entry:
         raise HTTPException(status_code=404, detail="Gallery entry not found")

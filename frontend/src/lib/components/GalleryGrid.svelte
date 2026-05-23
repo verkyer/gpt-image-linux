@@ -98,6 +98,15 @@
     event.preventDefault();
     commitPageInput();
   }
+
+  let searchTimeout: ReturnType<typeof setTimeout> | undefined;
+  function handleSearchInput(event: Event) {
+    const value = (event.currentTarget as HTMLInputElement).value;
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => {
+      onFilter('prompt', value);
+    }, 300);
+  }
 </script>
 
 <section class="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 sm:p-5">
@@ -141,7 +150,7 @@
       autocomplete="off"
       aria-label={$t.gallery.filterPrompt}
       class="control-focus min-w-[160px] flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-emerald-500"
-      on:input={(event) => onFilter('prompt', event.currentTarget.value)}
+      on:input={handleSearchInput}
     />
     <select value={filters.model} aria-label={$t.common.model} class="control-focus min-w-[140px] rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-emerald-500" on:change={(event) => onFilter('model', event.currentTarget.value)}>
       <option value="">{$t.gallery.allModels}</option>

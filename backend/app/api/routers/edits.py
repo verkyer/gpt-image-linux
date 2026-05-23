@@ -214,11 +214,11 @@ async def read_upload_edit_sources(request: Request) -> list[EditImageSource]:
 
 
 async def read_gallery_edit_source(image_id: str) -> EditImageSource:
-    entry = storage.get_gallery_entry(image_id)
+    entry = await asyncio.to_thread(storage.get_gallery_entry, image_id)
     if not entry:
         raise HTTPException(status_code=404, detail="Gallery entry not found")
 
-    path = storage.safe_image_path(entry.filename)
+    path = await asyncio.to_thread(storage.safe_image_path, entry.filename)
     if not path or not path.exists():
         raise HTTPException(status_code=404, detail="Gallery image file not found")
 

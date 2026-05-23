@@ -69,11 +69,10 @@ async def list_generate_jobs(
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ):
-    jobs = (
-        storage.list_generate_jobs(limit=limit, offset=offset)
-        if include_finished
-        else list_active_generate_jobs()
-    )
+    if include_finished:
+        jobs = await asyncio.to_thread(storage.list_generate_jobs, limit=limit, offset=offset)
+    else:
+        jobs = list_active_generate_jobs()
     return [GenerateJobStatus(**job) for job in jobs]
 
 
@@ -82,9 +81,10 @@ async def stream_generate_jobs(request: Request):
     queue: asyncio.Queue = asyncio.Queue(maxsize=20)
     subscribers = get_jobs_subscribers()
     subscribers.add(queue)
+    active_jobs = list_active_generate_jobs(reconcile=True)
     publish_queue(
         queue,
-        {"event": "jobs", "data": list_active_generate_jobs(reconcile=True)},
+        {"event": "jobs", "data": active_jobs},
     )
 
     async def event_stream():
@@ -113,7 +113,7 @@ async def stream_generate_jobs(request: Request):
 
 @router.get("/api/generate/{job_id}", response_model=GenerateJobStatus)
 async def get_generate_job(job_id: str):
-    job = app.state.generate_jobs.get(job_id) or storage.get_generate_job(job_id)
+    job = app.state.generate_jobs.get(job_id) or await asyncio.to_thread(storage.get_generate_job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Generation job not found")
     return GenerateJobStatus(**job)
@@ -121,7 +121,7 @@ async def get_generate_job(job_id: str):
 
 @router.get("/api/generate/{job_id}/events")
 async def stream_generate_job(job_id: str, request: Request):
-    job = app.state.generate_jobs.get(job_id) or storage.get_generate_job(job_id)
+    job = app.state.generate_jobs.get(job_id) or await asyncio.to_thread(storage.get_generate_job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Generation job not found")
 
@@ -163,7 +163,7 @@ async def stream_generate_job(job_id: str, request: Request):
 
 @router.delete("/api/generate/{job_id}", response_model=MessageResponse)
 async def cancel_generate_job(job_id: str):
-    job = app.state.generate_jobs.get(job_id) or storage.get_generate_job(job_id)
+    job = app.state.generate_jobs.get(job_id) or await asyncio.to_thread(storage.get_generate_job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Generation job not found")
     if job.get("status") not in {"queued", "running"}:
@@ -185,7 +185,7 @@ async def cancel_generate_job(job_id: str):
             "error": cancel_message,
         },
     )
-    trim_generate_jobs()
+    await asyncio.to_thread(trim_generate_jobs)
 
     get_generate_job_webhooks().pop(job_id, None)
     task = get_generate_job_tasks().pop(job_id, None)
