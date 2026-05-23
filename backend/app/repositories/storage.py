@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import os
+import secrets
 import sqlite3
 _original_sqlite_connect = sqlite3.connect
 import threading
@@ -17,7 +18,7 @@ from ..core.api_paths import default_model_for_api_path, normalize_api_preset
 from ..core.constants import ACTIVE_GENERATE_JOB_STATUSES
 from ..core.observability import observe_job_stage
 from ..core.utils import utc_now
-from ..schemas.models import GalleryEntry, GalleryFilterOptions
+from ..schemas.models import GalleryEntry, GalleryFilterOptions, PromptSnippet
 from .image_files import (
     IMAGE_CONTENT_TYPE_FORMATS,
     IMAGE_EXTENSION_FORMATS,
@@ -84,7 +85,10 @@ __all__ = [
     "list_generate_jobs",
     "load_prompt_optimizer_settings",
     "load_settings",
+    "list_prompt_snippets",
     "mark_active_generate_jobs_interrupted",
+    "create_prompt_snippet",
+    "delete_prompt_snippet",
     "safe_image_path",
     "safe_thumbnail_path",
     "save_prompt_optimizer_settings",
@@ -95,6 +99,7 @@ __all__ = [
     "update_gallery_entries_favorite",
     "update_gallery_entry",
     "update_gallery_entry_hash",
+    "update_prompt_snippet",
     "upsert_generate_job",
     "validate_image_bytes",
     "verify_storage_writable",
@@ -160,6 +165,14 @@ GENERATE_JOB_COLUMNS = (
     "image_width",
     "image_height",
     "error",
+)
+PROMPT_SNIPPET_COLUMNS = (
+    "id",
+    "title",
+    "prompt",
+    "favorite",
+    "created_at",
+    "updated_at",
 )
 INTEGER_GENERATE_JOB_COLUMNS = {
     "output_compression",
@@ -582,11 +595,24 @@ def _ensure_database():
                     ON generate_jobs(status, updated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_generate_jobs_updated_at
                     ON generate_jobs(updated_at DESC);
+
+                CREATE TABLE IF NOT EXISTS prompt_snippets (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    prompt TEXT NOT NULL,
+                    favorite INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_prompt_snippets_favorite_updated_at
+                    ON prompt_snippets(favorite DESC, updated_at DESC);
                 """
             )
             _migrate_api_presets_schema(conn)
             _migrate_gallery_schema(conn)
             _migrate_generate_jobs_schema(conn)
+            _migrate_prompt_snippets_schema(conn)
             _ensure_gallery_fts(conn)
             conn.commit()
 
@@ -680,6 +706,20 @@ def _migrate_generate_jobs_schema(conn: sqlite3.Connection):
         conn.execute("ALTER TABLE generate_jobs ADD COLUMN stage_timings_json TEXT")
     if "images_json" not in columns:
         conn.execute("ALTER TABLE generate_jobs ADD COLUMN images_json TEXT")
+
+
+def _migrate_prompt_snippets_schema(conn: sqlite3.Connection):
+    columns = _table_columns(conn, "prompt_snippets")
+    if "favorite" not in columns:
+        conn.execute(
+            "ALTER TABLE prompt_snippets ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0"
+        )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_prompt_snippets_favorite_updated_at
+            ON prompt_snippets(favorite DESC, updated_at DESC)
+        """
+    )
 
 
 def _get_setting_value(conn: sqlite3.Connection, key: str) -> str | None:
@@ -1108,6 +1148,35 @@ def _generate_job_from_row(row: sqlite3.Row) -> dict[str, Any]:
     return job
 
 
+def _normalize_prompt_snippet_favorite(value: Any) -> int:
+    if isinstance(value, bool):
+        return 1 if value else 0
+    if isinstance(value, int):
+        return 1 if value else 0
+    text = str(value or "").strip().lower()
+    return 1 if text in {"1", "true", "yes", "on", "favorite", "favorited"} else 0
+
+
+def _prompt_snippet_from_row(row: sqlite3.Row) -> PromptSnippet:
+    return PromptSnippet(
+        id=str(row["id"]),
+        title=str(row["title"]),
+        prompt=str(row["prompt"]),
+        favorite=bool(row["favorite"]),
+        created_at=str(row["created_at"]),
+        updated_at=str(row["updated_at"]),
+    )
+
+
+def _like_prompt_snippet_query(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def _generate_prompt_snippet_id() -> str:
+    return f"ps_{secrets.token_urlsafe(12)}"
+
+
 def _insert_gallery_entries_on_conn(
     conn: sqlite3.Connection,
     entries: list[dict[str, Any]],
@@ -1177,6 +1246,141 @@ def save_prompt_optimizer_settings(settings: dict):
     with _connect() as conn:
         _set_setting_value(conn, PROMPT_OPTIMIZER_SETTINGS_KEY, json.dumps(normalized))
         conn.commit()
+
+
+def list_prompt_snippets(query: str = "") -> list[PromptSnippet]:
+    _ensure_database()
+    normalized_query = str(query or "").strip()
+    with _connect() as conn:
+        params: list[Any] = []
+        where_sql = ""
+        if normalized_query:
+            where_sql = """
+                WHERE title COLLATE NOCASE LIKE ? ESCAPE '\\'
+                   OR prompt COLLATE NOCASE LIKE ? ESCAPE '\\'
+            """
+            like_query = _like_prompt_snippet_query(normalized_query)
+            params.extend([like_query, like_query])
+        rows = conn.execute(
+            f"""
+            SELECT {", ".join(PROMPT_SNIPPET_COLUMNS)}
+            FROM prompt_snippets
+            {where_sql}
+            ORDER BY favorite DESC, updated_at DESC, rowid DESC
+            """,
+            tuple(params),
+        ).fetchall()
+    return [_prompt_snippet_from_row(row) for row in rows]
+
+
+def create_prompt_snippet(
+    *,
+    title: str,
+    prompt: str,
+    favorite: bool = False,
+) -> PromptSnippet:
+    _ensure_database()
+    now = utc_now()
+    with _connect() as conn:
+        with _transaction(conn):
+            for _ in range(5):
+                snippet_id = _generate_prompt_snippet_id()
+                try:
+                    conn.execute(
+                        """
+                        INSERT INTO prompt_snippets (
+                            id,
+                            title,
+                            prompt,
+                            favorite,
+                            created_at,
+                            updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            snippet_id,
+                            title,
+                            prompt,
+                            _normalize_prompt_snippet_favorite(favorite),
+                            now,
+                            now,
+                        ),
+                    )
+                    break
+                except sqlite3.IntegrityError:
+                    continue
+            else:
+                raise RuntimeError("Failed to generate a unique prompt snippet id")
+
+            row = conn.execute(
+                f"""
+                SELECT {", ".join(PROMPT_SNIPPET_COLUMNS)}
+                FROM prompt_snippets
+                WHERE id = ?
+                """,
+                (snippet_id,),
+            ).fetchone()
+
+    return _prompt_snippet_from_row(row)
+
+
+def update_prompt_snippet(
+    snippet_id: str,
+    updates: dict[str, Any],
+) -> PromptSnippet | None:
+    _ensure_database()
+    allowed_updates = {
+        key: _normalize_prompt_snippet_favorite(value) if key == "favorite" else value
+        for key, value in updates.items()
+        if key in {"title", "prompt", "favorite"} and value is not None
+    }
+
+    with _connect() as conn:
+        with _transaction(conn):
+            row = conn.execute(
+                f"""
+                SELECT {", ".join(PROMPT_SNIPPET_COLUMNS)}
+                FROM prompt_snippets
+                WHERE id = ?
+                """,
+                (snippet_id,),
+            ).fetchone()
+            if not row:
+                return None
+
+            if allowed_updates:
+                now = utc_now()
+                assignments = ", ".join(f"{key} = ?" for key in allowed_updates)
+                conn.execute(
+                    f"""
+                    UPDATE prompt_snippets
+                    SET {assignments}, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (*allowed_updates.values(), now, snippet_id),
+                )
+                row = conn.execute(
+                    f"""
+                    SELECT {", ".join(PROMPT_SNIPPET_COLUMNS)}
+                    FROM prompt_snippets
+                    WHERE id = ?
+                    """,
+                    (snippet_id,),
+                ).fetchone()
+
+    return _prompt_snippet_from_row(row)
+
+
+def delete_prompt_snippet(snippet_id: str) -> bool:
+    _ensure_database()
+    with _connect() as conn:
+        with _transaction(conn):
+            cursor = conn.execute(
+                "DELETE FROM prompt_snippets WHERE id = ?",
+                (snippet_id,),
+            )
+            return cursor.rowcount > 0
 
 
 def _attach_gallery_thumbnail_url(entry: dict[str, Any]) -> dict[str, Any]:

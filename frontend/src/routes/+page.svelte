@@ -10,12 +10,23 @@
   import Lightbox from '$lib/components/Lightbox.svelte';
   import PreviewPanel from '$lib/components/PreviewPanel.svelte';
   import PromptForm from '$lib/components/PromptForm.svelte';
+  import PromptSnippetsDrawer from '$lib/components/PromptSnippetsDrawer.svelte';
   import SettingsDrawer from '$lib/components/SettingsDrawer.svelte';
   import SizeDialog from '$lib/components/SizeDialog.svelte';
   import ToastHost from '$lib/components/ToastHost.svelte';
   import { apiFetch } from '$lib/api/client';
   import { t } from '$lib/i18n';
-  import type { ApiPath, GalleryEntry, GenerateJobStatus, PromptOptimizeResponse, SettingsInput, SettingsResponse } from '$lib/api/types';
+  import type {
+    ApiPath,
+    GalleryEntry,
+    GenerateJobStatus,
+    PromptOptimizeResponse,
+    PromptSnippet,
+    PromptSnippetCreateInput,
+    PromptSnippetUpdateInput,
+    SettingsInput,
+    SettingsResponse
+  } from '$lib/api/types';
   import { accessStore } from '$lib/stores/access';
   import { confirmStore } from '$lib/stores/confirm';
   import { editSourceStore, MAX_EDIT_SOURCE_IMAGES } from '$lib/stores/editSource';
@@ -24,6 +35,7 @@
   import { jobsStore } from '$lib/stores/jobs';
   import { lightboxStore } from '$lib/stores/lightbox';
   import { DEFAULT_PROMPT_MODEL, initialPromptFormState, previewStore, type PromptFormState } from '$lib/stores/preview';
+  import { promptSnippetsStore } from '$lib/stores/promptSnippets';
   import { settingsStore } from '$lib/stores/settings';
   import { uiStore, type ToastOptions } from '$lib/stores/ui';
   import { versionStore } from '$lib/stores/version';
@@ -147,6 +159,15 @@
   function closeJobsDrawer() {
     setUi('jobsOpen', false);
     queueUrlSync();
+  }
+
+  function openPromptSnippetsDrawer() {
+    setUi('promptSnippetsOpen', true);
+    void loadPromptSnippets();
+  }
+
+  function closePromptSnippetsDrawer() {
+    setUi('promptSnippetsOpen', false);
   }
 
   function setJobsTab(tab: JobsTab) {
@@ -285,6 +306,67 @@
     }
     const prefix = form.prompt.trim();
     form = { ...form, prompt: prefix ? `${prefix}, ${tag}` : tag };
+  }
+
+  async function loadPromptSnippets(query = '') {
+    try {
+      await promptSnippetsStore.loadSnippets(query);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : $t.messages.requestFailed;
+      showToast(message || $t.messages.requestFailed, 'error');
+    }
+  }
+
+  async function createPromptSnippet(input: PromptSnippetCreateInput) {
+    try {
+      await promptSnippetsStore.createSnippet(input);
+      await promptSnippetsStore.loadSnippets($promptSnippetsStore.query);
+      showToast($t.messages.promptSnippetSaved);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : $t.messages.requestFailed;
+      showToast(message || $t.messages.requestFailed, 'error');
+    }
+  }
+
+  async function updatePromptSnippet(snippetId: string, input: PromptSnippetUpdateInput) {
+    try {
+      await promptSnippetsStore.updateSnippet(snippetId, input);
+      await promptSnippetsStore.loadSnippets($promptSnippetsStore.query);
+      showToast($t.messages.promptSnippetUpdated);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : $t.messages.requestFailed;
+      showToast(message || $t.messages.requestFailed, 'error');
+    }
+  }
+
+  async function deletePromptSnippet(snippet: PromptSnippet) {
+    const confirmed = await confirmStore.confirm({
+      title: $t.confirm.deleteSnippetTitle,
+      message: $t.confirm.deleteSnippetMessage(snippet.title),
+      confirmLabel: $t.common.delete,
+      cancelLabel: $t.confirm.cancel,
+      closeLabel: $t.confirm.closeLabel,
+      variant: 'danger'
+    });
+    if (!confirmed) return;
+    try {
+      await promptSnippetsStore.deleteSnippet(snippet.id);
+      showToast($t.messages.promptSnippetDeleted);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : $t.messages.requestFailed;
+      showToast(message || $t.messages.requestFailed, 'error');
+    }
+  }
+
+  function usePromptSnippet(snippet: PromptSnippet) {
+    form = { ...form, prompt: snippet.prompt };
+    closePromptSnippetsDrawer();
+    showToast($t.messages.promptSnippetLoaded);
+  }
+
+  async function copyPromptSnippet(snippet: PromptSnippet) {
+    await copyText(snippet.prompt);
+    showToast($t.messages.promptSnippetCopied);
   }
 
   async function optimizePrompt() {
@@ -516,6 +598,7 @@
       if ($uiStore.editPreviewOpen) setUi('editPreviewOpen', false);
       else if ($lightboxStore.image) closeLightbox();
       else if ($uiStore.sizeDialogOpen) setUi('sizeDialogOpen', false);
+      else if ($uiStore.promptSnippetsOpen) closePromptSnippetsDrawer();
       else if ($uiStore.jobsOpen) closeJobsDrawer();
       else if ($uiStore.settingsOpen) setUi('settingsOpen', false);
     };
@@ -542,6 +625,7 @@
   hasVersionUpdate={$versionStore.hasUpdate}
   releaseUrl={$versionStore.releaseUrl}
   {activeJobsCount}
+  onOpenPromptSnippets={openPromptSnippetsDrawer}
   onOpenJobs={openJobsDrawer}
   onOpenSettings={() => setUi('settingsOpen', true)}
 />
@@ -560,6 +644,21 @@
   onActivate={activatePreset}
   onDelete={deleteActivePreset}
   onHealthCheck={checkPresetHealth}
+/>
+
+<PromptSnippetsDrawer
+  open={$uiStore.promptSnippetsOpen}
+  snippets={$promptSnippetsStore.snippets}
+  loading={$promptSnippetsStore.loading}
+  saving={$promptSnippetsStore.saving}
+  currentPrompt={form.prompt}
+  onClose={closePromptSnippetsDrawer}
+  onSearch={loadPromptSnippets}
+  onCreate={createPromptSnippet}
+  onUpdate={updatePromptSnippet}
+  onDelete={deletePromptSnippet}
+  onUse={usePromptSnippet}
+  onCopy={copyPromptSnippet}
 />
 
 <JobHistoryDrawer

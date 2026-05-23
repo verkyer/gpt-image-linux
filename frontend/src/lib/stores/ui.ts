@@ -18,6 +18,7 @@ export type ToastOptions = {
 export type UiState = {
   settingsOpen: boolean;
   jobsOpen: boolean;
+  promptSnippetsOpen: boolean;
   sizeDialogOpen: boolean;
   editPreviewOpen: boolean;
   toast: ToastMessage | null;
@@ -26,6 +27,7 @@ export type UiState = {
 const initialUiState: UiState = {
   settingsOpen: false,
   jobsOpen: false,
+  promptSnippetsOpen: false,
   sizeDialogOpen: false,
   editPreviewOpen: false,
   toast: null

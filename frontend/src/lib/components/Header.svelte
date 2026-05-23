@@ -6,6 +6,7 @@
   export let latestVersion = '';
   export let hasVersionUpdate = false;
   export let releaseUrl: string | null = null;
+  export let onOpenPromptSnippets: () => void = () => {};
   export let onOpenJobs: () => void = () => {};
   export let onOpenSettings: () => void = () => {};
 
@@ -55,6 +56,15 @@
     </div>
 
     <div class="flex items-center gap-2">
+      <button
+        type="button"
+        class="control-focus relative inline-flex h-10 min-w-10 items-center justify-center rounded-lg px-2 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+        title={$t.header.promptSnippets}
+        aria-label={$t.header.promptSnippets}
+        on:click={() => onOpenPromptSnippets()}
+      >
+        <span class="text-sm font-semibold leading-none">{$t.header.prompts}</span>
+      </button>
       <button
         type="button"
         class="control-focus relative inline-flex h-10 min-w-10 items-center justify-center rounded-lg px-2 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"

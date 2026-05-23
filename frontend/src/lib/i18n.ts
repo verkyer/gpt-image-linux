@@ -42,6 +42,8 @@ const en = {
   },
   header: {
     subtitle: 'Image Generation Interface',
+    prompts: 'Prompts',
+    promptSnippets: 'Prompt snippets',
     jobs: 'Jobs',
     jobHistory: 'Job History',
     settingsShort: 'Set',
@@ -147,6 +149,32 @@ const en = {
       material: 'Material'
     }
   },
+  promptSnippets: {
+    title: 'Prompt Snippets',
+    subtitle: 'Reusable prompt templates, separate from the image gallery',
+    closeLabel: 'Close prompt snippets',
+    search: 'Search snippets',
+    saveCurrent: 'Save current',
+    newTitle: 'New snippet',
+    editTitle: 'Edit snippet',
+    titleLabel: 'Title',
+    titlePlaceholder: 'Short name',
+    promptLabel: 'Prompt template',
+    promptPlaceholder: 'Paste or write a reusable prompt...',
+    favorite: 'Favorite',
+    create: 'Create',
+    update: 'Update',
+    cancelEdit: 'Cancel edit',
+    use: 'Use',
+    copy: 'Copy',
+    edit: 'Edit',
+    noSnippets: 'No snippets yet',
+    noSnippetsHint: 'Save your current prompt or create a reusable template.',
+    noMatch: 'No snippets match',
+    noMatchHint: 'Try a different search.',
+    loading: 'Loading snippets...',
+    saving: 'Saving...'
+  },
   preview: {
     title: 'Preview',
     subtitle: 'Latest generation or edit result',
@@ -230,7 +258,9 @@ const en = {
     deleteAllConfirmLabel: 'DELETE',
     deleteAllConfirmHint: 'Type DELETE to confirm',
     deletePresetTitle: 'Delete preset?',
-    deletePresetMessage: (name: string) => `Delete preset "${name}"?`
+    deletePresetMessage: (name: string) => `Delete preset "${name}"?`,
+    deleteSnippetTitle: 'Delete prompt snippet?',
+    deleteSnippetMessage: (name: string) => `Delete "${name}"?`
   },
   sizeDialog: {
     title: 'Image Size',
@@ -277,6 +307,11 @@ const en = {
     galleryPromptLoaded: 'Prompt loaded',
     galleryParamsLoaded: 'Prompt and parameters loaded',
     galleryEditApiPathIgnored: 'Prompt and parameters loaded; edit API path was ignored',
+    promptSnippetLoaded: 'Prompt loaded',
+    promptSnippetCopied: 'Prompt copied',
+    promptSnippetSaved: 'Prompt snippet saved',
+    promptSnippetUpdated: 'Prompt snippet updated',
+    promptSnippetDeleted: 'Prompt snippet deleted',
     imageUrlCopied: 'Image URL copied',
     jobLoadedIntoPrompt: 'Job parameters loaded',
     editRetryNeedsSource: 'Choose an edit source before retrying this edit job',
@@ -380,6 +415,8 @@ const zh: TranslationSchema<typeof en> = {
   },
   header: {
     subtitle: '图像生成界面',
+    prompts: '提示词',
+    promptSnippets: '提示词片段',
     jobs: '任务',
     jobHistory: '任务历史',
     settingsShort: '设置',
@@ -485,6 +522,32 @@ const zh: TranslationSchema<typeof en> = {
       material: '材质'
     }
   },
+  promptSnippets: {
+    title: '提示词收藏夹',
+    subtitle: '可复用的提示词模板，和图库分开管理',
+    closeLabel: '关闭提示词收藏夹',
+    search: '搜索片段',
+    saveCurrent: '保存当前',
+    newTitle: '新增片段',
+    editTitle: '编辑片段',
+    titleLabel: '标题',
+    titlePlaceholder: '简短名称',
+    promptLabel: '提示词模板',
+    promptPlaceholder: '粘贴或编写可复用的提示词...',
+    favorite: '收藏',
+    create: '创建',
+    update: '更新',
+    cancelEdit: '取消编辑',
+    use: '使用',
+    copy: '复制',
+    edit: '编辑',
+    noSnippets: '暂无片段',
+    noSnippetsHint: '保存当前提示词，或创建一个可复用模板。',
+    noMatch: '没有匹配的片段',
+    noMatchHint: '换个关键词试试。',
+    loading: '正在加载片段...',
+    saving: '保存中...'
+  },
   preview: {
     title: '预览',
     subtitle: '最近一次生成或编辑结果',
@@ -568,7 +631,9 @@ const zh: TranslationSchema<typeof en> = {
     deleteAllConfirmLabel: 'DELETE',
     deleteAllConfirmHint: '输入 DELETE 确认',
     deletePresetTitle: '删除预设？',
-    deletePresetMessage: (name) => `删除预设“${name}”？`
+    deletePresetMessage: (name) => `删除预设“${name}”？`,
+    deleteSnippetTitle: '删除提示词片段？',
+    deleteSnippetMessage: (name) => `删除“${name}”？`
   },
   sizeDialog: {
     title: '图像尺寸',
@@ -615,6 +680,11 @@ const zh: TranslationSchema<typeof en> = {
     galleryPromptLoaded: '提示词已回填',
     galleryParamsLoaded: '提示词和参数已回填',
     galleryEditApiPathIgnored: '提示词和参数已回填；编辑接口路径已忽略',
+    promptSnippetLoaded: '提示词已回填',
+    promptSnippetCopied: '提示词已复制',
+    promptSnippetSaved: '提示词片段已保存',
+    promptSnippetUpdated: '提示词片段已更新',
+    promptSnippetDeleted: '提示词片段已删除',
     imageUrlCopied: '图片链接已复制',
     jobLoadedIntoPrompt: '任务参数已回填',
     editRetryNeedsSource: '重试编辑任务前，请先选择编辑源图片',

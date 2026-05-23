@@ -35,12 +35,13 @@ Key characteristics:
 ## Features
 
 - API preset management: base URL/path/key, per-preset default model, global SOCKS5 upstream proxy, and global Webhook URL
-- prompt helper tags, server-side prompt optimization, and gallery prompt/parameter reuse
+- prompt helper tags, server-side prompt optimization, independent prompt snippets, and gallery prompt/parameter reuse
 - generation and image-editing (`/v1/images/edits`) with size/quality/format/compression/quantity controls and up to 16 edit reference images
 - preview + job history with SSE progress, multi-image result previews, `completed_at`, elapsed time, per-job stage timings, loading states, detailed terminal statuses, cancel for queued/running jobs, and reuse/retry from persisted history
 - shared queue and concurrency limits for generation/edit jobs
 - optional global Webhook URL with HTTPS-only validation, SSRF checks, signing, retry, and masked settings responses
 - gallery with filters (FTS-backed prompt search, model, preset, size, date range, favorite), URL-synced page/filter/lightbox/job-history state, direct page-number jump, lightbox, “Edit this image”, download, custom delete confirmations with 5-second undo for single images, batch actions with partial-success feedback, delete/delete-all, prompt/image-url copy, and on-demand total-size metadata
+- prompt snippets drawer for reusable prompt templates, stored separately from gallery images in SQLite
 - ZIP export/import (`metadata.json`) with streaming upload, safety validation, low-memory export path, skipped-entry metadata for partial batch downloads, and visible import/export/download progress states
 - access-key gate, IP allowlist/proxy-header support, GitHub version badge, and CSP nonce injection
 - observability hooks for job stage timings, slow `/api/gallery` query logging, queue/failure metrics, and optional JSON/Prometheus metrics endpoints
@@ -73,8 +74,8 @@ It uses:
 - Tailwind CSS
 - `src/lib/api/client.ts` for same-origin fetch calls to existing `/api/*` endpoints
 - `src/lib/api/events.ts` for SSE wrappers
-- stores split across access, settings, gallery, jobs, preview, and UI state
-- components for access, header, settings drawer, prompt helper, job history drawer, preview, gallery, lightbox, and size selection
+- stores split across access, settings, prompt snippets, gallery, jobs, preview, and UI state
+- components for access, header, settings drawer, prompt snippets drawer, prompt helper, job history drawer, preview, gallery, lightbox, and size selection
 
 Frontend build:
 
@@ -89,6 +90,7 @@ Runtime persistent storage is minimal:
 
 - generated images are saved in the `images/` directory
 - gallery metadata, image byte sizes, FTS prompt-search index, and API presets are stored in SQLite at `data/app.sqlite3`, including `completed_at`, Beijing completion time, and generation duration
+- prompt snippets are stored in SQLite at `data/app.sqlite3` independently from gallery metadata
 - generation/edit job status, errors, timing, `completed_at`, and result metadata are stored in SQLite at `data/app.sqlite3`; successful multi-image jobs persist the full `images` result list while keeping the first result in `image_id`/`image_url` for compatibility
 - active `asyncio.Task` handles live only in process memory; queued/running jobs from a previous process are marked interrupted on startup
 
@@ -258,12 +260,13 @@ curl http://localhost:9090/health
 14. enter a prompt
 15. click Prompt Helper tags to append common modifiers
 16. click Optimize to rewrite the prompt through the server-side optimizer
-17. choose generation options, including API path for per-request upstream routing
-18. click Generate
-19. optionally upload one or more edit reference images, pick "Edit this image" in Gallery/Lightbox, or combine both; uploads append to the current edit sources and Clear removes all edit sources
-20. click Edits to run image-to-image
-21. use Gallery/Lightbox "Use prompt" or "Use all" to reuse historical prompt text or full parameters
-22. view preview and gallery
+17. open Prompts in the header to save or reuse prompt snippets; using a snippet replaces the current prompt
+18. choose generation options, including API path for per-request upstream routing
+19. click Generate
+20. optionally upload one or more edit reference images, pick "Edit this image" in Gallery/Lightbox, or combine both; uploads append to the current edit sources and Clear removes all edit sources
+21. click Edits to run image-to-image
+22. use Gallery/Lightbox "Use prompt" or "Use all" to reuse historical prompt text or full parameters
+23. view preview and gallery
 
 ## API paths
 
@@ -405,6 +408,10 @@ The panel supports these upstream paths. The API base URL may either omit or inc
 | `POST` | `/api/settings` | Save the active API preset |
 | `GET` | `/api/settings` | Get current settings and presets |
 | `POST` | `/api/prompt/optimize` | Rewrite a prompt through the server-side optimizer |
+| `GET` | `/api/prompt-snippets` | List prompt snippets, optionally filtered by `query` |
+| `POST` | `/api/prompt-snippets` | Create a prompt snippet |
+| `PATCH` | `/api/prompt-snippets/{snippet_id}` | Update a prompt snippet title, prompt, or favorite flag |
+| `DELETE` | `/api/prompt-snippets/{snippet_id}` | Delete a prompt snippet |
 | `POST` | `/api/settings/presets` | Create and activate an API preset |
 | `POST` | `/api/settings/presets/{preset_id}/activate` | Activate an API preset |
 | `POST` | `/api/settings/presets/{preset_id}/health` | Validate a saved API preset and run a low-cost upstream probe |
@@ -433,7 +440,7 @@ The panel supports these upstream paths. The API base URL may either omit or inc
 ## Runtime behavior notes
 
 - app version comes from `APP_VERSION` then `VERSION`; both the local app version and optional GitHub remote check are evaluated on each web-triggered version request. The remote check reads the latest release first, falls back to the configured branch `VERSION`, and can show a `New` badge without blocking usage.
-- presets and gallery/job data persist only in `DATABASE_FILE`
+- presets, prompt snippets, and gallery/job data persist only in `DATABASE_FILE`
 - SQLite repository operations use short-lived connections with WAL enabled at startup; app shutdown and tests call the storage close hook so connection lifecycle stays explicit
 - generation and edit share one queue (`MAX_ACTIVE_GENERATE_JOBS` + `MAX_QUEUED_GENERATE_JOBS`), all edit source images are staged under `DATA_DIR/edit-sources` and additionally capped by `MAX_PENDING_EDIT_SOURCE_MB`, support cancellation, and persist terminal history including `completed_at`
 - Prompt Optimizer uses its own server-side Chat Completions-compatible endpoint config, resolves API key env refs on the backend, and does not consume generation/edit queue capacity.
@@ -519,12 +526,13 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 ## 功能
 
 - API 预设管理：base URL/path/key、每个预设的默认 model、全局 SOCKS5 上游代理和全局 Webhook URL
-- 提示词助手标签、服务端提示词优化器，以及 Gallery 提示词/参数复用
+- 提示词助手标签、服务端提示词优化器、独立提示词收藏夹，以及 Gallery 提示词/参数复用
 - 图像生成 + 图生图编辑（`/v1/images/edits`），支持尺寸/质量/格式/压缩率/数量等参数，并支持最多 16 张编辑参考图
 - 预览 + 历史任务：SSE 进度、多图结果预览、`completed_at`、耗时、任务分段耗时、加载状态、细分终态状态、排队/运行任务取消，以及从持久化历史复用/重试
 - 生成与编辑共享并发和排队限制
 - 可选全局 Webhook URL：HTTPS 校验、SSRF 防护、签名、重试，以及设置响应打码
 - Gallery：筛选（FTS 提示词搜索、模型、预设、尺寸、日期区间、收藏）、URL 同步的 page/filter/lightbox/job history 状态、页码输入跳转、Lightbox、”Edit this image”、下载/删除、批量操作部分成功反馈、单图 5 秒撤销删除、复制提示词/图片链接、按需总大小统计
+- 提示词收藏夹：可复用 prompt 模板，与 Gallery 图片分开存储和管理
 - ZIP 导出导入（含 `metadata.json`）+ 流式上传 + 安全校验 + 低内存导出路径 + 批量下载 skipped metadata + 可见导入/导出/下载进度状态
 - 访问密钥、IP 白名单/反向代理头、版本检测、CSP nonce
 - 观测能力：任务分段耗时、慢 `/api/gallery` 查询日志、队列/失败率指标、可选 JSON/Prometheus metrics
@@ -557,8 +565,8 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 - Tailwind CSS
 - `src/lib/api/client.ts` 封装同源 `/api/*` fetch
 - `src/lib/api/events.ts` 封装 SSE
-- stores 拆分为 access、settings、gallery、gallery actions、edit source、jobs、preview、lightbox、version 和 UI
-- 组件拆分为 access、header、settings drawer、prompt helper、job history drawer、preview、gallery、lightbox 和 size dialog
+- stores 拆分为 access、settings、prompt snippets、gallery、gallery actions、edit source、jobs、preview、lightbox、version 和 UI
+- 组件拆分为 access、header、settings drawer、prompt snippets drawer、prompt helper、job history drawer、preview、gallery、lightbox 和 size dialog
 
 前端构建命令：
 
@@ -573,6 +581,7 @@ npm --prefix frontend run build
 
 - 生成的图片保存在 `images/` 目录
 - Gallery 元数据、图片字节数、FTS 提示词索引和 API 预设保存在 SQLite：`data/app.sqlite3`，包含真实图片宽高、`completed_at` 完成时间、北京时间生成完成时间和生成耗时
+- 提示词收藏夹保存在 SQLite：`data/app.sqlite3`，独立于 Gallery 元数据
 - 生成/编辑任务的状态、错误、耗时、`completed_at`、请求参数和结果元数据保存在 SQLite：`data/app.sqlite3`；多图任务会保留完整 `images` 结果列表，同时继续用第一张结果填充 `image_id`/`image_url` 以兼容旧客户端
 - 运行中的 `asyncio.Task` 句柄仅保存在进程内存中；重启后，上个进程遗留的排队/运行任务会被标记为 interrupted
 
@@ -742,12 +751,13 @@ curl http://localhost:9090/health
 14. 输入提示词
 15. 点击提示词助手标签追加常用修饰词
 16. 点击 Optimize 通过服务端优化器改写提示词
-17. 选择生成参数；需要逐次复用不同上游路径时可直接选择 API Path
-18. 点击 Generate
-19. 也可以上传一张或多张编辑参考图、在 Gallery/Lightbox 中选择 “Edit this image”，或两者组合；上传会追加到当前编辑源，Clear 会清空全部编辑源
-20. 点击 Edits 执行图生图
-21. 在 Gallery/Lightbox 使用 “Use prompt” 或 “Use all” 复用历史提示词或完整参数
-22. 查看预览和 Gallery
+17. 点击右上角提示词按钮保存或复用提示词片段；使用片段会替换当前提示词
+18. 选择生成参数；需要逐次复用不同上游路径时可直接选择 API Path
+19. 点击 Generate
+20. 也可以上传一张或多张编辑参考图、在 Gallery/Lightbox 中选择 “Edit this image”，或两者组合；上传会追加到当前编辑源，Clear 会清空全部编辑源
+21. 点击 Edits 执行图生图
+22. 在 Gallery/Lightbox 使用 “Use prompt” 或 “Use all” 复用历史提示词或完整参数
+23. 查看预览和 Gallery
 
 ## 支持的 API Path
 
@@ -889,6 +899,10 @@ curl http://localhost:9090/health
 | `POST` | `/api/settings` | 保存当前 API 预设 |
 | `GET` | `/api/settings` | 获取当前设置和预设列表 |
 | `POST` | `/api/prompt/optimize` | 通过服务端提示词优化器改写提示词 |
+| `GET` | `/api/prompt-snippets` | 查询提示词片段，可选 `query` 筛选 |
+| `POST` | `/api/prompt-snippets` | 创建提示词片段 |
+| `PATCH` | `/api/prompt-snippets/{snippet_id}` | 更新提示词片段标题、内容或收藏标记 |
+| `DELETE` | `/api/prompt-snippets/{snippet_id}` | 删除提示词片段 |
 | `POST` | `/api/settings/presets` | 新建并激活 API 预设 |
 | `POST` | `/api/settings/presets/{preset_id}/activate` | 激活 API 预设 |
 | `POST` | `/api/settings/presets/{preset_id}/health` | 校验已保存 API 预设并执行低成本上游探测 |
@@ -917,7 +931,7 @@ curl http://localhost:9090/health
 ## 运行时注意事项
 
 - 版本读取顺序是 `APP_VERSION` -> `VERSION`；本地版本和可选 GitHub 远端检查都会在每次 Web 端触发版本请求时实时计算。远端检查会先读 latest release，再回退到配置分支的 `VERSION`，仅用于显示 `New`，不会阻塞使用。
-- 预设与 Gallery/Job 数据只保存在 `DATABASE_FILE`
+- 预设、提示词收藏夹和 Gallery/Job 数据只保存在 `DATABASE_FILE`
 - SQLite 仓储操作使用短连接，并在启动时启用 WAL；应用 shutdown 和测试 reset 会调用 storage close hook，连接生命周期保持显式
 - 生成与编辑共用队列（`MAX_ACTIVE_GENERATE_JOBS` + `MAX_QUEUED_GENERATE_JOBS`）；所有编辑源图先落到 `DATA_DIR/edit-sources` 并额外受 `MAX_PENDING_EDIT_SOURCE_MB` 总量限制；支持取消，并持久化终态历史（含 `completed_at`）
 - 提示词优化器使用独立的服务端 Chat Completions 兼容 endpoint 配置，在后端解析 API Key 环境变量引用，不占用生成/编辑任务队列容量。

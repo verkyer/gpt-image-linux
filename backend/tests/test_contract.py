@@ -1038,6 +1038,77 @@ def test_prompt_optimize_upstream_error_and_timeout(client, monkeypatch):
     assert "optimizer timeout" in timeout.json()["detail"]
 
 
+def test_prompt_snippets_crud_search_and_validation(client):
+    empty = client.get("/api/prompt-snippets")
+    assert empty.status_code == 200
+    assert empty.json() == {"snippets": []}
+
+    invalid = client.post(
+        "/api/prompt-snippets",
+        json={"title": "   ", "prompt": "usable prompt"},
+    )
+    assert invalid.status_code == 422
+
+    first = client.post(
+        "/api/prompt-snippets",
+        json={"title": "Portrait base", "prompt": "cinematic portrait prompt"},
+    )
+    assert first.status_code == 200
+    first_body = first.json()
+    assert first_body["title"] == "Portrait base"
+    assert first_body["prompt"] == "cinematic portrait prompt"
+    assert first_body["favorite"] is False
+    assert first_body["created_at"]
+    assert first_body["updated_at"]
+
+    second = client.post(
+        "/api/prompt-snippets",
+        json={
+            "title": "Product hero",
+            "prompt": "studio product photography",
+            "favorite": True,
+        },
+    )
+    assert second.status_code == 200
+    second_body = second.json()
+
+    listed = client.get("/api/prompt-snippets")
+    assert listed.status_code == 200
+    assert [snippet["id"] for snippet in listed.json()["snippets"]] == [
+        second_body["id"],
+        first_body["id"],
+    ]
+
+    searched = client.get("/api/prompt-snippets", params={"query": "portrait"})
+    assert searched.status_code == 200
+    assert [snippet["id"] for snippet in searched.json()["snippets"]] == [
+        first_body["id"],
+    ]
+
+    updated = client.patch(
+        f"/api/prompt-snippets/{first_body['id']}",
+        json={"title": "Portrait closeup", "favorite": True},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["title"] == "Portrait closeup"
+    assert updated.json()["favorite"] is True
+
+    missing_update = client.patch(
+        "/api/prompt-snippets/missing",
+        json={"favorite": True},
+    )
+    assert missing_update.status_code == 404
+
+    deleted = client.delete(f"/api/prompt-snippets/{second_body['id']}")
+    assert deleted.status_code == 200
+    assert deleted.json()["status"] == "ok"
+
+    after_delete = client.get("/api/prompt-snippets")
+    assert [snippet["id"] for snippet in after_delete.json()["snippets"]] == [
+        first_body["id"],
+    ]
+
+
 def test_settings_rejects_invalid_socks5_proxy(client):
     settings = client.get("/api/settings").json()
 
