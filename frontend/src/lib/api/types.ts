@@ -2,6 +2,7 @@ export type ApiPath = '/v1/images/generations' | '/v1/responses' | '/v1/chat/com
 export type ApiKeySource = 'empty' | 'stored' | 'env';
 export type PresetHealthStatus = 'ok' | 'warning' | 'error';
 export type GenerateJobStatusValue = 'queued' | 'running' | 'success' | 'error' | 'cancelled' | 'interrupted' | 'upstream_error';
+export type GalleryExportJobStatusValue = 'queued' | 'running' | 'success' | 'error';
 
 export type ApiPreset = {
   id: string;
@@ -224,4 +225,23 @@ export type GalleryBatchResponse = {
   updated_count?: number;
   missing_count?: number;
   missing_ids?: string[];
+};
+
+export type GalleryExportJobStatus = {
+  job_id: string;
+  status: GalleryExportJobStatusValue;
+  stage?: string | null;
+  message?: string | null;
+  progress: number;
+  filename?: string | null;
+  download_url?: string | null;
+  requested_count: number;
+  processed_count: number;
+  exported_count: number;
+  missing_count: number;
+  bytes_total: number;
+  bytes_written: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+  error?: string | null;
 };

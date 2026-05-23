@@ -8,7 +8,7 @@ export type EventHandlers<T> = {
   onError?: (error?: unknown) => void;
 };
 
-export function openJsonEventSource<T>(url: string, handlers: EventHandlers<T>): EventSource {
+export function openJsonEventSource<T>(url: string, handlers: EventHandlers<T>, eventNames = ['job', 'jobs']): EventSource {
   const source = new EventSource(url);
 
   function handleJsonEvent(eventName: string, event: Event) {
@@ -23,8 +23,9 @@ export function openJsonEventSource<T>(url: string, handlers: EventHandlers<T>):
     handlers.onEvent({ event: eventName, data });
   }
 
-  source.addEventListener('job', (event) => handleJsonEvent('job', event));
-  source.addEventListener('jobs', (event) => handleJsonEvent('jobs', event));
+  for (const eventName of eventNames) {
+    source.addEventListener(eventName, (event) => handleJsonEvent(eventName, event));
+  }
 
   source.onerror = () => {
     handlers.onError?.();

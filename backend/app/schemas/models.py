@@ -17,6 +17,7 @@ GenerateJobStatusValue = Literal[
     "interrupted",
     "upstream_error",
 ]
+GalleryExportJobStatusValue = Literal["queued", "running", "success", "error"]
 
 
 class ApiPresetResponse(BaseModel):
@@ -323,6 +324,41 @@ class GalleryBatchRequest(BaseModel):
 
 class GalleryBatchFavoriteRequest(GalleryBatchRequest):
     favorite: bool
+
+
+class GalleryExportRequest(BaseModel):
+    ids: Optional[list[str]] = Field(default=None, max_length=1000)
+
+    @field_validator("ids")
+    @classmethod
+    def validate_ids(cls, value: Optional[list[str]]) -> Optional[list[str]]:
+        if value is None:
+            return None
+        ids = [image_id.strip() for image_id in value if image_id.strip()]
+        if not ids:
+            raise ValueError("ids must include at least one gallery entry id")
+        if len(set(ids)) != len(ids):
+            raise ValueError("ids must not contain duplicates")
+        return ids
+
+
+class GalleryExportJobStatus(BaseModel):
+    job_id: str
+    status: GalleryExportJobStatusValue
+    stage: Optional[str] = None
+    message: Optional[str] = None
+    progress: int = 0
+    filename: Optional[str] = None
+    download_url: Optional[str] = None
+    requested_count: int = 0
+    processed_count: int = 0
+    exported_count: int = 0
+    missing_count: int = 0
+    bytes_total: int = 0
+    bytes_written: int = 0
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    error: Optional[str] = None
 
 
 class GalleryBatchResponse(BaseModel):

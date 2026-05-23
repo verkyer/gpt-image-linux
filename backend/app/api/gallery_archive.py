@@ -3,9 +3,11 @@ import json
 import os
 import re
 import tempfile
+import time
 import uuid
 import zipfile
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -17,6 +19,16 @@ from ..core.utils import utc_now
 from ..repositories import storage
 from ..schemas.models import GalleryEntry
 from .uploads import IMAGE_UPLOAD_CONTENT_TYPES, IMAGE_UPLOAD_EXTENSIONS
+
+GalleryZipProgressCallback = Callable[[dict[str, Any]], None]
+
+
+@dataclass(frozen=True)
+class GalleryZipFileResult:
+    requested_count: int
+    exported_count: int
+    missing_count: int
+    bytes_total: int
 
 
 def max_upload_bytes() -> int:
@@ -186,6 +198,150 @@ def iter_gallery_zip_chunks(
     )
 
     yield from zs
+
+
+def _emit_zip_progress(
+    callback: GalleryZipProgressCallback | None,
+    **updates: Any,
+) -> None:
+    if not callback:
+        return
+    callback({key: value for key, value in updates.items() if value is not None})
+
+
+def _build_export_metadata_from_rows(
+    images: list[dict[str, Any]],
+    skipped: list[dict[str, Any]],
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "schema_version": 1,
+        "exported_at": utc_now(),
+        "app": {
+            "name": "gpt-image-linux",
+            "version": config.read_app_version(),
+        },
+        "images": images,
+    }
+    if skipped:
+        metadata["skipped"] = skipped
+    return metadata
+
+
+def write_gallery_zip_file(
+    entries: Iterable[GalleryEntry | dict[str, Any]],
+    destination: Path,
+    *,
+    requested_count: int = 0,
+    skipped: Iterable[dict[str, Any]] | None = None,
+    progress: GalleryZipProgressCallback | None = None,
+) -> GalleryZipFileResult:
+    """Write a ZIP archive to disk while reporting deterministic pack progress."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = destination.with_name(f"{destination.name}.tmp")
+    temp_path.unlink(missing_ok=True)
+
+    used_names: set[str] = set()
+    metadata_images: list[dict[str, Any]] = []
+    skipped_entries: list[dict[str, Any]] = list(skipped or [])
+    initial_skipped_count = len(skipped_entries)
+    processed_count = 0
+    zs = ZipStream(compress_type=zipfile.ZIP_STORED, sized=True)
+
+    _emit_zip_progress(
+        progress,
+        status="running",
+        stage="preparing",
+        message="Preparing gallery ZIP entries",
+        progress=0,
+        processed_count=0,
+        requested_count=requested_count,
+    )
+
+    for entry in entries:
+        processed_count += 1
+        path = storage.safe_image_path(_entry_filename(entry))
+        if not path or not path.exists():
+            skipped_entries.append(
+                {
+                    "id": _entry_to_dict(entry).get("id"),
+                    "filename": _entry_filename(entry),
+                    "reason": "image_file_missing",
+                }
+            )
+        else:
+            name = unique_export_name(path, used_names)
+            metadata_entry = _resolve_export_metadata_for_entry(entry, path)
+            metadata_entry["filename"] = name
+            metadata_images.append(metadata_entry)
+            zs.add_path(path, arcname=f"images/{name}")
+
+        denominator = max(requested_count, processed_count, 1)
+        prepared_units = min(denominator, processed_count + initial_skipped_count)
+        if processed_count == 1 or processed_count % 10 == 0 or prepared_units >= denominator:
+            _emit_zip_progress(
+                progress,
+                status="running",
+                stage="preparing",
+                message="Preparing gallery ZIP entries",
+                progress=min(20, round((prepared_units / denominator) * 20)),
+                processed_count=prepared_units,
+                requested_count=denominator,
+                exported_count=len(metadata_images),
+                missing_count=len(skipped_entries),
+            )
+
+    metadata = _build_export_metadata_from_rows(metadata_images, skipped_entries)
+    metadata_bytes = json.dumps(metadata, ensure_ascii=False, indent=2).encode("utf-8")
+    zs.add(metadata_bytes, arcname="metadata.json")
+    bytes_total = len(zs)
+    bytes_written = 0
+    last_emit_at = 0.0
+
+    _emit_zip_progress(
+        progress,
+        status="running",
+        stage="packing",
+        message="Writing ZIP archive",
+        progress=20,
+        bytes_total=bytes_total,
+        bytes_written=0,
+        exported_count=len(metadata_images),
+        missing_count=len(skipped_entries),
+    )
+
+    try:
+        with open(temp_path, "wb") as f:
+            for chunk in zs:
+                if not chunk:
+                    continue
+                f.write(chunk)
+                bytes_written += len(chunk)
+                now = time.monotonic()
+                if now - last_emit_at >= 0.1 or bytes_written >= bytes_total:
+                    last_emit_at = now
+                    _emit_zip_progress(
+                        progress,
+                        status="running",
+                        stage="packing",
+                        message="Writing ZIP archive",
+                        progress=20 + round((bytes_written / max(bytes_total, 1)) * 80),
+                        bytes_total=bytes_total,
+                        bytes_written=bytes_written,
+                        exported_count=len(metadata_images),
+                        missing_count=len(skipped_entries),
+                    )
+        temp_path.replace(destination)
+    except BaseException:
+        temp_path.unlink(missing_ok=True)
+        destination.unlink(missing_ok=True)
+        raise
+
+    return GalleryZipFileResult(
+        requested_count=requested_count,
+        exported_count=len(metadata_images),
+        missing_count=len(skipped_entries),
+        bytes_total=bytes_total,
+    )
 
 
 def sanitize_import_filename(filename: str, fallback_ext: str = ".png") -> str:

@@ -114,6 +114,19 @@ def _wait_for_job(client: TestClient, job_id: str, timeout: float = 5.0):
     raise AssertionError(f"job {job_id} did not finish: {last}")
 
 
+def _wait_for_gallery_export_job(client: TestClient, job_id: str, timeout: float = 5.0):
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        resp = client.get(f"/api/gallery/export-jobs/{job_id}")
+        assert resp.status_code == 200
+        last = resp.json()
+        if last["status"] in {"success", "error"}:
+            return last
+        time.sleep(0.05)
+    raise AssertionError(f"gallery export job {job_id} did not finish: {last}")
+
+
 def _fake_gallery_entry(image_id: str, prompt: str, size: str, filename: str):
     storage.add_to_gallery_sync(
         image_id=image_id,
@@ -2111,6 +2124,36 @@ def test_download_all_deduplicates_shared_filenames(client):
         assert len(image_names) == len(set(image_names))
         assert "images/dup.png" in image_names
         assert "images/dup_1.png" in image_names
+
+
+def test_gallery_export_job_reports_progress_and_downloads_zip(client):
+    _fake_gallery_entry("export-job-1", "one", "1024x1024", "export-job-1.png")
+    _fake_gallery_entry("export-job-2", "two", "1024x1024", "export-job-2.png")
+
+    created = client.post("/api/gallery/export-jobs")
+    assert created.status_code == 202
+    job = created.json()
+    assert job["status"] == "queued"
+    assert job["progress"] == 0
+
+    finished = _wait_for_gallery_export_job(client, job["job_id"])
+    assert finished["status"] == "success"
+    assert finished["progress"] == 100
+    assert finished["bytes_total"] > 0
+    assert finished["bytes_written"] == finished["bytes_total"]
+    assert finished["download_url"].endswith(f"/{job['job_id']}/download")
+
+    archive = client.get(finished["download_url"])
+    assert archive.status_code == 200
+    assert archive.headers["content-type"].startswith("application/zip")
+    assert archive.headers["content-length"] == str(len(archive.content))
+    assert archive.headers["x-gallery-requested-count"] == "2"
+    assert archive.headers["x-gallery-exported-count"] == "2"
+    assert archive.headers["x-gallery-missing-count"] == "0"
+    with zipfile.ZipFile(io.BytesIO(archive.content)) as zf:
+        assert "metadata.json" in zf.namelist()
+        assert "images/export-job-1.png" in zf.namelist()
+        assert "images/export-job-2.png" in zf.namelist()
 
 
 def test_gallery_total_bytes_uses_sql_aggregate_without_disk_backfill(client, monkeypatch):

@@ -432,6 +432,10 @@ The panel supports these upstream paths. The API base URL may either omit or inc
 | `GET` | `/api/download/{filename}` | Download image as attachment |
 | `DELETE` | `/api/gallery/{id}` | Delete gallery entry and its server image file |
 | `GET` | `/api/download-all` | Download all gallery images plus `metadata.json` as a ZIP file |
+| `POST` | `/api/gallery/export-jobs` | Start a tracked gallery ZIP export job; optionally pass `ids` for selected images |
+| `GET` | `/api/gallery/export-jobs/{job_id}` | Get tracked ZIP export job status |
+| `GET` | `/api/gallery/export-jobs/{job_id}/events` | Stream ZIP export pack progress over SSE |
+| `GET` | `/api/gallery/export-jobs/{job_id}/download` | Download a completed tracked ZIP export with `Content-Length` transfer progress |
 | `POST` | `/api/import` | Import a ZIP created by `/api/download-all` |
 | `DELETE` | `/api/gallery` | Delete all gallery entries and server image files |
 | `GET` | `/api/metrics` | Optional metrics snapshot; returns JSON by default or Prometheus exposition format with `Accept: text/plain`; only available when `ENABLE_METRICS=true` |
@@ -447,7 +451,7 @@ The panel supports these upstream paths. The API base URL may either omit or inc
 - SSE is the primary progress channel; `/api/generate/jobs` provides list/history (`include_finished=true`, optional `limit`/`offset`), and `/api/generate/jobs/events` streams debounced live job-list changes from memory
 - terminal job history includes `stage_timings` for `upstream_wait`, `download_decode`, `validate`, `thumbnail`, and `db_insert`; slow gallery queries are logged with query filters and totals and counted in metrics; optional metrics include queue depth, running jobs, failure ratios, job-stage latencies, and slow SQLite query counters; terminal job statuses distinguish `cancelled`, `interrupted`, and `upstream_error` in addition to the generic `error`
 - upstream JSON/SSE bodies are read with a `MAX_UPSTREAM_JSON_MB` cap before parsing, and upstream image URL downloads are revalidated (SSRF-aware, no blind redirect follow) and bounded by `MAX_FILE_SIZE_MB`
-- `/api/import` enforces ZIP safety/size/count/compression checks; `/api/download-all` writes temp ZIP on disk to avoid high memory usage
+- `/api/import` enforces ZIP safety/size/count/compression checks; `/api/download-all` keeps the low-memory streaming path, while tracked export jobs write temp ZIP files so UI progress can cover both packing and transfer
 - gallery stores byte-size metadata and thumbnails (`THUMBNAILS_DIR`), with lazy thumbnail and opt-in byte-size backfill for older images
 - startup reconciliation removes gallery rows for missing files and marks previously running/queued jobs as interrupted
 
@@ -923,6 +927,10 @@ curl http://localhost:9090/health
 | `GET` | `/api/download/{filename}` | 下载图片 |
 | `DELETE` | `/api/gallery/{id}` | 删除 Gallery 条目和对应服务器图片文件 |
 | `GET` | `/api/download-all` | 下载 Gallery 所有图片和 `metadata.json` 为 ZIP 文件 |
+| `POST` | `/api/gallery/export-jobs` | 创建可跟踪进度的 Gallery ZIP 导出任务；可传 `ids` 导出所选图片 |
+| `GET` | `/api/gallery/export-jobs/{job_id}` | 查询 ZIP 导出任务状态 |
+| `GET` | `/api/gallery/export-jobs/{job_id}/events` | 通过 SSE 推送 ZIP 打包进度 |
+| `GET` | `/api/gallery/export-jobs/{job_id}/download` | 下载已完成的 ZIP 导出，并通过 `Content-Length` 支持传输进度 |
 | `POST` | `/api/import` | 导入 `/api/download-all` 创建的 ZIP |
 | `DELETE` | `/api/gallery` | 删除所有 Gallery 条目和服务器图片文件 |
 | `GET` | `/api/metrics` | 可选指标快照；默认 JSON，带 `Accept: text/plain` 时返回 Prometheus exposition format；仅在 `ENABLE_METRICS=true` 时可用 |
@@ -938,7 +946,7 @@ curl http://localhost:9090/health
 - SSE 是主进度通道；`/api/generate/jobs` 提供列表/历史（`include_finished=true`，可选 `limit`/`offset`），`/api/generate/jobs/events` 从内存推送 debounce 后的实时任务列表变化
 - 任务终态历史包含 `stage_timings`：`upstream_wait`、`download_decode`、`validate`、`thumbnail`、`db_insert`；慢 Gallery 查询日志会带筛选条件与 total，并计入 metrics；可选 metrics 包含队列深度、运行中任务数、失败率、任务分段耗时和慢 SQLite 查询数；终态状态区分 `cancelled`、`interrupted` 和 `upstream_error`，同时保留通用 `error`
 - 上游 JSON/SSE 响应会在解析前受 `MAX_UPSTREAM_JSON_MB` 限制；上游图片 URL 下载会做 SSRF/重定向目标复核，并受 `MAX_FILE_SIZE_MB` 限制
-- `/api/import` 做 ZIP 安全与体积校验；`/api/download-all` 用磁盘临时 ZIP，避免大图库导出占满内存
+- `/api/import` 做 ZIP 安全与体积校验；`/api/download-all` 保留低内存流式导出，带进度的导出任务会写入临时 ZIP，让 UI 同时展示打包和传输进度
 - Gallery 持久化图片字节数和缩略图（`THUMBNAILS_DIR`），旧图按需懒补缩略图
 - 启动时会清理缺失文件对应的 Gallery 记录，并把上次进程遗留的 running/queued 任务标记为 interrupted
 
