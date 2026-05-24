@@ -549,16 +549,6 @@ def _ensure_database():
                     ON gallery_entries(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_gallery_entries_filename
                     ON gallery_entries(filename);
-                CREATE INDEX IF NOT EXISTS idx_gallery_entries_missing_bytes_filename
-                    ON gallery_entries(filename) WHERE bytes IS NULL;
-                CREATE INDEX IF NOT EXISTS idx_gallery_entries_model_created_at
-                    ON gallery_entries(model, created_at DESC);
-                CREATE INDEX IF NOT EXISTS idx_gallery_entries_preset_created_at
-                    ON gallery_entries(api_preset_name, created_at DESC);
-                CREATE INDEX IF NOT EXISTS idx_gallery_entries_size_created_at
-                    ON gallery_entries(size, created_at DESC);
-                CREATE INDEX IF NOT EXISTS idx_gallery_entries_filename_bytes
-                    ON gallery_entries(filename, bytes) WHERE bytes IS NOT NULL;
 
 
                 CREATE TABLE IF NOT EXISTS generate_jobs (
@@ -591,11 +581,6 @@ def _ensure_database():
                     error TEXT
                 );
 
-                CREATE INDEX IF NOT EXISTS idx_generate_jobs_status_updated_at
-                    ON generate_jobs(status, updated_at DESC);
-                CREATE INDEX IF NOT EXISTS idx_generate_jobs_updated_at
-                    ON generate_jobs(updated_at DESC);
-
                 CREATE TABLE IF NOT EXISTS prompt_snippets (
                     id TEXT PRIMARY KEY,
                     title TEXT NOT NULL,
@@ -626,18 +611,32 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
 
 def _migrate_gallery_schema(conn: sqlite3.Connection):
     columns = _table_columns(conn, "gallery_entries")
+    optional_columns = {
+        "image_width": "INTEGER",
+        "image_height": "INTEGER",
+        "model": "TEXT",
+        "quality": "TEXT",
+        "output_format": "TEXT",
+        "output_compression": "INTEGER",
+        "response_format": "TEXT",
+        "n": "INTEGER",
+        "api_path": "TEXT",
+        "api_preset_name": "TEXT",
+        "duration": "TEXT",
+        "thumbnail_filename": "TEXT",
+        "completed_at": "TEXT",
+        "bytes": "INTEGER",
+        "sha256": "TEXT",
+    }
+    for column, column_type in optional_columns.items():
+        if column not in columns:
+            conn.execute(f"ALTER TABLE gallery_entries ADD COLUMN {column} {column_type}")
+            columns.add(column)
     if "favorite" not in columns:
         conn.execute(
             "ALTER TABLE gallery_entries ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0"
         )
-    if "bytes" not in columns:
-        conn.execute("ALTER TABLE gallery_entries ADD COLUMN bytes INTEGER")
-    if "thumbnail_filename" not in columns:
-        conn.execute("ALTER TABLE gallery_entries ADD COLUMN thumbnail_filename TEXT")
-    if "completed_at" not in columns:
-        conn.execute("ALTER TABLE gallery_entries ADD COLUMN completed_at TEXT")
-    if "sha256" not in columns:
-        conn.execute("ALTER TABLE gallery_entries ADD COLUMN sha256 TEXT")
+        columns.add("favorite")
     if "favorite" in _table_columns(conn, "gallery_entries"):
         conn.execute(
             """
@@ -704,8 +703,24 @@ def _migrate_generate_jobs_schema(conn: sqlite3.Connection):
     columns = _table_columns(conn, "generate_jobs")
     if "stage_timings_json" not in columns:
         conn.execute("ALTER TABLE generate_jobs ADD COLUMN stage_timings_json TEXT")
+        columns.add("stage_timings_json")
     if "images_json" not in columns:
         conn.execute("ALTER TABLE generate_jobs ADD COLUMN images_json TEXT")
+        columns.add("images_json")
+    if {"status", "updated_at"}.issubset(columns):
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_generate_jobs_status_updated_at
+                ON generate_jobs(status, updated_at DESC)
+            """
+        )
+    if "updated_at" in columns:
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_generate_jobs_updated_at
+                ON generate_jobs(updated_at DESC)
+            """
+        )
 
 
 def _migrate_prompt_snippets_schema(conn: sqlite3.Connection):
