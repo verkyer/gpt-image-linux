@@ -34,6 +34,24 @@ def cleanup_stale_edit_source_files():
         logger.info("Removed %s stale edit source temp file(s)", removed)
 
 
+def cleanup_stale_gallery_export_files():
+    temp_dir = Path(config.DATA_DIR) / "exports"
+    if not temp_dir.exists():
+        return
+
+    removed = 0
+    for temp_path in temp_dir.glob("*"):
+        if not temp_path.is_file():
+            continue
+        try:
+            temp_path.unlink()
+            removed += 1
+        except OSError:
+            logger.warning("Failed to remove stale gallery export temp file: %s", temp_path)
+    if removed:
+        logger.info("Removed %s stale gallery export temp file(s)", removed)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from . import jobs, presets
@@ -48,6 +66,7 @@ async def lifespan(app: FastAPI):
     Path(config.THUMBNAILS_DIR).mkdir(parents=True, exist_ok=True)
     Path(config.DATA_DIR).mkdir(parents=True, exist_ok=True)
     cleanup_stale_edit_source_files()
+    cleanup_stale_gallery_export_files()
     storage.verify_storage_writable()
     interrupted_jobs = storage.mark_active_generate_jobs_interrupted()
     if interrupted_jobs:
@@ -78,6 +97,9 @@ async def lifespan(app: FastAPI):
     app.state.generate_jobs_broadcast_reconcile = False
     app.state.generate_job_webhooks = {}
     app.state.generate_job_last_persist_at = {}
+    app.state.gallery_export_jobs = {}
+    app.state.gallery_export_tasks = {}
+    app.state.gallery_export_subscribers = {}
     app.state.pending_edit_source_bytes = 0
     app.state.access_failures: dict[str, tuple[int, float]] = {}
     jobs.reconcile_active_generate_jobs_from_storage()
@@ -88,11 +110,18 @@ async def lifespan(app: FastAPI):
         if broadcast_task and not broadcast_task.done():
             broadcast_task.cancel()
         tasks = list(jobs.get_generate_job_tasks().values())
+        gallery_export_tasks = list(getattr(app.state, "gallery_export_tasks", {}).values())
+        for task in gallery_export_tasks:
+            task.cancel()
         for task in tasks:
             task.cancel()
-        awaitables = [task for task in (broadcast_task, *tasks) if task]
+        awaitables = [task for task in (broadcast_task, *tasks, *gallery_export_tasks) if task]
         if awaitables:
             await asyncio.gather(*awaitables, return_exceptions=True)
+        for job in getattr(app.state, "gallery_export_jobs", {}).values():
+            path = job.get("path")
+            if path:
+                Path(path).unlink(missing_ok=True)
         from ..integrations.session_pool import close_pool
         await close_pool()
         storage.close_database_connections()

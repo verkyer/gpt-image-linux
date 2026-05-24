@@ -34,13 +34,14 @@ Key characteristics:
 
 ## Features
 
-- API preset management: base URL/path/key, per-preset default model, and global SOCKS5 upstream proxy
-- prompt helper tags, server-side prompt optimization, and gallery prompt/parameter reuse
+- API preset management: base URL/path/key, per-preset default model, global SOCKS5 upstream proxy, and global Webhook URL
+- prompt helper tags, server-side prompt optimization, independent prompt snippets, and gallery prompt/parameter reuse
 - generation and image-editing (`/v1/images/edits`) with size/quality/format/compression/quantity controls and up to 16 edit reference images
 - preview + job history with SSE progress, multi-image result previews, `completed_at`, elapsed time, per-job stage timings, loading states, detailed terminal statuses, cancel for queued/running jobs, and reuse/retry from persisted history
 - shared queue and concurrency limits for generation/edit jobs
-- optional per-job `webhook_url` with HTTPS-only validation, SSRF checks, signing, and retry
+- optional global Webhook URL with HTTPS-only validation, SSRF checks, signing, retry, and masked settings responses
 - gallery with filters (FTS-backed prompt search, model, preset, size, date range, favorite), URL-synced page/filter/lightbox/job-history state, direct page-number jump, lightbox, “Edit this image”, download, custom delete confirmations with 5-second undo for single images, batch actions with partial-success feedback, delete/delete-all, prompt/image-url copy, and on-demand total-size metadata
+- prompt snippets drawer for reusable prompt templates, stored separately from gallery images in SQLite
 - ZIP export/import (`metadata.json`) with streaming upload, safety validation, low-memory export path, skipped-entry metadata for partial batch downloads, and visible import/export/download progress states
 - access-key gate, IP allowlist/proxy-header support, GitHub version badge, and CSP nonce injection
 - observability hooks for job stage timings, slow `/api/gallery` query logging, queue/failure metrics, and optional JSON/Prometheus metrics endpoints
@@ -73,8 +74,8 @@ It uses:
 - Tailwind CSS
 - `src/lib/api/client.ts` for same-origin fetch calls to existing `/api/*` endpoints
 - `src/lib/api/events.ts` for SSE wrappers
-- stores split across access, settings, gallery, jobs, preview, and UI state
-- components for access, header, settings drawer, prompt helper, job history drawer, preview, gallery, lightbox, and size selection
+- stores split across access, settings, prompt snippets, gallery, jobs, preview, and UI state
+- components for access, header, settings drawer, prompt snippets drawer, prompt helper, job history drawer, preview, gallery, lightbox, and size selection
 
 Frontend build:
 
@@ -89,6 +90,7 @@ Runtime persistent storage is minimal:
 
 - generated images are saved in the `images/` directory
 - gallery metadata, image byte sizes, FTS prompt-search index, and API presets are stored in SQLite at `data/app.sqlite3`, including `completed_at`, Beijing completion time, and generation duration
+- prompt snippets are stored in SQLite at `data/app.sqlite3` independently from gallery metadata
 - generation/edit job status, errors, timing, `completed_at`, and result metadata are stored in SQLite at `data/app.sqlite3`; successful multi-image jobs persist the full `images` result list while keeping the first result in `image_id`/`image_url` for compatibility
 - active `asyncio.Task` handles live only in process memory; queued/running jobs from a previous process are marked interrupted on startup
 
@@ -97,8 +99,9 @@ Runtime persistent storage is minimal:
 1. frontend calls `/api/generate`
 2. backend validates config, creates a SQLite-backed job, then schedules async execution
 3. shared queue/concurrency limits are enforced; progress stages stream via SSE
-4. upstream image data is decoded/downloaded, validated, and saved; gallery metadata is updated
-5. job history is queryable/streamed (`/api/generate/jobs*`), cancellable (`DELETE /api/generate/{job_id}`), and can trigger optional signed webhook callbacks
+4. generation requests with `n > 1` stay as one public job, but fan out internally to `n` concurrent upstream calls; `/v1/images/generations` child payloads always use `n=1`
+5. upstream image data is decoded/downloaded, validated, and saved; gallery metadata is updated
+6. job history is queryable/streamed (`/api/generate/jobs*`), cancellable (`DELETE /api/generate/{job_id}`), and can trigger optional signed webhook callbacks
 
 ### Edit flow
 
@@ -251,18 +254,20 @@ curl http://localhost:9090/health
 7. enter the preset default model; the Generate/Edit form's Model field defaults to the active preset's value
 8. enter the API key, or an env ref such as `${OPENAI_API_KEY}`; literal keys are stored as plaintext in SQLite, so prefer env refs
 9. optionally enter a global SOCKS5 proxy such as `socks5://127.0.0.1:1080`
-10. optionally configure Prompt Optimizer with an endpoint URL, model, and API key/env ref
-11. optionally run Health check for the saved preset
-12. click Save Preset
-13. enter a prompt
-14. click Prompt Helper tags to append common modifiers
-15. click Optimize to rewrite the prompt through the server-side optimizer
-16. choose generation options, including API path for per-request upstream routing
-17. click Generate
-18. optionally upload one or more edit reference images, pick "Edit this image" in Gallery/Lightbox, or combine both; uploads append to the current edit sources and Clear removes all edit sources
-19. click Edits to run image-to-image
-20. use Gallery/Lightbox "Use prompt" or "Use all" to reuse historical prompt text or full parameters
-21. view preview and gallery
+10. optionally enter a global Webhook URL for completed generation/edit jobs
+11. optionally configure Prompt Optimizer with an endpoint URL, model, and API key/env ref
+12. optionally run Health check for the saved preset
+13. click Save Preset
+14. enter a prompt
+15. click Prompt Helper tags to append common modifiers
+16. click Optimize to rewrite the prompt through the server-side optimizer
+17. open Prompts in the header to save or reuse prompt snippets; using a snippet replaces the current prompt
+18. choose generation options, including API path for per-request upstream routing
+19. click Generate
+20. optionally upload one or more edit reference images, pick "Edit this image" in Gallery/Lightbox, or combine both; uploads append to the current edit sources and Clear removes all edit sources
+21. click Edits to run image-to-image
+22. use Gallery/Lightbox "Use prompt" or "Use all" to reuse historical prompt text or full parameters
+23. view preview and gallery
 
 ## API paths
 
@@ -311,6 +316,13 @@ The panel supports these upstream paths. The API base URL may either omit or inc
 - Leave it empty for direct upstream API calls.
 - Use `socks5://host:port` or `socks5://user:pass@host:port`; stored proxy passwords are masked in API responses and the UI.
 - The proxy boundary is intentionally narrow: only generation/edit upstream API `POST` calls use it. Preset health checks, webhooks, version checks, frontend `/api/*` requests, and image URL downloads stay direct.
+
+## Global Webhook URL
+
+- The Settings drawer has one global `Webhook URL` field directly below `SOCKS5 proxy`; it is independent of API presets.
+- Leave it empty to disable job callbacks.
+- When configured, completed generation/edit jobs send signed webhook callbacks to that HTTPS URL.
+- `WEBHOOK_SIGNING_SECRET` is required when a Webhook URL is configured. Stored webhook URLs are masked in API responses and the UI.
 
 ## Image size modes
 
@@ -380,7 +392,7 @@ The panel supports these upstream paths. The API base URL may either omit or inc
 | `DATABASE_FILE` | `./data/app.sqlite3` | SQLite database for gallery metadata and API presets |
 | `PYTHON_BASE_IMAGE` | `python:3.11-slim` | Docker build base image; override when Docker Hub is slow or blocked |
 | `NODE_BASE_IMAGE` | `node:24-alpine` | Docker frontend build base image; override when Docker Hub is slow or blocked |
-| `WEBHOOK_SIGNING_SECRET` | empty | Required when `webhook_url` is used; used to sign webhook payloads (`X-Webhook-Signature`) |
+| `WEBHOOK_SIGNING_SECRET` | empty | Required when a global Webhook URL is configured; used to sign webhook payloads (`X-Webhook-Signature`) |
 | `WEBHOOK_HOST_ALLOWLIST` | empty | Optional comma-separated webhook hostname allowlist |
 | `WEBHOOK_TIMEOUT_SECONDS` | `5` | Webhook delivery timeout per attempt (seconds) |
 | `WEBHOOK_MAX_ATTEMPTS` | `3` | Max webhook delivery retry attempts |
@@ -397,6 +409,10 @@ The panel supports these upstream paths. The API base URL may either omit or inc
 | `POST` | `/api/settings` | Save the active API preset |
 | `GET` | `/api/settings` | Get current settings and presets |
 | `POST` | `/api/prompt/optimize` | Rewrite a prompt through the server-side optimizer |
+| `GET` | `/api/prompt-snippets` | List prompt snippets, optionally filtered by `query` |
+| `POST` | `/api/prompt-snippets` | Create a prompt snippet |
+| `PATCH` | `/api/prompt-snippets/{snippet_id}` | Update a prompt snippet title, prompt, or favorite flag |
+| `DELETE` | `/api/prompt-snippets/{snippet_id}` | Delete a prompt snippet |
 | `POST` | `/api/settings/presets` | Create and activate an API preset |
 | `POST` | `/api/settings/presets/{preset_id}/activate` | Activate an API preset |
 | `POST` | `/api/settings/presets/{preset_id}/health` | Validate a saved API preset and run a low-cost upstream probe |
@@ -417,6 +433,10 @@ The panel supports these upstream paths. The API base URL may either omit or inc
 | `GET` | `/api/download/{filename}` | Download image as attachment |
 | `DELETE` | `/api/gallery/{id}` | Delete gallery entry and its server image file |
 | `GET` | `/api/download-all` | Download all gallery images plus `metadata.json` as a ZIP file |
+| `POST` | `/api/gallery/export-jobs` | Start a tracked gallery ZIP export job; optionally pass `ids` for selected images |
+| `GET` | `/api/gallery/export-jobs/{job_id}` | Get tracked ZIP export job status |
+| `GET` | `/api/gallery/export-jobs/{job_id}/events` | Stream ZIP export pack progress over SSE |
+| `GET` | `/api/gallery/export-jobs/{job_id}/download` | Download a completed tracked ZIP export with `Content-Length` transfer progress |
 | `POST` | `/api/import` | Import a ZIP created by `/api/download-all` |
 | `DELETE` | `/api/gallery` | Delete all gallery entries and server image files |
 | `GET` | `/api/metrics` | Optional metrics snapshot; returns JSON by default or Prometheus exposition format with `Accept: text/plain`; only available when `ENABLE_METRICS=true` |
@@ -425,14 +445,15 @@ The panel supports these upstream paths. The API base URL may either omit or inc
 ## Runtime behavior notes
 
 - app version comes from `APP_VERSION` then `VERSION`; both the local app version and optional GitHub remote check are evaluated on each web-triggered version request. The remote check reads the latest release first, falls back to the configured branch `VERSION`, and can show a `New` badge without blocking usage.
-- presets and gallery/job data persist only in `DATABASE_FILE`
+- presets, prompt snippets, and gallery/job data persist only in `DATABASE_FILE`
 - SQLite repository operations use short-lived connections with WAL enabled at startup; app shutdown and tests call the storage close hook so connection lifecycle stays explicit
 - generation and edit share one queue (`MAX_ACTIVE_GENERATE_JOBS` + `MAX_QUEUED_GENERATE_JOBS`), all edit source images are staged under `DATA_DIR/edit-sources` and additionally capped by `MAX_PENDING_EDIT_SOURCE_MB`, support cancellation, and persist terminal history including `completed_at`
+- batch generation (`n > 1`) consumes one public queue/running slot; the parent job aggregates successful child results into `images[]`, while Gallery metadata keeps the user-requested `n`
 - Prompt Optimizer uses its own server-side Chat Completions-compatible endpoint config, resolves API key env refs on the backend, and does not consume generation/edit queue capacity.
 - SSE is the primary progress channel; `/api/generate/jobs` provides list/history (`include_finished=true`, optional `limit`/`offset`), and `/api/generate/jobs/events` streams debounced live job-list changes from memory
 - terminal job history includes `stage_timings` for `upstream_wait`, `download_decode`, `validate`, `thumbnail`, and `db_insert`; slow gallery queries are logged with query filters and totals and counted in metrics; optional metrics include queue depth, running jobs, failure ratios, job-stage latencies, and slow SQLite query counters; terminal job statuses distinguish `cancelled`, `interrupted`, and `upstream_error` in addition to the generic `error`
 - upstream JSON/SSE bodies are read with a `MAX_UPSTREAM_JSON_MB` cap before parsing, and upstream image URL downloads are revalidated (SSRF-aware, no blind redirect follow) and bounded by `MAX_FILE_SIZE_MB`
-- `/api/import` enforces ZIP safety/size/count/compression checks; `/api/download-all` writes temp ZIP on disk to avoid high memory usage
+- `/api/import` enforces ZIP safety/size/count/compression checks; `/api/download-all` keeps the low-memory streaming path, while tracked export jobs write temp ZIP files so UI progress can cover both packing and transfer
 - gallery stores byte-size metadata and thumbnails (`THUMBNAILS_DIR`), with lazy thumbnail and opt-in byte-size backfill for older images
 - startup reconciliation removes gallery rows for missing files and marks previously running/queued jobs as interrupted
 
@@ -510,13 +531,14 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 
 ## 功能
 
-- API 预设管理：base URL/path/key、每个预设的默认 model、全局 SOCKS5 上游代理
-- 提示词助手标签、服务端提示词优化器，以及 Gallery 提示词/参数复用
+- API 预设管理：base URL/path/key、每个预设的默认 model、全局 SOCKS5 上游代理和全局 Webhook URL
+- 提示词助手标签、服务端提示词优化器、独立提示词收藏夹，以及 Gallery 提示词/参数复用
 - 图像生成 + 图生图编辑（`/v1/images/edits`），支持尺寸/质量/格式/压缩率/数量等参数，并支持最多 16 张编辑参考图
 - 预览 + 历史任务：SSE 进度、多图结果预览、`completed_at`、耗时、任务分段耗时、加载状态、细分终态状态、排队/运行任务取消，以及从持久化历史复用/重试
 - 生成与编辑共享并发和排队限制
-- 可选任务回调 `webhook_url`：HTTPS 校验、SSRF 防护、签名与重试
+- 可选全局 Webhook URL：HTTPS 校验、SSRF 防护、签名、重试，以及设置响应打码
 - Gallery：筛选（FTS 提示词搜索、模型、预设、尺寸、日期区间、收藏）、URL 同步的 page/filter/lightbox/job history 状态、页码输入跳转、Lightbox、”Edit this image”、下载/删除、批量操作部分成功反馈、单图 5 秒撤销删除、复制提示词/图片链接、按需总大小统计
+- 提示词收藏夹：可复用 prompt 模板，与 Gallery 图片分开存储和管理
 - ZIP 导出导入（含 `metadata.json`）+ 流式上传 + 安全校验 + 低内存导出路径 + 批量下载 skipped metadata + 可见导入/导出/下载进度状态
 - 访问密钥、IP 白名单/反向代理头、版本检测、CSP nonce
 - 观测能力：任务分段耗时、慢 `/api/gallery` 查询日志、队列/失败率指标、可选 JSON/Prometheus metrics
@@ -549,8 +571,8 @@ GPT Image Panel 是一个轻量级 FastAPI Web 界面，用于图像生成和图
 - Tailwind CSS
 - `src/lib/api/client.ts` 封装同源 `/api/*` fetch
 - `src/lib/api/events.ts` 封装 SSE
-- stores 拆分为 access、settings、gallery、gallery actions、edit source、jobs、preview、lightbox、version 和 UI
-- 组件拆分为 access、header、settings drawer、prompt helper、job history drawer、preview、gallery、lightbox 和 size dialog
+- stores 拆分为 access、settings、prompt snippets、gallery、gallery actions、edit source、jobs、preview、lightbox、version 和 UI
+- 组件拆分为 access、header、settings drawer、prompt snippets drawer、prompt helper、job history drawer、preview、gallery、lightbox 和 size dialog
 
 前端构建命令：
 
@@ -565,6 +587,7 @@ npm --prefix frontend run build
 
 - 生成的图片保存在 `images/` 目录
 - Gallery 元数据、图片字节数、FTS 提示词索引和 API 预设保存在 SQLite：`data/app.sqlite3`，包含真实图片宽高、`completed_at` 完成时间、北京时间生成完成时间和生成耗时
+- 提示词收藏夹保存在 SQLite：`data/app.sqlite3`，独立于 Gallery 元数据
 - 生成/编辑任务的状态、错误、耗时、`completed_at`、请求参数和结果元数据保存在 SQLite：`data/app.sqlite3`；多图任务会保留完整 `images` 结果列表，同时继续用第一张结果填充 `image_id`/`image_url` 以兼容旧客户端
 - 运行中的 `asyncio.Task` 句柄仅保存在进程内存中；重启后，上个进程遗留的排队/运行任务会被标记为 interrupted
 
@@ -573,8 +596,9 @@ npm --prefix frontend run build
 1. 前端调用 `/api/generate`
 2. 后端校验配置并创建 SQLite 任务，再异步调度执行
 3. 执行前检查共享并发/队列限制，执行中通过 SSE 推送细分进度
-4. 上游返回数据解码/下载、校验并落盘，同时更新 Gallery 元数据
-5. 任务历史可通过 `/api/generate/jobs*` 查询/订阅，可取消；可选触发签名 webhook 回调
+4. `n > 1` 的生成请求仍只暴露一个父任务，但内部会并发拆成 `n` 次上游调用；`/v1/images/generations` 子请求 payload 固定使用 `n=1`
+5. 上游返回数据解码/下载、校验并落盘，同时更新 Gallery 元数据
+6. 任务历史可通过 `/api/generate/jobs*` 查询/订阅，可取消；可选触发签名 webhook 回调
 
 ### 编辑流程
 
@@ -727,18 +751,20 @@ curl http://localhost:9090/health
 7. 填写该预设的默认模型；Generate/Edit 表单里的 Model 默认值会使用当前预设的值
 8. 填写 API Key，或填写 `${OPENAI_API_KEY}` 这类环境变量引用；直接填写的 key 会以明文保存到 SQLite，优先用环境变量引用
 9. 可选：填写全局 SOCKS5 代理，例如 `socks5://127.0.0.1:1080`
-10. 可选：配置提示词优化器的 endpoint URL、模型和 API Key/环境变量引用
-11. 可选：对已保存预设执行 Health check
-12. 点击 Save Preset
-13. 输入提示词
-14. 点击提示词助手标签追加常用修饰词
-15. 点击 Optimize 通过服务端优化器改写提示词
-16. 选择生成参数；需要逐次复用不同上游路径时可直接选择 API Path
-17. 点击 Generate
-18. 也可以上传一张或多张编辑参考图、在 Gallery/Lightbox 中选择 “Edit this image”，或两者组合；上传会追加到当前编辑源，Clear 会清空全部编辑源
-19. 点击 Edits 执行图生图
-20. 在 Gallery/Lightbox 使用 “Use prompt” 或 “Use all” 复用历史提示词或完整参数
-21. 查看预览和 Gallery
+10. 可选：填写全局 Webhook URL，用于生成/编辑任务完成回调
+11. 可选：配置提示词优化器的 endpoint URL、模型和 API Key/环境变量引用
+12. 可选：对已保存预设执行 Health check
+13. 点击 Save Preset
+14. 输入提示词
+15. 点击提示词助手标签追加常用修饰词
+16. 点击 Optimize 通过服务端优化器改写提示词
+17. 点击右上角提示词按钮保存或复用提示词片段；使用片段会替换当前提示词
+18. 选择生成参数；需要逐次复用不同上游路径时可直接选择 API Path
+19. 点击 Generate
+20. 也可以上传一张或多张编辑参考图、在 Gallery/Lightbox 中选择 “Edit this image”，或两者组合；上传会追加到当前编辑源，Clear 会清空全部编辑源
+21. 点击 Edits 执行图生图
+22. 在 Gallery/Lightbox 使用 “Use prompt” 或 “Use all” 复用历史提示词或完整参数
+23. 查看预览和 Gallery
 
 ## 支持的 API Path
 
@@ -787,6 +813,13 @@ curl http://localhost:9090/health
 - 留空时生成/编辑上游 API 请求保持直连。
 - 支持 `socks5://host:port` 或 `socks5://user:pass@host:port`；保存后的代理密码会在 API 响应和 UI 中打码。
 - 代理边界刻意收窄：只有生成/编辑的上游 API `POST` 请求会使用 SOCKS5。Preset health check、Webhook、版本检查、前端 `/api/*` 请求和上游返回的图片 URL 下载都保持直连。
+
+## 全局 Webhook URL
+
+- Settings 抽屉在 `SOCKS5 代理` 下方提供一个全局 `Webhook URL` 字段，不跟随 API 预设切换。
+- 留空时不发送任务回调。
+- 配置后，生成/编辑任务完成时会向该 HTTPS URL 发送签名 webhook 回调。
+- 配置 Webhook URL 时需要设置 `WEBHOOK_SIGNING_SECRET`；保存后的 webhook URL 会在 API 响应和 UI 中打码。
 
 ## 图像尺寸模式
 
@@ -856,7 +889,7 @@ curl http://localhost:9090/health
 | `DATABASE_FILE` | `./data/app.sqlite3` | 保存 Gallery 元数据和 API 预设的 SQLite 数据库 |
 | `PYTHON_BASE_IMAGE` | `python:3.11-slim` | Docker 构建基础镜像；Docker Hub 慢或不可访问时可覆盖 |
 | `NODE_BASE_IMAGE` | `node:24-alpine` | Docker 前端构建基础镜像；Docker Hub 慢或不可访问时可覆盖 |
-| `WEBHOOK_SIGNING_SECRET` | 空 | 使用 `webhook_url` 时需要；用于签名 webhook payload（`X-Webhook-Signature`） |
+| `WEBHOOK_SIGNING_SECRET` | 空 | 配置全局 Webhook URL 时需要；用于签名 webhook payload（`X-Webhook-Signature`） |
 | `WEBHOOK_HOST_ALLOWLIST` | 空 | 可选 webhook 主机名白名单，逗号分隔 |
 | `WEBHOOK_TIMEOUT_SECONDS` | `5` | 单次 webhook 投递超时时间（秒） |
 | `WEBHOOK_MAX_ATTEMPTS` | `3` | webhook 最大重试次数 |
@@ -873,6 +906,10 @@ curl http://localhost:9090/health
 | `POST` | `/api/settings` | 保存当前 API 预设 |
 | `GET` | `/api/settings` | 获取当前设置和预设列表 |
 | `POST` | `/api/prompt/optimize` | 通过服务端提示词优化器改写提示词 |
+| `GET` | `/api/prompt-snippets` | 查询提示词片段，可选 `query` 筛选 |
+| `POST` | `/api/prompt-snippets` | 创建提示词片段 |
+| `PATCH` | `/api/prompt-snippets/{snippet_id}` | 更新提示词片段标题、内容或收藏标记 |
+| `DELETE` | `/api/prompt-snippets/{snippet_id}` | 删除提示词片段 |
 | `POST` | `/api/settings/presets` | 新建并激活 API 预设 |
 | `POST` | `/api/settings/presets/{preset_id}/activate` | 激活 API 预设 |
 | `POST` | `/api/settings/presets/{preset_id}/health` | 校验已保存 API 预设并执行低成本上游探测 |
@@ -893,6 +930,10 @@ curl http://localhost:9090/health
 | `GET` | `/api/download/{filename}` | 下载图片 |
 | `DELETE` | `/api/gallery/{id}` | 删除 Gallery 条目和对应服务器图片文件 |
 | `GET` | `/api/download-all` | 下载 Gallery 所有图片和 `metadata.json` 为 ZIP 文件 |
+| `POST` | `/api/gallery/export-jobs` | 创建可跟踪进度的 Gallery ZIP 导出任务；可传 `ids` 导出所选图片 |
+| `GET` | `/api/gallery/export-jobs/{job_id}` | 查询 ZIP 导出任务状态 |
+| `GET` | `/api/gallery/export-jobs/{job_id}/events` | 通过 SSE 推送 ZIP 打包进度 |
+| `GET` | `/api/gallery/export-jobs/{job_id}/download` | 下载已完成的 ZIP 导出，并通过 `Content-Length` 支持传输进度 |
 | `POST` | `/api/import` | 导入 `/api/download-all` 创建的 ZIP |
 | `DELETE` | `/api/gallery` | 删除所有 Gallery 条目和服务器图片文件 |
 | `GET` | `/api/metrics` | 可选指标快照；默认 JSON，带 `Accept: text/plain` 时返回 Prometheus exposition format；仅在 `ENABLE_METRICS=true` 时可用 |
@@ -901,14 +942,15 @@ curl http://localhost:9090/health
 ## 运行时注意事项
 
 - 版本读取顺序是 `APP_VERSION` -> `VERSION`；本地版本和可选 GitHub 远端检查都会在每次 Web 端触发版本请求时实时计算。远端检查会先读 latest release，再回退到配置分支的 `VERSION`，仅用于显示 `New`，不会阻塞使用。
-- 预设与 Gallery/Job 数据只保存在 `DATABASE_FILE`
+- 预设、提示词收藏夹和 Gallery/Job 数据只保存在 `DATABASE_FILE`
 - SQLite 仓储操作使用短连接，并在启动时启用 WAL；应用 shutdown 和测试 reset 会调用 storage close hook，连接生命周期保持显式
 - 生成与编辑共用队列（`MAX_ACTIVE_GENERATE_JOBS` + `MAX_QUEUED_GENERATE_JOBS`）；所有编辑源图先落到 `DATA_DIR/edit-sources` 并额外受 `MAX_PENDING_EDIT_SOURCE_MB` 总量限制；支持取消，并持久化终态历史（含 `completed_at`）
+- 批量生成（`n > 1`）只占一个公开队列/运行槽；父任务会把成功子结果聚合到 `images[]`，Gallery 元数据保留用户请求的 `n`
 - 提示词优化器使用独立的服务端 Chat Completions 兼容 endpoint 配置，在后端解析 API Key 环境变量引用，不占用生成/编辑任务队列容量。
 - SSE 是主进度通道；`/api/generate/jobs` 提供列表/历史（`include_finished=true`，可选 `limit`/`offset`），`/api/generate/jobs/events` 从内存推送 debounce 后的实时任务列表变化
 - 任务终态历史包含 `stage_timings`：`upstream_wait`、`download_decode`、`validate`、`thumbnail`、`db_insert`；慢 Gallery 查询日志会带筛选条件与 total，并计入 metrics；可选 metrics 包含队列深度、运行中任务数、失败率、任务分段耗时和慢 SQLite 查询数；终态状态区分 `cancelled`、`interrupted` 和 `upstream_error`，同时保留通用 `error`
 - 上游 JSON/SSE 响应会在解析前受 `MAX_UPSTREAM_JSON_MB` 限制；上游图片 URL 下载会做 SSRF/重定向目标复核，并受 `MAX_FILE_SIZE_MB` 限制
-- `/api/import` 做 ZIP 安全与体积校验；`/api/download-all` 用磁盘临时 ZIP，避免大图库导出占满内存
+- `/api/import` 做 ZIP 安全与体积校验；`/api/download-all` 保留低内存流式导出，带进度的导出任务会写入临时 ZIP，让 UI 同时展示打包和传输进度
 - Gallery 持久化图片字节数和缩略图（`THUMBNAILS_DIR`），旧图按需懒补缩略图
 - 启动时会清理缺失文件对应的 Gallery 记录，并把上次进程遗留的 running/queued 任务标记为 interrupted
 

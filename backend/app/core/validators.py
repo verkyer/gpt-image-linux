@@ -163,6 +163,43 @@ def validate_webhook_url(url: str, allowlist: str = "") -> None:
     )
 
 
+def normalize_webhook_url(url: str | None) -> str:
+    value = str(url or "").strip()
+    if not value:
+        return ""
+
+    parsed = urlsplit(value)
+    if parsed.scheme.lower() != "https":
+        raise ValueError("Webhook URL must use https://")
+    if not parsed.hostname:
+        raise ValueError("Webhook URL must include a hostname")
+    return urlunsplit(("https", parsed.netloc, parsed.path, parsed.query, parsed.fragment))
+
+
+def mask_webhook_url(url: str | None) -> str:
+    value = str(url or "").strip()
+    if not value:
+        return ""
+
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError:
+        return "***"
+
+    if parsed.scheme.lower() != "https" or not parsed.hostname:
+        return "***"
+
+    hostname = parsed.hostname
+    host = f"[{hostname}]" if ":" in hostname and not hostname.startswith("[") else hostname
+    port_part = f":{port}" if port is not None else ""
+    user_info = "***@" if parsed.username is not None else ""
+    path = "/***" if parsed.path and parsed.path != "/" else parsed.path
+    query = "***" if parsed.query else ""
+    fragment = "***" if parsed.fragment else ""
+    return urlunsplit((parsed.scheme, f"{user_info}{host}{port_part}", path, query, fragment))
+
+
 def normalize_socks5_proxy_url(url: str | None) -> str:
     value = str(url or "").strip()
     if not value:

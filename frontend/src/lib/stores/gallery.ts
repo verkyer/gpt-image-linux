@@ -131,7 +131,6 @@ function createGalleryStore() {
     const filters = { ...state.filters };
     const params = buildGalleryParams(page, filters, includeTotalBytes);
     const requestKey = params.toString();
-    if (state.loading && pendingRequestKey === requestKey) return;
     const seq = ++requestSeq;
     pendingRequestKey = requestKey;
     abortController?.abort();
@@ -165,6 +164,28 @@ function createGalleryStore() {
         update((current) => ({ ...current, loading: false }));
       }
     }
+  }
+
+  function removeGalleryEntryFromCurrentPage(image: GalleryEntry) {
+    update((current) => {
+      if (!current.gallery) return current;
+      if (!current.gallery.images.some((entry) => entry.id === image.id)) {
+        return {
+          ...current,
+          selectedIds: new Set([...current.selectedIds].filter((id) => id !== image.id))
+        };
+      }
+      return {
+        ...current,
+        gallery: {
+          ...current.gallery,
+          images: current.gallery.images.filter((entry) => entry.id !== image.id),
+          total: Math.max(0, current.gallery.total - 1),
+          total_bytes: Math.max(0, current.gallery.total_bytes - (image.bytes || 0))
+        },
+        selectedIds: new Set([...current.selectedIds].filter((id) => id !== image.id))
+      };
+    });
   }
 
   function updateFilter(key: keyof GalleryFilters, value: string | boolean) {
@@ -254,33 +275,27 @@ function createGalleryStore() {
     pendingSingleDeletes.set(image.id, {
       image,
       timer: setTimeout(async () => {
-        pendingSingleDeletes.delete(image.id);
         try {
           await apiFetch(`/api/gallery/${encodeURIComponent(image.id)}`, { method: 'DELETE' }, 'deleting image');
-          await loadGallery(state.page);
+          try {
+            await loadGallery(state.page);
+          } catch {
+            // The DELETE already succeeded; keep the optimistic deletion visible if refresh races or fails.
+          }
+          pendingSingleDeletes.delete(image.id);
+          removeGalleryEntryFromCurrentPage(image);
           onDeleted?.(image);
           showToast(get(t).messages.imageDeleted);
         } catch (error) {
           if (isAbortError(error)) return;
+          pendingSingleDeletes.delete(image.id);
           await loadGallery(state.page);
           showToast(get(t).messages.imageDeletionFailed, 'error');
         }
       }, 5000)
     });
 
-    update((current) => {
-      if (!current.gallery) return current;
-      return {
-        ...current,
-        gallery: {
-          ...current.gallery,
-          images: current.gallery.images.filter((entry) => entry.id !== image.id),
-          total: Math.max(0, current.gallery.total - 1),
-          total_bytes: Math.max(0, current.gallery.total_bytes - (image.bytes || 0))
-        },
-        selectedIds: new Set([...current.selectedIds].filter((id) => id !== image.id))
-      };
-    });
+    removeGalleryEntryFromCurrentPage(image);
     onPendingHidden?.(image);
 
     showToast(get(t).messages.imageDeletionPending, 'status', {

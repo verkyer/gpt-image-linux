@@ -2,6 +2,7 @@ export type ApiPath = '/v1/images/generations' | '/v1/responses' | '/v1/chat/com
 export type ApiKeySource = 'empty' | 'stored' | 'env';
 export type PresetHealthStatus = 'ok' | 'warning' | 'error';
 export type GenerateJobStatusValue = 'queued' | 'running' | 'success' | 'error' | 'cancelled' | 'interrupted' | 'upstream_error';
+export type GalleryExportJobStatusValue = 'queued' | 'running' | 'success' | 'error';
 
 export type ApiPreset = {
   id: string;
@@ -26,6 +27,8 @@ export type SettingsResponse = {
   default_model: string;
   has_upstream_socks5_proxy: boolean;
   upstream_socks5_proxy_masked: string;
+  has_webhook_url: boolean;
+  webhook_url_masked: string;
   presets: ApiPreset[];
   prompt_optimizer: PromptOptimizerSettings;
 };
@@ -55,6 +58,7 @@ export type SettingsInput = {
   api_path: ApiPath;
   default_model?: string | null;
   upstream_socks5_proxy?: string | null;
+  webhook_url?: string | null;
   prompt_optimizer?: PromptOptimizerSettingsInput | null;
 };
 
@@ -83,7 +87,6 @@ export type GenerateRequestBody = {
   output_format: 'png' | 'jpeg' | 'webp';
   output_compression?: number | null;
   response_format?: 'url' | 'b64_json' | null;
-  webhook_url?: string | null;
   api_path?: ApiPath | null;
 };
 
@@ -100,6 +103,31 @@ export type PromptOptimizeResponse = {
   optimized_prompt: string;
   model: string;
   duration_ms: number;
+};
+
+export type PromptSnippet = {
+  id: string;
+  title: string;
+  prompt: string;
+  favorite: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PromptSnippetListResponse = {
+  snippets: PromptSnippet[];
+};
+
+export type PromptSnippetCreateInput = {
+  title: string;
+  prompt: string;
+  favorite?: boolean;
+};
+
+export type PromptSnippetUpdateInput = {
+  title?: string;
+  prompt?: string;
+  favorite?: boolean;
 };
 
 export type GenerateJobResponse = {
@@ -197,4 +225,23 @@ export type GalleryBatchResponse = {
   updated_count?: number;
   missing_count?: number;
   missing_ids?: string[];
+};
+
+export type GalleryExportJobStatus = {
+  job_id: string;
+  status: GalleryExportJobStatusValue;
+  stage?: string | null;
+  message?: string | null;
+  progress: number;
+  filename?: string | null;
+  download_url?: string | null;
+  requested_count: number;
+  processed_count: number;
+  exported_count: number;
+  missing_count: number;
+  bytes_total: number;
+  bytes_written: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+  error?: string | null;
 };

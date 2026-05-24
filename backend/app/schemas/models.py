@@ -1,10 +1,9 @@
 from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Literal, Optional
 from datetime import datetime
-from urllib.parse import urlparse
 
 from ..core.api_paths import DEFAULT_IMAGE_MODEL
-from ..core.validators import normalize_socks5_proxy_url
+from ..core.validators import normalize_socks5_proxy_url, normalize_webhook_url
 
 ApiPath = Literal["/v1/images/generations", "/v1/responses", "/v1/chat/completions"]
 ApiKeySource = Literal["empty", "stored", "env"]
@@ -18,6 +17,7 @@ GenerateJobStatusValue = Literal[
     "interrupted",
     "upstream_error",
 ]
+GalleryExportJobStatusValue = Literal["queued", "running", "success", "error"]
 
 
 class ApiPresetResponse(BaseModel):
@@ -69,6 +69,14 @@ class SettingsRequest(BaseModel):
             "Null keeps the current value; an empty string clears it."
         ),
     )
+    webhook_url: Optional[str] = Field(
+        default=None,
+        max_length=2048,
+        description=(
+            "Optional global HTTPS webhook callback URL for completed generation/edit jobs. "
+            "Null keeps the current value; an empty string clears it."
+        ),
+    )
     prompt_optimizer: Optional["PromptOptimizerSettingsRequest"] = None
 
     @field_validator("upstream_socks5_proxy")
@@ -77,6 +85,13 @@ class SettingsRequest(BaseModel):
         if value is None:
             return None
         return normalize_socks5_proxy_url(value)
+
+    @field_validator("webhook_url")
+    @classmethod
+    def validate_settings_webhook_url(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return normalize_webhook_url(value)
 
 
 class SettingsResponse(BaseModel):
@@ -90,6 +105,8 @@ class SettingsResponse(BaseModel):
     default_model: str
     has_upstream_socks5_proxy: bool = False
     upstream_socks5_proxy_masked: str = ""
+    has_webhook_url: bool = False
+    webhook_url_masked: str = ""
     presets: list[ApiPresetResponse]
     prompt_optimizer: "PromptOptimizerSettingsResponse" = Field(default_factory=lambda: PromptOptimizerSettingsResponse())
 
@@ -184,6 +201,49 @@ class PromptOptimizeResponse(BaseModel):
     duration_ms: int
 
 
+class PromptSnippet(BaseModel):
+    id: str
+    title: str
+    prompt: str
+    favorite: bool = False
+    created_at: str
+    updated_at: str
+
+
+class PromptSnippetCreateRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=160)
+    prompt: str = Field(..., min_length=1, max_length=4000)
+    favorite: bool = False
+
+    @field_validator("title", "prompt")
+    @classmethod
+    def strip_required_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value must not be empty")
+        return normalized
+
+
+class PromptSnippetUpdateRequest(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=160)
+    prompt: Optional[str] = Field(default=None, min_length=1, max_length=4000)
+    favorite: Optional[bool] = None
+
+    @field_validator("title", "prompt")
+    @classmethod
+    def strip_optional_text(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value must not be empty")
+        return normalized
+
+
+class PromptSnippetListResponse(BaseModel):
+    snippets: list[PromptSnippet]
+
+
 class GenerateRequest(BaseModel):
     prompt: str = Field(..., max_length=4000)
     size: str = "auto"
@@ -204,17 +264,8 @@ class GenerateRequest(BaseModel):
     @field_validator("webhook_url")
     @classmethod
     def validate_webhook_url(cls, value: Optional[str]) -> Optional[str]:
-        if value is None:
-            return None
-        webhook_url = value.strip()
-        if not webhook_url:
-            return None
-        parsed = urlparse(webhook_url)
-        if parsed.scheme != "https":
-            raise ValueError("webhook_url must use https://")
-        if not parsed.hostname:
-            raise ValueError("webhook_url must include a hostname")
-        return webhook_url
+        normalized = normalize_webhook_url(value)
+        return normalized or None
 
     @model_validator(mode="after")
     def validate_output_options(self) -> "GenerateRequest":
@@ -273,6 +324,41 @@ class GalleryBatchRequest(BaseModel):
 
 class GalleryBatchFavoriteRequest(GalleryBatchRequest):
     favorite: bool
+
+
+class GalleryExportRequest(BaseModel):
+    ids: Optional[list[str]] = Field(default=None, max_length=1000)
+
+    @field_validator("ids")
+    @classmethod
+    def validate_ids(cls, value: Optional[list[str]]) -> Optional[list[str]]:
+        if value is None:
+            return None
+        ids = [image_id.strip() for image_id in value if image_id.strip()]
+        if not ids:
+            raise ValueError("ids must include at least one gallery entry id")
+        if len(set(ids)) != len(ids):
+            raise ValueError("ids must not contain duplicates")
+        return ids
+
+
+class GalleryExportJobStatus(BaseModel):
+    job_id: str
+    status: GalleryExportJobStatusValue
+    stage: Optional[str] = None
+    message: Optional[str] = None
+    progress: int = 0
+    filename: Optional[str] = None
+    download_url: Optional[str] = None
+    requested_count: int = 0
+    processed_count: int = 0
+    exported_count: int = 0
+    missing_count: int = 0
+    bytes_total: int = 0
+    bytes_written: int = 0
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    error: Optional[str] = None
 
 
 class GalleryBatchResponse(BaseModel):

@@ -28,10 +28,20 @@ type GalleryImageFixture = {
   bytes: number;
 };
 
+type PromptSnippetFixture = {
+  id: string;
+  title: string;
+  prompt: string;
+  favorite: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
 type MockOptions = {
   authenticated?: boolean;
   editUploadFailure?: boolean;
   galleryImages?: GalleryImageFixture[];
+  promptSnippets?: PromptSnippetFixture[];
   generatedJob?: unknown;
   runningJobs?: unknown[];
   historyJobs?: unknown[];
@@ -94,6 +104,8 @@ const settingsResponse = {
   default_model: 'preset-default-model',
   has_upstream_socks5_proxy: false,
   upstream_socks5_proxy_masked: '',
+  has_webhook_url: true,
+  webhook_url_masked: 'https://hooks.example.com/***',
   prompt_optimizer: {
     enabled: true,
     api_url: 'https://example.com/v1/chat/completions',
@@ -116,6 +128,25 @@ const settingsResponse = {
     }
   ]
 };
+
+const basePromptSnippets: PromptSnippetFixture[] = [
+  {
+    id: 'snippet-1',
+    title: 'Portrait base',
+    prompt: 'cinematic portrait prompt',
+    favorite: false,
+    created_at: '2026-05-18T12:00:00Z',
+    updated_at: '2026-05-18T12:00:00Z'
+  },
+  {
+    id: 'snippet-2',
+    title: 'Product hero',
+    prompt: 'studio product photography',
+    favorite: true,
+    created_at: '2026-05-18T12:01:00Z',
+    updated_at: '2026-05-18T12:01:00Z'
+  }
+];
 
 function json(body: unknown, status = 200) {
   return {
@@ -225,7 +256,9 @@ function manyGalleryImages(count: number) {
 
 async function mockApi(page: Page, options: MockOptions = {}) {
   let authenticated = options.authenticated ?? true;
-  const galleryImages = options.galleryImages ?? baseGalleryImages;
+  let galleryImages = [...(options.galleryImages ?? baseGalleryImages)];
+  let promptSnippets = [...(options.promptSnippets ?? basePromptSnippets)];
+  let promptSnippetCounter = promptSnippets.length + 1;
   const runningJobs = options.runningJobs ?? [];
   const historyJobs = options.historyJobs ?? [job('history-1', 'saved prompt')];
 
@@ -259,6 +292,52 @@ async function mockApi(page: Page, options: MockOptions = {}) {
       await route.fulfill(json(settingsResponse));
       return;
     }
+    if (url.pathname === '/api/prompt-snippets' && request.method() === 'GET') {
+      const query = (url.searchParams.get('query') || '').toLowerCase();
+      const snippets = (query
+        ? promptSnippets.filter(
+            (snippet) => snippet.title.toLowerCase().includes(query) || snippet.prompt.toLowerCase().includes(query)
+          )
+        : promptSnippets
+      ).sort((a, b) => Number(b.favorite) - Number(a.favorite) || b.updated_at.localeCompare(a.updated_at));
+      await route.fulfill(json({ snippets }));
+      return;
+    }
+    if (url.pathname === '/api/prompt-snippets' && request.method() === 'POST') {
+      const body = JSON.parse(request.postData() || '{}');
+      const now = `2026-05-18T12:${String(promptSnippetCounter).padStart(2, '0')}:00Z`;
+      const snippet = {
+        id: `snippet-${promptSnippetCounter}`,
+        title: body.title,
+        prompt: body.prompt,
+        favorite: Boolean(body.favorite),
+        created_at: now,
+        updated_at: now
+      };
+      promptSnippetCounter += 1;
+      promptSnippets = [snippet, ...promptSnippets];
+      await route.fulfill(json(snippet));
+      return;
+    }
+    if (url.pathname.match(/^\/api\/prompt-snippets\/[^/]+$/) && request.method() === 'PATCH') {
+      const id = decodeURIComponent(url.pathname.split('/').pop() || '');
+      const body = JSON.parse(request.postData() || '{}');
+      const existing = promptSnippets.find((snippet) => snippet.id === id);
+      if (!existing) {
+        await route.fulfill(json({ detail: 'Prompt snippet not found' }, 404));
+        return;
+      }
+      const updated = { ...existing, ...body, updated_at: '2026-05-18T13:00:00Z' };
+      promptSnippets = promptSnippets.map((snippet) => (snippet.id === id ? updated : snippet));
+      await route.fulfill(json(updated));
+      return;
+    }
+    if (url.pathname.match(/^\/api\/prompt-snippets\/[^/]+$/) && request.method() === 'DELETE') {
+      const id = decodeURIComponent(url.pathname.split('/').pop() || '');
+      promptSnippets = promptSnippets.filter((snippet) => snippet.id !== id);
+      await route.fulfill(json({ status: 'ok', message: 'Deleted prompt snippet' }));
+      return;
+    }
     if (url.pathname === '/api/prompt/optimize' && request.method() === 'POST') {
       const body = JSON.parse(request.postData() || '{}');
       await route.fulfill(
@@ -285,20 +364,25 @@ async function mockApi(page: Page, options: MockOptions = {}) {
     }
     if (url.pathname.match(/^\/api\/gallery\/[^/]+$/) && request.method() === 'GET') {
       const id = decodeURIComponent(url.pathname.split('/').pop() || '');
-      const image = baseGalleryImages.find((entry) => entry.id === id);
+      const image = galleryImages.find((entry) => entry.id === id);
       await route.fulfill(image ? json(image) : json({ detail: 'Gallery entry not found' }, 404));
       return;
     }
     if (url.pathname.match(/^\/api\/gallery\/[^/]+$/) && request.method() === 'DELETE') {
+      const id = decodeURIComponent(url.pathname.split('/').pop() || '');
+      galleryImages = galleryImages.filter((entry) => entry.id !== id);
       await route.fulfill(json({ status: 'ok', message: 'Deleted gallery entry and 1 image file(s)' }));
       return;
     }
     if (url.pathname === '/api/gallery' && request.method() === 'DELETE') {
+      galleryImages = [];
       await route.fulfill(json({ status: 'ok', message: 'Deleted all images' }));
       return;
     }
     if (url.pathname === '/api/gallery/batch/delete') {
       const body = JSON.parse(request.postData() || '{}');
+      const ids = new Set<string>(body.ids || []);
+      galleryImages = galleryImages.filter((entry) => !ids.has(entry.id));
       await route.fulfill(json({ status: 'ok', count: body.ids?.length || 0, file_count: body.ids?.length || 0 }));
       return;
     }
@@ -308,7 +392,13 @@ async function mockApi(page: Page, options: MockOptions = {}) {
       return;
     }
     if (url.pathname.match(/^\/api\/gallery\/[^/]+\/favorite$/)) {
-      await route.fulfill(json({ ...baseGalleryImages[0], favorite: true }));
+      const id = decodeURIComponent(url.pathname.split('/').at(-2) || '');
+      const body = JSON.parse(request.postData() || '{}');
+      const image = galleryImages.find((entry) => entry.id === id) || galleryImages[0];
+      if (image) {
+        galleryImages = galleryImages.map((entry) => (entry.id === image.id ? { ...entry, favorite: body.favorite ?? true } : entry));
+      }
+      await route.fulfill(json(image ? { ...image, favorite: body.favorite ?? true } : { ...baseGalleryImages[0], favorite: true }));
       return;
     }
     if (url.pathname.startsWith('/api/thumb/') || url.pathname.startsWith('/api/image/')) {
@@ -401,6 +491,7 @@ test('settings drawer traps focus and key form controls have accessible names', 
   await expect(drawer).toBeVisible();
   await expect(page.getByLabel('API URL')).toHaveValue('https://api.example.com');
   await expect(page.getByLabel('Default model')).toHaveValue('preset-default-model');
+  await expect(page.getByLabel('Webhook URL')).toHaveValue('https://hooks.example.com/***');
   await expect(drawer).toContainText('Literal keys are saved as plaintext.');
   await expect(page.getByLabel('Filter prompt')).toBeVisible();
 
@@ -464,6 +555,54 @@ test('prompt helper tags append once and optimizer replaces prompt with undo', a
   await expect(prompt).toHaveValue('Optimized small cabin, high detail');
   await page.getByRole('button', { name: 'Undo' }).click();
   await expect(prompt).toHaveValue('small cabin, high detail');
+});
+
+test('prompt snippets drawer saves, searches, edits, copies, deletes, and uses templates', async ({ page }) => {
+  await loadApp(page);
+
+  const prompt = page.getByRole('textbox', { name: 'Prompt', exact: true });
+  const promptsButton = page.getByRole('button', { name: 'Prompt snippets' });
+  const jobsButton = page.getByRole('button', { name: 'Job History' });
+  const promptsBox = await promptsButton.boundingBox();
+  const jobsBox = await jobsButton.boundingBox();
+  expect(promptsBox?.x ?? 0).toBeLessThan(jobsBox?.x ?? Number.POSITIVE_INFINITY);
+
+  await prompt.fill('fresh current prompt\nsecond line');
+  await promptsButton.click();
+  const drawer = page.getByRole('dialog', { name: 'Prompt Snippets' });
+  await expect(drawer).toBeVisible();
+  await expect(drawer.getByText('Product hero')).toBeVisible();
+
+  await drawer.getByRole('button', { name: 'Save current' }).click();
+  await expect(drawer.getByRole('heading', { name: 'fresh current prompt' })).toBeVisible();
+  await expect(page.getByRole('status')).toContainText('Prompt snippet saved');
+
+  await drawer.getByLabel('Search snippets').fill('product');
+  await expect(drawer.getByText('Product hero')).toBeVisible();
+  await expect(drawer.getByText('Portrait base')).toBeHidden();
+
+  await drawer.getByRole('button', { name: 'Copy' }).click();
+  await expect(prompt).toHaveValue('fresh current prompt\nsecond line');
+  await expect(page.getByRole('status')).toContainText('Prompt copied');
+
+  await drawer.getByRole('button', { name: 'Edit' }).click();
+  await drawer.getByLabel('Title').fill('Product hero updated');
+  await drawer.getByRole('button', { name: 'Update' }).click();
+  await expect(drawer.getByText('Product hero updated')).toBeVisible();
+
+  await drawer.getByRole('button', { name: 'Use' }).click();
+  await expect(drawer).toBeHidden();
+  await expect(prompt).toHaveValue('studio product photography');
+
+  await promptsButton.click();
+  const reopenedDrawer = page.getByRole('dialog', { name: 'Prompt Snippets' });
+  await expect(reopenedDrawer.getByText('Product hero updated')).toBeVisible();
+  const updatedSnippet = reopenedDrawer.locator('article').filter({ hasText: 'Product hero updated' });
+  await updatedSnippet.getByRole('button', { name: 'Delete' }).click();
+  const confirmDialog = page.getByRole('dialog', { name: 'Delete prompt snippet?' });
+  await confirmDialog.getByRole('button', { name: 'Delete' }).click();
+  await expect(reopenedDrawer.getByText('Product hero updated')).toBeHidden();
+  await expect(page.getByRole('status')).toContainText('Prompt snippet deleted');
 });
 
 test('gallery cards can reuse prompt or full generation parameters', async ({ page }) => {
@@ -624,6 +763,70 @@ test('single image delete uses custom confirmation and can be undone before the 
   await expect(page.getByRole('img', { name: 'First gallery image' })).toBeVisible();
   await page.waitForTimeout(5200);
   expect(deleteRequests).toHaveLength(0);
+});
+
+test('single image delete is not revived by a stale gallery refresh', async ({ page }) => {
+  await loadApp(page);
+
+  let interceptStaleRefresh = false;
+  let resolveStaleRefreshStarted: () => void = () => {};
+  let releaseStaleRefresh: () => void = () => {};
+  let resolveStaleRefreshFinished: () => void = () => {};
+  const staleRefreshStarted = new Promise<void>((resolve) => {
+    resolveStaleRefreshStarted = resolve;
+  });
+  const staleRefreshCanFinish = new Promise<void>((resolve) => {
+    releaseStaleRefresh = resolve;
+  });
+  const staleRefreshFinished = new Promise<void>((resolve) => {
+    resolveStaleRefreshFinished = resolve;
+  });
+
+  await page.route('**/api/gallery?*', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const isPageRefresh =
+      request.method() === 'GET' &&
+      url.pathname === '/api/gallery' &&
+      url.searchParams.get('page') === '1' &&
+      url.searchParams.get('page_size') === '9' &&
+      !url.searchParams.has('include_total_bytes');
+
+    if (!interceptStaleRefresh || !isPageRefresh) {
+      await route.fallback();
+      return;
+    }
+
+    interceptStaleRefresh = false;
+    const staleResponse = galleryResponse(baseGalleryImages, false, 1);
+    resolveStaleRefreshStarted();
+    await staleRefreshCanFinish;
+    try {
+      await route.fulfill(json(staleResponse));
+    } catch {
+      // The fixed code aborts this stale request before starting the post-delete refresh.
+    }
+    resolveStaleRefreshFinished();
+  });
+
+  await page.locator('.gallery-card').first().getByRole('button', { name: 'Delete' }).click();
+  const confirmDialog = page.getByRole('dialog', { name: 'Delete image?' });
+  await confirmDialog.getByRole('button', { name: 'Delete' }).click();
+  await expect(page.getByRole('img', { name: 'First gallery image' })).toBeHidden();
+
+  interceptStaleRefresh = true;
+  await page.evaluate(() => window.dispatchEvent(new PopStateEvent('popstate')));
+  await staleRefreshStarted;
+
+  await page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return response.request().method() === 'DELETE' && url.pathname === '/api/gallery/img-1';
+  });
+  releaseStaleRefresh();
+  await staleRefreshFinished;
+
+  await expect(page.getByRole('status')).toContainText('Image deleted');
+  await expect(page.getByRole('img', { name: 'First gallery image' })).toBeHidden();
 });
 
 test('delete all requires typed confirmation before submitting', async ({ page }) => {

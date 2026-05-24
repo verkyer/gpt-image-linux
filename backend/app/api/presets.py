@@ -6,7 +6,12 @@ from fastapi import HTTPException
 from .app_state import app
 from ..core import settings as config
 from ..core.api_paths import normalize_api_path, normalize_api_preset, normalize_default_model
-from ..core.validators import mask_socks5_proxy_url, normalize_socks5_proxy_url
+from ..core.validators import (
+    mask_socks5_proxy_url,
+    mask_webhook_url,
+    normalize_socks5_proxy_url,
+    normalize_webhook_url,
+)
 from ..repositories import storage
 from ..schemas.models import ApiPresetResponse, PromptOptimizerSettingsResponse, SettingsResponse
 
@@ -123,6 +128,7 @@ def persist_api_settings():
         {
             "active_preset_id": getattr(app.state, "active_preset_id", "default"),
             "upstream_socks5_proxy": get_upstream_socks5_proxy(),
+            "webhook_url": get_webhook_url(),
             "presets": get_api_presets(),
             "prompt_optimizer": get_prompt_optimizer_settings(),
         }
@@ -135,6 +141,7 @@ def load_api_settings():
     app.state.api_presets = presets
     app.state.active_preset_id = data["active_preset_id"]
     apply_upstream_socks5_proxy(data.get("upstream_socks5_proxy"))
+    apply_webhook_url(data.get("webhook_url"))
     apply_api_preset(get_active_preset())
 
 
@@ -202,11 +209,27 @@ def apply_upstream_socks5_proxy(value: str | None):
     app.state.upstream_socks5_proxy = normalize_socks5_proxy_url(value)
 
 
+def get_webhook_url() -> str:
+    return str(getattr(app.state, "webhook_url", "") or "").strip()
+
+
+def apply_webhook_url(value: str | None):
+    app.state.webhook_url = normalize_webhook_url(value)
+
+
 def upstream_socks5_proxy_response_fields() -> dict:
     value = get_upstream_socks5_proxy()
     return {
         "has_upstream_socks5_proxy": bool(value),
         "upstream_socks5_proxy_masked": mask_socks5_proxy_url(value),
+    }
+
+
+def webhook_url_response_fields() -> dict:
+    value = get_webhook_url()
+    return {
+        "has_webhook_url": bool(value),
+        "webhook_url_masked": mask_webhook_url(value),
     }
 
 
@@ -243,6 +266,7 @@ def build_settings_response() -> SettingsResponse:
             active_preset.get("api_path", "/v1/images/generations"),
         ),
         **upstream_socks5_proxy_response_fields(),
+        **webhook_url_response_fields(),
         presets=[serialize_api_preset(preset) for preset in get_api_presets()],
         prompt_optimizer=build_prompt_optimizer_settings_response(optimizer_raw),
     )

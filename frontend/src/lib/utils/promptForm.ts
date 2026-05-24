@@ -35,8 +35,7 @@ export function jobToPromptForm(job: GenerateJobStatus, fallbackModel = DEFAULT_
     outputFormat: normalizeJobOutputFormat(job.output_format),
     outputCompression: job.output_compression === null || job.output_compression === undefined ? '' : String(job.output_compression),
     quantity: clampQuantity(job.n),
-    responseFormat: normalizeJobResponseFormat(job.response_format),
-    webhookUrl: ''
+    responseFormat: normalizeJobResponseFormat(job.response_format)
   };
 }
 
@@ -54,8 +53,7 @@ export function galleryEntryToPromptForm(
     outputFormat: normalizeJobOutputFormat(image.output_format),
     outputCompression: image.output_compression === null || image.output_compression === undefined ? '' : String(image.output_compression),
     quantity: clampQuantity(image.n),
-    responseFormat: normalizeJobResponseFormat(image.response_format),
-    webhookUrl: ''
+    responseFormat: normalizeJobResponseFormat(image.response_format)
   };
 }
 

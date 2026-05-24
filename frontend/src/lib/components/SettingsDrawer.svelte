@@ -24,6 +24,7 @@
   let apiKey = '';
   let apiPath: ApiPath = '/v1/images/generations';
   let upstreamSocks5Proxy = '';
+  let webhookUrl = '';
   let apiKeyInputType = 'password';
   let promptOptimizerEnabled = false;
   let promptOptimizerApiUrl = '';
@@ -45,6 +46,7 @@
           : '';
     apiPath = activePreset.api_path || settings.api_path || '/v1/images/generations';
     upstreamSocks5Proxy = settings.has_upstream_socks5_proxy ? settings.upstream_socks5_proxy_masked : '';
+    webhookUrl = settings.has_webhook_url ? settings.webhook_url_masked : '';
     promptOptimizerEnabled = Boolean(settings.prompt_optimizer?.enabled);
     promptOptimizerApiUrl = settings.prompt_optimizer?.api_url || '';
     promptOptimizerModel = settings.prompt_optimizer?.model || 'gpt-4o-mini';
@@ -61,6 +63,8 @@
   async function save() {
     const proxyValue = upstreamSocks5Proxy.trim();
     const currentProxyMask = settings?.upstream_socks5_proxy_masked || '';
+    const webhookValue = webhookUrl.trim();
+    const currentWebhookMask = settings?.webhook_url_masked || '';
     await onSave({
       active_preset_id: activePresetId,
       preset_name: presetName.trim(),
@@ -69,6 +73,7 @@
       api_key: apiKey.trim() === MASKED_API_KEY_VALUE ? null : apiKey.trim(),
       api_path: apiPath,
       upstream_socks5_proxy: proxyValue === currentProxyMask ? null : proxyValue,
+      webhook_url: webhookValue === currentWebhookMask ? null : webhookValue,
       prompt_optimizer: {
         enabled: promptOptimizerEnabled,
         api_url: promptOptimizerApiUrl.trim(),
@@ -201,6 +206,11 @@
             <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.settings.upstreamSocks5Proxy}</span>
             <input bind:value={upstreamSocks5Proxy} class="control-focus w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 font-mono text-sm text-zinc-100 focus:border-emerald-500" placeholder="socks5://127.0.0.1:1080" />
             <span class="mt-1.5 block text-xs text-zinc-500">{$t.settings.upstreamSocks5ProxyHint}</span>
+          </label>
+          <label class="block">
+            <span class="mb-1.5 block text-xs font-medium text-zinc-400">{$t.settings.webhookUrl}</span>
+            <input bind:value={webhookUrl} class="control-focus w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 font-mono text-sm text-zinc-100 focus:border-emerald-500" placeholder="https://..." />
+            <span class="mt-1.5 block text-xs text-zinc-500">{$t.settings.webhookUrlHint}</span>
           </label>
 
           <section class="border-t border-zinc-800 pt-4">

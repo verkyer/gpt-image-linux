@@ -22,8 +22,10 @@
 {#if request}
   <div class="fixed inset-0 z-[95] flex items-center justify-center bg-black/70 p-4">
     <button class="absolute inset-0" type="button" tabindex="-1" aria-label={request.closeLabel} on:click={() => confirmStore.cancel()}></button>
-    <section
+    <div
       class="fade-in relative w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl"
+      role="dialog"
+      aria-modal="true"
       aria-labelledby="confirm-dialog-title"
       use:dialog={{ open: Boolean(request), onClose: () => confirmStore.cancel() }}
     >
@@ -72,6 +74,6 @@
           {request.confirmLabel}
         </button>
       </div>
-    </section>
+    </div>
   </div>
 {/if}

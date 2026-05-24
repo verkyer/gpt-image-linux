@@ -1,3 +1,4 @@
+import asyncio
 import os
 import uuid
 from urllib.parse import urlsplit
@@ -8,6 +9,7 @@ from ..app_state import app
 from ..presets import (
     apply_api_preset,
     apply_upstream_socks5_proxy,
+    apply_webhook_url,
     build_settings_response,
     get_active_preset,
     get_api_key_env_var,
@@ -15,8 +17,10 @@ from ..presets import (
     get_exception_message,
     get_preset_by_id,
     get_upstream_socks5_proxy,
+    get_webhook_url,
     is_malformed_api_key_env_ref,
     mask_socks5_proxy_url,
+    mask_webhook_url,
     persist_api_settings,
 )
 from ...core import settings as config
@@ -61,8 +65,15 @@ async def update_settings(req: SettingsRequest):
             app.state.upstream_socks5_proxy = current_proxy
         else:
             apply_upstream_socks5_proxy(requested_proxy)
+    if req.webhook_url is not None:
+        current_webhook_url = get_webhook_url()
+        requested_webhook_url = req.webhook_url.strip()
+        if current_webhook_url and requested_webhook_url == mask_webhook_url(current_webhook_url):
+            app.state.webhook_url = current_webhook_url
+        else:
+            apply_webhook_url(requested_webhook_url)
     apply_api_preset(preset)
-    persist_api_settings()
+    await asyncio.to_thread(persist_api_settings)
     if req.prompt_optimizer is not None:
         from ..presets import (
             apply_prompt_optimizer_settings,
@@ -71,13 +82,13 @@ async def update_settings(req: SettingsRequest):
         current_optimizer = get_prompt_optimizer_settings()
         updated_optimizer = apply_prompt_optimizer_settings(current_optimizer, req.prompt_optimizer)
         from ...repositories import storage as storage_repo
-        storage_repo.save_prompt_optimizer_settings(updated_optimizer)
-    return build_settings_response()
+        await asyncio.to_thread(storage_repo.save_prompt_optimizer_settings, updated_optimizer)
+    return await asyncio.to_thread(build_settings_response)
 
 
 @router.get("/api/settings", response_model=SettingsResponse)
 async def get_settings():
-    return build_settings_response()
+    return await asyncio.to_thread(build_settings_response)
 
 
 @router.post("/api/settings/presets", response_model=SettingsResponse)
@@ -107,8 +118,8 @@ async def create_settings_preset(req: PresetCreateRequest):
     )
     presets.append(preset)
     apply_api_preset(preset)
-    persist_api_settings()
-    return build_settings_response()
+    await asyncio.to_thread(persist_api_settings)
+    return await asyncio.to_thread(build_settings_response)
 
 
 @router.post("/api/settings/presets/{preset_id}/activate", response_model=SettingsResponse)
@@ -118,8 +129,8 @@ async def activate_settings_preset(preset_id: str):
         raise HTTPException(status_code=404, detail="Preset not found")
 
     apply_api_preset(preset)
-    persist_api_settings()
-    return build_settings_response()
+    await asyncio.to_thread(persist_api_settings)
+    return await asyncio.to_thread(build_settings_response)
 
 
 @router.delete("/api/settings/presets/{preset_id}", response_model=SettingsResponse)
@@ -141,9 +152,9 @@ async def delete_settings_preset(preset_id: str):
         fallback = presets[min(delete_index, len(presets) - 1)]
         apply_api_preset(fallback)
 
-    persist_api_settings()
+    await asyncio.to_thread(persist_api_settings)
 
-    return build_settings_response()
+    return await asyncio.to_thread(build_settings_response)
 
 
 HEALTH_STATUS_RANK = {"ok": 0, "warning": 1, "error": 2}

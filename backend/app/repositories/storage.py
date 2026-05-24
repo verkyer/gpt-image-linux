@@ -3,7 +3,9 @@ import hashlib
 import json
 import logging
 import os
+import secrets
 import sqlite3
+_original_sqlite_connect = sqlite3.connect
 import threading
 import time
 from contextlib import contextmanager
@@ -16,7 +18,7 @@ from ..core.api_paths import default_model_for_api_path, normalize_api_preset
 from ..core.constants import ACTIVE_GENERATE_JOB_STATUSES
 from ..core.observability import observe_job_stage
 from ..core.utils import utc_now
-from ..schemas.models import GalleryEntry, GalleryFilterOptions
+from ..schemas.models import GalleryEntry, GalleryFilterOptions, PromptSnippet
 from .image_files import (
     IMAGE_CONTENT_TYPE_FORMATS,
     IMAGE_EXTENSION_FORMATS,
@@ -83,16 +85,21 @@ __all__ = [
     "list_generate_jobs",
     "load_prompt_optimizer_settings",
     "load_settings",
+    "list_prompt_snippets",
     "mark_active_generate_jobs_interrupted",
+    "create_prompt_snippet",
+    "delete_prompt_snippet",
     "safe_image_path",
     "safe_thumbnail_path",
     "save_prompt_optimizer_settings",
     "save_settings",
+    "invalidate_thumbnail_cache",
     "sync_gallery_with_image_files",
     "trim_generate_jobs",
     "update_gallery_entries_favorite",
     "update_gallery_entry",
     "update_gallery_entry_hash",
+    "update_prompt_snippet",
     "upsert_generate_job",
     "validate_image_bytes",
     "verify_storage_writable",
@@ -159,6 +166,14 @@ GENERATE_JOB_COLUMNS = (
     "image_height",
     "error",
 )
+PROMPT_SNIPPET_COLUMNS = (
+    "id",
+    "title",
+    "prompt",
+    "favorite",
+    "created_at",
+    "updated_at",
+)
 INTEGER_GENERATE_JOB_COLUMNS = {
     "output_compression",
     "n",
@@ -167,6 +182,7 @@ INTEGER_GENERATE_JOB_COLUMNS = {
 }
 SETTINGS_ACTIVE_PRESET_KEY = "active_preset_id"
 UPSTREAM_SOCKS5_PROXY_KEY = "upstream_socks5_proxy"
+WEBHOOK_URL_KEY = "webhook_url"
 PROMPT_OPTIMIZER_SETTINGS_KEY = "prompt_optimizer_settings"
 SQLITE_TIMEOUT_SECONDS = 30.0
 GALLERY_FTS_VERSION_KEY = "gallery_fts_version"
@@ -184,6 +200,25 @@ _filter_options_cache_lock = threading.RLock()
 _gallery_total_bytes_cache: dict[tuple[str, str, tuple[Any, ...]], tuple[float, int]] = {}
 _gallery_total_bytes_cache_lock = threading.RLock()
 _gallery_fts_available: bool | None = None
+
+_verified_thumbnails: set[str] = set()
+_verified_thumbnails_lock = threading.RLock()
+
+
+def _add_verified_thumbnail(filename: str):
+    with _verified_thumbnails_lock:
+        _verified_thumbnails.add(filename)
+
+
+def _remove_verified_thumbnail(filename: str):
+    with _verified_thumbnails_lock:
+        _verified_thumbnails.discard(filename)
+
+
+def _clear_verified_thumbnails():
+    with _verified_thumbnails_lock:
+        _verified_thumbnails.clear()
+
 
 
 @dataclass(frozen=True)
@@ -223,6 +258,7 @@ def _default_settings() -> dict:
     return {
         "active_preset_id": "default",
         "upstream_socks5_proxy": config.DEFAULT_UPSTREAM_SOCKS5_PROXY,
+        "webhook_url": "",
         "presets": [
             {
                 "id": "default",
@@ -311,22 +347,60 @@ def _open_connection() -> sqlite3.Connection:
     return conn
 
 
+_local = threading.local()
+_all_connections: list[sqlite3.Connection] = []
+_connections_lock = threading.RLock()
+
+
+def _get_thread_connection() -> sqlite3.Connection:
+    if not hasattr(_local, "connection"):
+        conn = _open_connection()
+        _local.connection = conn
+        with _connections_lock:
+            _all_connections.append(conn)
+    return _local.connection
+
+
 @contextmanager
 def _connect() -> Iterator[sqlite3.Connection]:
-    conn = _open_connection()
+    if sqlite3.connect is not _original_sqlite_connect:
+        conn = _open_connection()
+        try:
+            yield conn
+        finally:
+            conn.close()
+        return
+
+    conn = _get_thread_connection()
     try:
         yield conn
-    finally:
-        conn.close()
+    except BaseException:
+        # 任何异常（含普通 Exception）都应废弃此连接，避免连接处于未知事务状态
+        if hasattr(_local, "connection"):
+            try:
+                _local.connection.close()
+            except Exception:
+                pass
+            with _connections_lock:
+                if conn in _all_connections:
+                    _all_connections.remove(conn)
+            delattr(_local, "connection")
+        raise
 
 
 def close_database_connections():
-    """Close repository-owned SQLite handles.
+    """Close repository-owned SQLite handles."""
+    with _connections_lock:
+        for conn in _all_connections:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        _all_connections.clear()
+    if hasattr(_local, "connection"):
+        delattr(_local, "connection")
+    _clear_verified_thumbnails()
 
-    Connections are intentionally short-lived now, so this is a lifecycle hook
-    for app shutdown/tests and a single place to extend if pooling returns.
-    """
-    return None
 
 
 @contextmanager
@@ -483,6 +557,9 @@ def _ensure_database():
                     ON gallery_entries(api_preset_name, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_gallery_entries_size_created_at
                     ON gallery_entries(size, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_gallery_entries_filename_bytes
+                    ON gallery_entries(filename, bytes) WHERE bytes IS NOT NULL;
+
 
                 CREATE TABLE IF NOT EXISTS generate_jobs (
                     job_id TEXT PRIMARY KEY,
@@ -518,11 +595,24 @@ def _ensure_database():
                     ON generate_jobs(status, updated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_generate_jobs_updated_at
                     ON generate_jobs(updated_at DESC);
+
+                CREATE TABLE IF NOT EXISTS prompt_snippets (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    prompt TEXT NOT NULL,
+                    favorite INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_prompt_snippets_favorite_updated_at
+                    ON prompt_snippets(favorite DESC, updated_at DESC);
                 """
             )
             _migrate_api_presets_schema(conn)
             _migrate_gallery_schema(conn)
             _migrate_generate_jobs_schema(conn)
+            _migrate_prompt_snippets_schema(conn)
             _ensure_gallery_fts(conn)
             conn.commit()
 
@@ -579,6 +669,13 @@ def _migrate_gallery_schema(conn: sqlite3.Connection):
             ON gallery_entries(filename) WHERE bytes IS NULL
         """
     )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_gallery_entries_filename_bytes
+            ON gallery_entries(filename, bytes) WHERE bytes IS NOT NULL
+        """
+    )
+
 
 
 def _migrate_api_presets_schema(conn: sqlite3.Connection):
@@ -611,6 +708,20 @@ def _migrate_generate_jobs_schema(conn: sqlite3.Connection):
         conn.execute("ALTER TABLE generate_jobs ADD COLUMN images_json TEXT")
 
 
+def _migrate_prompt_snippets_schema(conn: sqlite3.Connection):
+    columns = _table_columns(conn, "prompt_snippets")
+    if "favorite" not in columns:
+        conn.execute(
+            "ALTER TABLE prompt_snippets ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0"
+        )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_prompt_snippets_favorite_updated_at
+            ON prompt_snippets(favorite DESC, updated_at DESC)
+        """
+    )
+
+
 def _get_setting_value(conn: sqlite3.Connection, key: str) -> str | None:
     row = conn.execute(
         "SELECT value FROM settings_kv WHERE key = ?",
@@ -639,11 +750,17 @@ def _normalize_settings(settings: dict | None) -> dict:
         if settings.get("upstream_socks5_proxy") is not None
         else config.DEFAULT_UPSTREAM_SOCKS5_PROXY
     )
+    webhook_url = (
+        str(settings.get("webhook_url")).strip()
+        if settings.get("webhook_url") is not None
+        else ""
+    )
 
     raw_presets = settings.get("presets")
     if not isinstance(raw_presets, list):
         default_settings = _default_settings()
         default_settings["upstream_socks5_proxy"] = upstream_socks5_proxy
+        default_settings["webhook_url"] = webhook_url
         return default_settings
 
     presets: list[dict] = []
@@ -662,6 +779,7 @@ def _normalize_settings(settings: dict | None) -> dict:
     if not presets:
         default_settings = _default_settings()
         default_settings["upstream_socks5_proxy"] = upstream_socks5_proxy
+        default_settings["webhook_url"] = webhook_url
         return default_settings
 
     active_preset_id = str(settings.get("active_preset_id") or presets[0]["id"])
@@ -671,6 +789,7 @@ def _normalize_settings(settings: dict | None) -> dict:
     return {
         "active_preset_id": active_preset_id,
         "upstream_socks5_proxy": upstream_socks5_proxy,
+        "webhook_url": webhook_url,
         "presets": presets,
         "prompt_optimizer": (
             _normalize_prompt_optimizer_settings(settings.get("prompt_optimizer"))
@@ -724,6 +843,11 @@ def _replace_settings_on_conn(conn: sqlite3.Connection, settings: dict):
         UPSTREAM_SOCKS5_PROXY_KEY,
         normalized.get("upstream_socks5_proxy", ""),
     )
+    _set_setting_value(
+        conn,
+        WEBHOOK_URL_KEY,
+        normalized.get("webhook_url", ""),
+    )
     optimizer = normalized.get("prompt_optimizer")
     if optimizer is not None:
         _set_setting_value(conn, PROMPT_OPTIMIZER_SETTINGS_KEY, json.dumps(optimizer))
@@ -757,6 +881,7 @@ def _load_settings_from_conn(conn: sqlite3.Connection) -> dict | None:
     upstream_socks5_proxy = _get_setting_value(conn, UPSTREAM_SOCKS5_PROXY_KEY)
     if upstream_socks5_proxy is None:
         upstream_socks5_proxy = config.DEFAULT_UPSTREAM_SOCKS5_PROXY
+    webhook_url = _get_setting_value(conn, WEBHOOK_URL_KEY) or ""
 
     optimizer_json = _get_setting_value(conn, PROMPT_OPTIMIZER_SETTINGS_KEY)
     optimizer = None
@@ -771,6 +896,7 @@ def _load_settings_from_conn(conn: sqlite3.Connection) -> dict | None:
     return {
         "active_preset_id": active_preset_id,
         "upstream_socks5_proxy": upstream_socks5_proxy,
+        "webhook_url": webhook_url,
         "presets": presets,
         "prompt_optimizer": optimizer,
     }
@@ -1022,6 +1148,35 @@ def _generate_job_from_row(row: sqlite3.Row) -> dict[str, Any]:
     return job
 
 
+def _normalize_prompt_snippet_favorite(value: Any) -> int:
+    if isinstance(value, bool):
+        return 1 if value else 0
+    if isinstance(value, int):
+        return 1 if value else 0
+    text = str(value or "").strip().lower()
+    return 1 if text in {"1", "true", "yes", "on", "favorite", "favorited"} else 0
+
+
+def _prompt_snippet_from_row(row: sqlite3.Row) -> PromptSnippet:
+    return PromptSnippet(
+        id=str(row["id"]),
+        title=str(row["title"]),
+        prompt=str(row["prompt"]),
+        favorite=bool(row["favorite"]),
+        created_at=str(row["created_at"]),
+        updated_at=str(row["updated_at"]),
+    )
+
+
+def _like_prompt_snippet_query(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def _generate_prompt_snippet_id() -> str:
+    return f"ps_{secrets.token_urlsafe(12)}"
+
+
 def _insert_gallery_entries_on_conn(
     conn: sqlite3.Connection,
     entries: list[dict[str, Any]],
@@ -1093,6 +1248,141 @@ def save_prompt_optimizer_settings(settings: dict):
         conn.commit()
 
 
+def list_prompt_snippets(query: str = "") -> list[PromptSnippet]:
+    _ensure_database()
+    normalized_query = str(query or "").strip()
+    with _connect() as conn:
+        params: list[Any] = []
+        where_sql = ""
+        if normalized_query:
+            where_sql = """
+                WHERE title COLLATE NOCASE LIKE ? ESCAPE '\\'
+                   OR prompt COLLATE NOCASE LIKE ? ESCAPE '\\'
+            """
+            like_query = _like_prompt_snippet_query(normalized_query)
+            params.extend([like_query, like_query])
+        rows = conn.execute(
+            f"""
+            SELECT {", ".join(PROMPT_SNIPPET_COLUMNS)}
+            FROM prompt_snippets
+            {where_sql}
+            ORDER BY favorite DESC, updated_at DESC, rowid DESC
+            """,
+            tuple(params),
+        ).fetchall()
+    return [_prompt_snippet_from_row(row) for row in rows]
+
+
+def create_prompt_snippet(
+    *,
+    title: str,
+    prompt: str,
+    favorite: bool = False,
+) -> PromptSnippet:
+    _ensure_database()
+    now = utc_now()
+    with _connect() as conn:
+        with _transaction(conn):
+            for _ in range(5):
+                snippet_id = _generate_prompt_snippet_id()
+                try:
+                    conn.execute(
+                        """
+                        INSERT INTO prompt_snippets (
+                            id,
+                            title,
+                            prompt,
+                            favorite,
+                            created_at,
+                            updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            snippet_id,
+                            title,
+                            prompt,
+                            _normalize_prompt_snippet_favorite(favorite),
+                            now,
+                            now,
+                        ),
+                    )
+                    break
+                except sqlite3.IntegrityError:
+                    continue
+            else:
+                raise RuntimeError("Failed to generate a unique prompt snippet id")
+
+            row = conn.execute(
+                f"""
+                SELECT {", ".join(PROMPT_SNIPPET_COLUMNS)}
+                FROM prompt_snippets
+                WHERE id = ?
+                """,
+                (snippet_id,),
+            ).fetchone()
+
+    return _prompt_snippet_from_row(row)
+
+
+def update_prompt_snippet(
+    snippet_id: str,
+    updates: dict[str, Any],
+) -> PromptSnippet | None:
+    _ensure_database()
+    allowed_updates = {
+        key: _normalize_prompt_snippet_favorite(value) if key == "favorite" else value
+        for key, value in updates.items()
+        if key in {"title", "prompt", "favorite"} and value is not None
+    }
+
+    with _connect() as conn:
+        with _transaction(conn):
+            row = conn.execute(
+                f"""
+                SELECT {", ".join(PROMPT_SNIPPET_COLUMNS)}
+                FROM prompt_snippets
+                WHERE id = ?
+                """,
+                (snippet_id,),
+            ).fetchone()
+            if not row:
+                return None
+
+            if allowed_updates:
+                now = utc_now()
+                assignments = ", ".join(f"{key} = ?" for key in allowed_updates)
+                conn.execute(
+                    f"""
+                    UPDATE prompt_snippets
+                    SET {assignments}, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (*allowed_updates.values(), now, snippet_id),
+                )
+                row = conn.execute(
+                    f"""
+                    SELECT {", ".join(PROMPT_SNIPPET_COLUMNS)}
+                    FROM prompt_snippets
+                    WHERE id = ?
+                    """,
+                    (snippet_id,),
+                ).fetchone()
+
+    return _prompt_snippet_from_row(row)
+
+
+def delete_prompt_snippet(snippet_id: str) -> bool:
+    _ensure_database()
+    with _connect() as conn:
+        with _transaction(conn):
+            cursor = conn.execute(
+                "DELETE FROM prompt_snippets WHERE id = ?",
+                (snippet_id,),
+            )
+            return cursor.rowcount > 0
+
+
 def _attach_gallery_thumbnail_url(entry: dict[str, Any]) -> dict[str, Any]:
     if "thumbnail_url" not in entry:
         entry["thumbnail_url"] = _thumbnail_url_for_filename(
@@ -1137,10 +1427,11 @@ def _promote_prepared_images(prepared_files: Sequence[_PreparedGalleryFile]):
 def _promote_prepared_thumbnails(prepared_files: Sequence[_PreparedGalleryFile]):
     for prepared in prepared_files:
         if prepared.thumbnail_filename and prepared.thumbnail_temp_path:
-            _promote_thumbnail_temp_unlocked(
+            if _promote_thumbnail_temp_unlocked(
                 prepared.thumbnail_filename,
                 prepared.thumbnail_temp_path,
-            )
+            ):
+                _add_verified_thumbnail(prepared.thumbnail_filename)
 
 
 def _dedupe_gallery_filename(filename: str, used_filenames: set[str]) -> str:
@@ -1196,8 +1487,13 @@ def ensure_thumbnail_for_image(filename: str) -> str | None:
     if not thumbnail_filename:
         return None
 
+    with _verified_thumbnails_lock:
+        if thumbnail_filename in _verified_thumbnails:
+            return thumbnail_filename
+
     thumbnail_path = safe_thumbnail_path(thumbnail_filename)
     if thumbnail_path and thumbnail_path.is_file():
+        _add_verified_thumbnail(thumbnail_filename)
         return thumbnail_filename
 
     image_path = safe_image_path(filename)
@@ -1206,6 +1502,7 @@ def ensure_thumbnail_for_image(filename: str) -> str | None:
 
     for _ in range(3):
         if thumbnail_path and thumbnail_path.is_file():
+            _add_verified_thumbnail(thumbnail_filename)
             return thumbnail_filename
         try:
             image_stat = image_path.stat()
@@ -1220,11 +1517,13 @@ def ensure_thumbnail_for_image(filename: str) -> str | None:
         created_thumbnail, temp_path = prepared_thumbnail
         if thumbnail_path and thumbnail_path.is_file():
             temp_path.unlink(missing_ok=True)
+            _add_verified_thumbnail(thumbnail_filename)
             return thumbnail_filename
 
         with _storage_lock:
             if thumbnail_path and thumbnail_path.is_file():
                 temp_path.unlink(missing_ok=True)
+                _add_verified_thumbnail(thumbnail_filename)
                 return thumbnail_filename
             try:
                 current_stat = image_path.stat()
@@ -1240,6 +1539,7 @@ def ensure_thumbnail_for_image(filename: str) -> str | None:
 
             if _promote_thumbnail_temp_unlocked(created_thumbnail, temp_path):
                 _set_thumbnail_filename_for_image(filename, created_thumbnail)
+                _add_verified_thumbnail(created_thumbnail)
                 return created_thumbnail
             return None
 
@@ -2032,6 +2332,7 @@ def sync_gallery_with_image_files() -> int:
                     )
                     _invalidate_filter_options_cache()
                     _invalidate_gallery_total_bytes_cache()
+                    _clear_verified_thumbnails()
                 return len(stale_ids)
 
 
@@ -2081,6 +2382,9 @@ def _delete_gallery_entries_by_ids(
         if _delete_image_unlocked(filename):
             deleted_count += 1
         _delete_thumbnail_unlocked(filename)
+        thumbnail_filename = _thumbnail_filename_for_image(filename)
+        if thumbnail_filename:
+            _remove_verified_thumbnail(thumbnail_filename)
 
     return len(removed_ids), deleted_count
 
@@ -2126,6 +2430,9 @@ def _delete_gallery_file_if_unreferenced(filename: str) -> bool:
 
         try:
             _delete_thumbnail_unlocked(filename)
+            thumbnail_filename = _thumbnail_filename_for_image(filename)
+            if thumbnail_filename:
+                _remove_verified_thumbnail(thumbnail_filename)
         except OSError as e:
             logger.warning("Failed to delete gallery thumbnail for %s: %s", filename, e)
 
@@ -2165,4 +2472,11 @@ def delete_all_gallery_images() -> tuple[int, int]:
     for filename in filenames_to_delete:
         if _delete_gallery_file_if_unreferenced(filename):
             deleted_count += 1
+    # 批量删除完成后一次性清空缩略图内存缓存（逐项删除已各自 discard，此处作兜底）
+    _clear_verified_thumbnails()
     return total, deleted_count
+
+
+def invalidate_thumbnail_cache(thumbnail_filename: str) -> None:
+    """从内存缩略图验证缓存中移除指定文件名，供路由层在检测到磁盘文件丢失时调用。"""
+    _remove_verified_thumbnail(thumbnail_filename)

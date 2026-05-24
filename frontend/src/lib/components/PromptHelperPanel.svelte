@@ -7,7 +7,7 @@
   let expanded = false;
 </script>
 
-<aside class="rounded-xl border border-zinc-800 bg-zinc-950/45 p-3">
+<aside class="h-full rounded-xl border border-zinc-800 bg-zinc-950/45 p-3">
   <div class="mb-3 flex items-center justify-between gap-3">
     <h3 class="text-xs font-semibold uppercase tracking-wide text-zinc-400">{$t.promptHelper.title}</h3>
     <button

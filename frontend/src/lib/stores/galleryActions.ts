@@ -1,10 +1,11 @@
 import { get } from 'svelte/store';
 import { apiFetch } from '$lib/api/client';
+import { openJsonEventSource } from '$lib/api/events';
 import { t } from '$lib/i18n';
 import { confirmStore } from '$lib/stores/confirm';
 import type { ToastOptions, ToastVariant } from '$lib/stores/ui';
 import { formatBytes } from '$lib/utils/format';
-import type { GalleryBatchResponse, GalleryResponse } from '$lib/api/types';
+import type { GalleryBatchResponse, GalleryExportJobStatus, GalleryResponse } from '$lib/api/types';
 import type { GalleryOperationStatus, GalleryState } from '$lib/stores/gallery';
 
 type GalleryActionDeps = {
@@ -41,6 +42,23 @@ function operationProgressDetail(loaded: number, total: number) {
   return loaded > 0 ? formatBytes(loaded) : '';
 }
 
+function operationProgress(progress: number, start = 0, end = 100) {
+  const bounded = Math.max(0, Math.min(100, progress));
+  return Math.min(end, Math.max(start, start + Math.round((bounded / 100) * (end - start))));
+}
+
+function exportJobDetail(job: GalleryExportJobStatus) {
+  const labels = get(t).gallery;
+  if (job.status === 'success') return labels.exportDownloadReady;
+  if (job.stage === 'packing') {
+    return labels.exportPackingArchive(formatBytes(job.bytes_written), formatBytes(job.bytes_total));
+  }
+  if (job.requested_count > 0 && job.processed_count > 0) {
+    return labels.exportPreparingEntries(Math.min(job.processed_count, job.requested_count), job.requested_count);
+  }
+  return job.message || labels.exportPreparing;
+}
+
 function batchToastMessage(action: 'delete' | 'favorite', result: GalleryBatchResponse) {
   const updatedCount = result.updated_count ?? result.count;
   const missingCount = result.missing_count ?? Math.max(0, (result.requested_count || 0) - updatedCount);
@@ -48,20 +66,56 @@ function batchToastMessage(action: 'delete' | 'favorite', result: GalleryBatchRe
   return get(t).messages.selectedImagesFavorited(updatedCount, missingCount);
 }
 
+function waitForGalleryExportJob(jobId: string, onJob: (job: GalleryExportJobStatus) => void): Promise<GalleryExportJobStatus> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let source: EventSource | null = null;
+    source = openJsonEventSource<GalleryExportJobStatus>(
+      `/api/gallery/export-jobs/${encodeURIComponent(jobId)}/events`,
+      {
+        onEvent: ({ data }) => {
+          onJob(data);
+          if (data.status === 'success') {
+            settled = true;
+            source?.close();
+            resolve(data);
+          } else if (data.status === 'error') {
+            settled = true;
+            source?.close();
+            reject(new Error(data.error || data.message || get(t).messages.requestFailed));
+          }
+        },
+        onError: (error) => {
+          if (settled) return;
+          settled = true;
+          source?.close();
+          reject(error instanceof Error ? error : new Error(get(t).messages.requestFailed));
+        }
+      },
+      ['export']
+    );
+  });
+}
+
 export function createGalleryActions(deps: GalleryActionDeps) {
   async function downloadResponseBlob(
     response: Response,
     kind: GalleryOperationStatus['kind'],
     label: string,
-    initialDetail: string
+    initialDetail: string,
+    progressRange: { start: number; end: number } = { start: 0, end: 100 }
   ) {
     const total = Number.parseInt(response.headers.get('Content-Length') || '0', 10);
-    if (!response.body) return response.blob();
+    if (!response.body) {
+      const blob = await response.blob();
+      deps.setOperationStatus({ kind, label, detail: initialDetail, progress: progressRange.end });
+      return blob;
+    }
 
     const reader = response.body.getReader();
     const chunks: BlobPart[] = [];
     let loaded = 0;
-    deps.setOperationStatus({ kind, label, detail: initialDetail, progress: total > 0 ? 0 : null });
+    deps.setOperationStatus({ kind, label, detail: initialDetail, progress: total > 0 ? progressRange.start : null });
 
     while (true) {
       const { done, value } = await reader.read();
@@ -75,7 +129,7 @@ export function createGalleryActions(deps: GalleryActionDeps) {
         kind,
         label,
         detail: operationProgressDetail(loaded, total) || initialDetail,
-        progress: total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : null
+        progress: total > 0 ? operationProgress((loaded / total) * 100, progressRange.start, progressRange.end) : null
       });
     }
 
@@ -141,30 +195,54 @@ export function createGalleryActions(deps: GalleryActionDeps) {
   async function batchDownload(showToast?: (message: string) => void) {
     const ids = [...deps.getState().selectedIds];
     if (!ids.length) return;
+    const label = get(t).gallery.downloadingSelected;
     deps.setOperationStatus({
       kind: 'download',
-      label: get(t).gallery.downloadingSelected,
+      label,
       detail: get(t).gallery.downloadPreparing(ids.length),
-      progress: null
+      progress: 0
     });
     try {
-      const response = await fetch('/api/gallery/batch/download', {
-        method: 'POST',
+      const job = await apiFetch<GalleryExportJobStatus>(
+        '/api/gallery/export-jobs',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids })
+        },
+        'preparing selected image download'
+      );
+      const readyJob = await waitForGalleryExportJob(job.job_id, (nextJob) => {
+        deps.setOperationStatus({
+          kind: 'download',
+          label,
+          detail: exportJobDetail(nextJob),
+          progress: operationProgress(nextJob.progress, 0, 50)
+        });
+      });
+      deps.setOperationStatus({
+        kind: 'download',
+        label,
+        detail: get(t).gallery.browserSavingDownload,
+        progress: 50
+      });
+      const response = await fetch(readyJob.download_url || `/api/gallery/export-jobs/${encodeURIComponent(readyJob.job_id)}/download`, {
+        method: 'GET',
         credentials: 'same-origin',
-        headers: { Accept: 'application/zip', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids })
+        headers: { Accept: 'application/zip' }
       });
       if (!response.ok) throw new Error(get(t).messages.requestFailed);
       const blob = await downloadResponseBlob(
         response,
         'download',
-        get(t).gallery.downloadingSelected,
-        get(t).gallery.browserSavingDownload
+        label,
+        get(t).gallery.browserSavingDownload,
+        { start: 50, end: 100 }
       );
       downloadBlob(blob, filenameFromContentDisposition(response.headers.get('Content-Disposition'), 'gpt-images-selected.zip'));
-      const requestedCount = parseHeaderInt(response.headers, 'X-Gallery-Requested-Count') || ids.length;
-      const exportedCount = parseHeaderInt(response.headers, 'X-Gallery-Exported-Count') || requestedCount;
-      const missingCount = parseHeaderInt(response.headers, 'X-Gallery-Missing-Count');
+      const requestedCount = readyJob.requested_count || parseHeaderInt(response.headers, 'X-Gallery-Requested-Count') || ids.length;
+      const exportedCount = readyJob.exported_count || parseHeaderInt(response.headers, 'X-Gallery-Exported-Count') || requestedCount;
+      const missingCount = readyJob.missing_count || parseHeaderInt(response.headers, 'X-Gallery-Missing-Count');
       showToast?.(get(t).messages.selectedImagesDownloaded(exportedCount, missingCount));
     } finally {
       deps.setOperationStatus(null);
@@ -172,20 +250,36 @@ export function createGalleryActions(deps: GalleryActionDeps) {
   }
 
   async function exportArchive(showToast?: (message: string) => void) {
+    const label = get(t).gallery.exportingArchive;
     deps.setOperationStatus({
       kind: 'export',
-      label: get(t).gallery.exportingArchive,
+      label,
       detail: get(t).gallery.exportPreparing,
-      progress: null
+      progress: 0
     });
     try {
-      const response = await fetch('/api/download-all', {
+      const job = await apiFetch<GalleryExportJobStatus>('/api/gallery/export-jobs', { method: 'POST' }, 'preparing gallery export');
+      const readyJob = await waitForGalleryExportJob(job.job_id, (nextJob) => {
+        deps.setOperationStatus({
+          kind: 'export',
+          label,
+          detail: exportJobDetail(nextJob),
+          progress: operationProgress(nextJob.progress, 0, 50)
+        });
+      });
+      deps.setOperationStatus({
+        kind: 'export',
+        label,
+        detail: get(t).gallery.browserSavingDownload,
+        progress: 50
+      });
+      const response = await fetch(readyJob.download_url || `/api/gallery/export-jobs/${encodeURIComponent(readyJob.job_id)}/download`, {
         method: 'GET',
         credentials: 'same-origin',
         headers: { Accept: 'application/zip' }
       });
       if (!response.ok) throw new Error(get(t).messages.requestFailed);
-      const blob = await downloadResponseBlob(response, 'export', get(t).gallery.exportingArchive, get(t).gallery.browserSavingDownload);
+      const blob = await downloadResponseBlob(response, 'export', label, get(t).gallery.browserSavingDownload, { start: 50, end: 100 });
       downloadBlob(blob, filenameFromContentDisposition(response.headers.get('Content-Disposition'), 'gpt-images.zip'));
       showToast?.(get(t).messages.exportReady);
     } finally {

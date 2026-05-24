@@ -23,7 +23,6 @@ export type PromptFormState = {
   outputCompression: string;
   quantity: number;
   responseFormat: string;
-  webhookUrl: string;
 };
 
 const initialPreviewState: PreviewState = {
@@ -46,8 +45,7 @@ export const initialPromptFormState: PromptFormState = {
   outputFormat: 'png',
   outputCompression: '',
   quantity: 1,
-  responseFormat: 'url',
-  webhookUrl: ''
+  responseFormat: 'url'
 };
 
 function buildRequestBody(form: PromptFormState): GenerateRequestBody {
@@ -60,7 +58,6 @@ function buildRequestBody(form: PromptFormState): GenerateRequestBody {
     output_format: form.outputFormat,
     output_compression: null,
     response_format: form.responseFormat ? (form.responseFormat as 'url' | 'b64_json') : null,
-    webhook_url: form.webhookUrl.trim() || null,
     api_path: form.apiPath
   };
 
@@ -196,8 +193,7 @@ function createPreviewStore() {
       quality: lastRequest.quality,
       outputFormat: lastRequest.output_format,
       outputCompression: lastRequest.output_compression === null || lastRequest.output_compression === undefined ? '' : String(lastRequest.output_compression),
-      responseFormat: lastRequest.response_format || '',
-      webhookUrl: lastRequest.webhook_url || ''
+      responseFormat: lastRequest.response_format || ''
     });
     if (lastAction === 'edit') edit();
     else generate();
