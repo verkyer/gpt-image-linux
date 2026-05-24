@@ -99,8 +99,9 @@ Runtime persistent storage is minimal:
 1. frontend calls `/api/generate`
 2. backend validates config, creates a SQLite-backed job, then schedules async execution
 3. shared queue/concurrency limits are enforced; progress stages stream via SSE
-4. upstream image data is decoded/downloaded, validated, and saved; gallery metadata is updated
-5. job history is queryable/streamed (`/api/generate/jobs*`), cancellable (`DELETE /api/generate/{job_id}`), and can trigger optional signed webhook callbacks
+4. generation requests with `n > 1` stay as one public job, but fan out internally to `n` concurrent upstream calls; `/v1/images/generations` child payloads always use `n=1`
+5. upstream image data is decoded/downloaded, validated, and saved; gallery metadata is updated
+6. job history is queryable/streamed (`/api/generate/jobs*`), cancellable (`DELETE /api/generate/{job_id}`), and can trigger optional signed webhook callbacks
 
 ### Edit flow
 
@@ -447,6 +448,7 @@ The panel supports these upstream paths. The API base URL may either omit or inc
 - presets, prompt snippets, and gallery/job data persist only in `DATABASE_FILE`
 - SQLite repository operations use short-lived connections with WAL enabled at startup; app shutdown and tests call the storage close hook so connection lifecycle stays explicit
 - generation and edit share one queue (`MAX_ACTIVE_GENERATE_JOBS` + `MAX_QUEUED_GENERATE_JOBS`), all edit source images are staged under `DATA_DIR/edit-sources` and additionally capped by `MAX_PENDING_EDIT_SOURCE_MB`, support cancellation, and persist terminal history including `completed_at`
+- batch generation (`n > 1`) consumes one public queue/running slot; the parent job aggregates successful child results into `images[]`, while Gallery metadata keeps the user-requested `n`
 - Prompt Optimizer uses its own server-side Chat Completions-compatible endpoint config, resolves API key env refs on the backend, and does not consume generation/edit queue capacity.
 - SSE is the primary progress channel; `/api/generate/jobs` provides list/history (`include_finished=true`, optional `limit`/`offset`), and `/api/generate/jobs/events` streams debounced live job-list changes from memory
 - terminal job history includes `stage_timings` for `upstream_wait`, `download_decode`, `validate`, `thumbnail`, and `db_insert`; slow gallery queries are logged with query filters and totals and counted in metrics; optional metrics include queue depth, running jobs, failure ratios, job-stage latencies, and slow SQLite query counters; terminal job statuses distinguish `cancelled`, `interrupted`, and `upstream_error` in addition to the generic `error`
@@ -594,8 +596,9 @@ npm --prefix frontend run build
 1. 前端调用 `/api/generate`
 2. 后端校验配置并创建 SQLite 任务，再异步调度执行
 3. 执行前检查共享并发/队列限制，执行中通过 SSE 推送细分进度
-4. 上游返回数据解码/下载、校验并落盘，同时更新 Gallery 元数据
-5. 任务历史可通过 `/api/generate/jobs*` 查询/订阅，可取消；可选触发签名 webhook 回调
+4. `n > 1` 的生成请求仍只暴露一个父任务，但内部会并发拆成 `n` 次上游调用；`/v1/images/generations` 子请求 payload 固定使用 `n=1`
+5. 上游返回数据解码/下载、校验并落盘，同时更新 Gallery 元数据
+6. 任务历史可通过 `/api/generate/jobs*` 查询/订阅，可取消；可选触发签名 webhook 回调
 
 ### 编辑流程
 
@@ -942,6 +945,7 @@ curl http://localhost:9090/health
 - 预设、提示词收藏夹和 Gallery/Job 数据只保存在 `DATABASE_FILE`
 - SQLite 仓储操作使用短连接，并在启动时启用 WAL；应用 shutdown 和测试 reset 会调用 storage close hook，连接生命周期保持显式
 - 生成与编辑共用队列（`MAX_ACTIVE_GENERATE_JOBS` + `MAX_QUEUED_GENERATE_JOBS`）；所有编辑源图先落到 `DATA_DIR/edit-sources` 并额外受 `MAX_PENDING_EDIT_SOURCE_MB` 总量限制；支持取消，并持久化终态历史（含 `completed_at`）
+- 批量生成（`n > 1`）只占一个公开队列/运行槽；父任务会把成功子结果聚合到 `images[]`，Gallery 元数据保留用户请求的 `n`
 - 提示词优化器使用独立的服务端 Chat Completions 兼容 endpoint 配置，在后端解析 API Key 环境变量引用，不占用生成/编辑任务队列容量。
 - SSE 是主进度通道；`/api/generate/jobs` 提供列表/历史（`include_finished=true`，可选 `limit`/`offset`），`/api/generate/jobs/events` 从内存推送 debounce 后的实时任务列表变化
 - 任务终态历史包含 `stage_timings`：`upstream_wait`、`download_decode`、`validate`、`thumbnail`、`db_insert`；慢 Gallery 查询日志会带筛选条件与 total，并计入 metrics；可选 metrics 包含队列深度、运行中任务数、失败率、任务分段耗时和慢 SQLite 查询数；终态状态区分 `cancelled`、`interrupted` 和 `upstream_error`，同时保留通用 `error`

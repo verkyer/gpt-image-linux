@@ -46,6 +46,13 @@ class EditImageSource:
     content_type: str
 
 
+@dataclass(frozen=True)
+class ImageJobOutcome:
+    entries: list[GalleryEntry]
+    success_message: str | None = None
+    error_message: str | None = None
+
+
 def get_job_subscribers() -> dict[str, set[asyncio.Queue]]:
     return app.state.generate_job_subscribers
 
@@ -563,6 +570,104 @@ def queue_edit_job(
     )
 
 
+def normalize_image_job_outcome(
+    result: list[GalleryEntry] | ImageJobOutcome,
+) -> ImageJobOutcome:
+    if isinstance(result, ImageJobOutcome):
+        return result
+    return ImageJobOutcome(entries=result)
+
+
+def summarize_batch_generation_failures(
+    failures: list[tuple[int, BaseException]],
+    total: int,
+) -> str:
+    sample_messages = []
+    for index, error in failures[:3]:
+        message = str(error) or repr(error) or error.__class__.__name__
+        sample_messages.append(f"#{index + 1}: {message}")
+    if len(failures) > len(sample_messages):
+        sample_messages.append(f"... and {len(failures) - len(sample_messages)} more")
+    suffix = "; ".join(sample_messages) if sample_messages else "no image data"
+    return f"{len(failures)} of {total} image generation requests failed: {suffix}"
+
+
+async def call_batched_image_generation_api(
+    *,
+    job_id: str,
+    api_url: str,
+    api_key: str,
+    api_path: str,
+    api_preset_name: str,
+    req: GenerateRequest,
+    socks5_proxy: str,
+) -> ImageJobOutcome:
+    total = req.n
+    completed = 0
+
+    def publish_batch_progress():
+        set_generate_job_progress(
+            job_id,
+            "waiting_for_api",
+            f"Generating images ({completed}/{total} completed)",
+            "generation",
+        )
+
+    publish_batch_progress()
+
+    async def call_one(index: int) -> list[GalleryEntry]:
+        nonlocal completed
+        child_req = req.model_copy(update={"n": 1})
+        try:
+            return await proxy.call_image_generation_api(
+                api_url,
+                api_key,
+                api_path,
+                child_req,
+                api_preset_name,
+                lambda _stage, _message: None,
+                socks5_proxy=socks5_proxy,
+            )
+        finally:
+            completed += 1
+            publish_batch_progress()
+
+    results = await asyncio.gather(
+        *(call_one(index) for index in range(total)),
+        return_exceptions=True,
+    )
+    entries: list[GalleryEntry] = []
+    failures: list[tuple[int, BaseException]] = []
+    for index, result in enumerate(results):
+        if isinstance(result, BaseException):
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            failures.append((index, result))
+        else:
+            entries.extend(result)
+
+    if not entries:
+        if failures:
+            summary = summarize_batch_generation_failures(failures, total)
+            if all(isinstance(error, proxy.UpstreamApiError) for _index, error in failures):
+                raise proxy.UpstreamApiError(summary)
+            raise RuntimeError(summary)
+        raise proxy.UpstreamApiError("No image data in upstream response")
+
+    if not failures:
+        return ImageJobOutcome(entries=entries)
+
+    failure_summary = summarize_batch_generation_failures(failures, total)
+    return ImageJobOutcome(
+        entries=entries,
+        success_message=(
+            f"Generated {len(entries)} of {total} requested images; "
+            f"{len(failures)} failed"
+        ),
+        error_message=failure_summary,
+    )
+
+
 async def _run_image_job(
     *,
     job_id: str,
@@ -577,10 +682,11 @@ async def _run_image_job(
     failed_stage: str,
     cancel_message: str,
     log_action: str,
-    call_upstream: Callable[[], Awaitable[list[GalleryEntry]]],
+    call_upstream: Callable[[], Awaitable[list[GalleryEntry] | ImageJobOutcome]],
 ):
     started_at = time.monotonic()
     stage_timer = JobStageTimer()
+    outcome = ImageJobOutcome(entries=[])
 
     try:
         async with get_generate_job_semaphore():
@@ -610,7 +716,9 @@ async def _run_image_job(
             )
             metrics.increment(f"image_jobs.{operation}.started")
             with use_job_stage_timer(stage_timer):
-                entries = await call_upstream()
+                outcome = normalize_image_job_outcome(await call_upstream())
+                if not outcome.entries:
+                    raise proxy.UpstreamApiError("No image data in upstream response")
             duration_seconds = time.monotonic() - started_at
             duration = f"{duration_seconds:.2f}s"
     except asyncio.CancelledError:
@@ -703,40 +811,40 @@ async def _run_image_job(
     updated_entries = [
         storage.update_gallery_entry(
             entry.id,
-            {"duration": duration, "completed_at": completed_at},
+            {"duration": duration, "completed_at": completed_at, "n": req.n},
         )
         or entry
-        for entry in entries
+        for entry in outcome.entries
     ]
     first_entry = updated_entries[0]
     job_images = [gallery_entry_job_image(entry) for entry in updated_entries]
-    store_generate_job(
-        job_id,
-        {
-            "status": "success",
-            "stage": "completed",
-            "message": success_message,
-            "operation": operation,
-            "image_id": first_entry.id,
-            "image_url": f"/api/image/{first_entry.filename}",
-            "images": job_images,
-            "prompt": first_entry.prompt,
-            "size": first_entry.size,
-            "image_width": first_entry.image_width,
-            "image_height": first_entry.image_height,
-            "model": first_entry.model,
-            "quality": first_entry.quality,
-            "output_format": first_entry.output_format,
-            "output_compression": first_entry.output_compression,
-            "response_format": first_entry.response_format,
-            "n": first_entry.n,
-            "api_path": first_entry.api_path,
-            "api_preset_name": first_entry.api_preset_name,
-            "duration": duration,
-            "stage_timings": stage_timings,
-            "completed_at": completed_at,
-        },
-    )
+    job_update = {
+        "status": "success",
+        "stage": "completed",
+        "message": outcome.success_message or success_message,
+        "operation": operation,
+        "image_id": first_entry.id,
+        "image_url": f"/api/image/{first_entry.filename}",
+        "images": job_images,
+        "prompt": first_entry.prompt,
+        "size": first_entry.size,
+        "image_width": first_entry.image_width,
+        "image_height": first_entry.image_height,
+        "model": first_entry.model,
+        "quality": first_entry.quality,
+        "output_format": first_entry.output_format,
+        "output_compression": first_entry.output_compression,
+        "response_format": first_entry.response_format,
+        "n": req.n,
+        "api_path": first_entry.api_path,
+        "api_preset_name": first_entry.api_preset_name,
+        "duration": duration,
+        "stage_timings": stage_timings,
+        "completed_at": completed_at,
+    }
+    if outcome.error_message:
+        job_update["error"] = outcome.error_message
+    store_generate_job(job_id, job_update)
     trim_generate_jobs()
 
 
@@ -749,6 +857,32 @@ async def run_generate_job(
     req: GenerateRequest,
     socks5_proxy: str = "",
 ):
+    async def call_generation_upstream() -> list[GalleryEntry] | ImageJobOutcome:
+        if req.n <= 1:
+            return await proxy.call_image_generation_api(
+                api_url,
+                api_key,
+                api_path,
+                req,
+                api_preset_name,
+                lambda stage, message: set_generate_job_progress(
+                    job_id,
+                    stage,
+                    message,
+                    "generation",
+                ),
+                socks5_proxy=socks5_proxy,
+            )
+        return await call_batched_image_generation_api(
+            job_id=job_id,
+            api_url=api_url,
+            api_key=api_key,
+            api_path=api_path,
+            api_preset_name=api_preset_name,
+            req=req,
+            socks5_proxy=socks5_proxy,
+        )
+
     await _run_image_job(
         job_id=job_id,
         api_url=api_url,
@@ -762,20 +896,7 @@ async def run_generate_job(
         failed_stage="generation_failed",
         cancel_message="Generation job cancelled",
         log_action="generation",
-        call_upstream=lambda: proxy.call_image_generation_api(
-            api_url,
-            api_key,
-            api_path,
-            req,
-            api_preset_name,
-            lambda stage, message: set_generate_job_progress(
-                job_id,
-                stage,
-                message,
-                "generation",
-            ),
-            socks5_proxy=socks5_proxy,
-        ),
+        call_upstream=call_generation_upstream,
     )
 
 

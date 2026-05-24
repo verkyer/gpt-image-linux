@@ -146,6 +146,28 @@ def _fake_gallery_entry(image_id: str, prompt: str, size: str, filename: str):
     return storage.get_gallery_entry(image_id)
 
 
+async def _add_generated_gallery_entry(payload, api_path, api_preset_name):
+    image_id = storage.generate_image_id()
+    filename = f"{image_id}.png"
+    return await storage.add_to_gallery_async(
+        image_bytes=PNG_BYTES,
+        image_id=image_id,
+        prompt=payload.prompt,
+        size=payload.size,
+        filename=filename,
+        metadata={
+            "model": payload.model,
+            "quality": payload.quality,
+            "output_format": payload.output_format,
+            "output_compression": payload.output_compression,
+            "response_format": payload.response_format,
+            "n": payload.n,
+            "api_path": api_path,
+            "api_preset_name": api_preset_name,
+        },
+    )
+
+
 DEFAULT_IMPORT_METADATA = object()
 
 
@@ -1436,7 +1458,40 @@ def test_generate_request_api_path_overrides_active_preset(client):
     assert entry.api_path == "/v1/responses"
 
 
-def test_multi_image_job_returns_all_results(client):
+def test_multi_image_job_returns_all_results(client, monkeypatch):
+    calls = []
+    calls_lock = threading.Lock()
+    all_started = threading.Event()
+    release_event = threading.Event()
+
+    async def blocking_generation_api(
+        api_url,
+        api_key,
+        api_path,
+        payload,
+        api_preset_name=None,
+        progress=None,
+        socks5_proxy=None,
+    ):
+        with calls_lock:
+            calls.append(payload)
+            if len(calls) == 3:
+                all_started.set()
+        await asyncio.to_thread(release_event.wait)
+        return [
+            await _add_generated_gallery_entry(
+                payload,
+                api_path,
+                api_preset_name,
+            )
+        ]
+
+    monkeypatch.setattr(
+        backend_main.proxy,
+        "call_image_generation_api",
+        blocking_generation_api,
+    )
+
     resp = client.post(
         "/api/generate",
         json={
@@ -1449,9 +1504,23 @@ def test_multi_image_job_returns_all_results(client):
         },
     )
     assert resp.status_code == 202
+    job_id = resp.json()["job_id"]
 
-    job = _wait_for_job(client, resp.json()["job_id"])
+    try:
+        assert all_started.wait(2)
+        active_jobs = client.get("/api/generate/jobs")
+        assert active_jobs.status_code == 200
+        assert len(active_jobs.json()) == 1
+        assert active_jobs.json()[0]["job_id"] == job_id
+        assert active_jobs.json()[0]["status"] == "running"
+        assert active_jobs.json()[0]["n"] == 3
+        assert active_jobs.json()[0]["message"].startswith("Generating images (")
+    finally:
+        release_event.set()
+
+    job = _wait_for_job(client, job_id)
     assert job["status"] == "success"
+    assert job["n"] == 3
     assert len(job["images"]) == 3
     assert job["image_id"] == job["images"][0]["image_id"]
     assert job["image_url"] == job["images"][0]["image_url"]
@@ -1463,6 +1532,121 @@ def test_multi_image_job_returns_all_results(client):
     gallery = client.get("/api/gallery")
     assert gallery.status_code == 200
     assert gallery.json()["total"] == 3
+    with calls_lock:
+        assert len(calls) == 3
+        assert all(payload.n == 1 for payload in calls)
+    assert all(
+        storage.get_gallery_entry(image["image_id"]).n == 3
+        for image in job["images"]
+    )
+
+
+def test_multi_image_job_succeeds_with_partial_upstream_failures(client, monkeypatch):
+    calls = []
+
+    async def flaky_generation_api(
+        api_url,
+        api_key,
+        api_path,
+        payload,
+        api_preset_name=None,
+        progress=None,
+        socks5_proxy=None,
+    ):
+        calls.append(payload)
+        if len(calls) == 2:
+            raise backend_main.proxy.UpstreamApiError("one shard failed")
+        return [
+            await _add_generated_gallery_entry(
+                payload,
+                api_path,
+                api_preset_name,
+            )
+        ]
+
+    monkeypatch.setattr(
+        backend_main.proxy,
+        "call_image_generation_api",
+        flaky_generation_api,
+    )
+
+    resp = client.post(
+        "/api/generate",
+        json={
+            "prompt": "partially flaky batch",
+            "size": "1024x1024",
+            "model": "gpt-image-2",
+            "n": 3,
+            "quality": "auto",
+            "output_format": "png",
+        },
+    )
+    assert resp.status_code == 202
+
+    job = _wait_for_job(client, resp.json()["job_id"])
+    assert job["status"] == "success"
+    assert job["message"] == "Generated 2 of 3 requested images; 1 failed"
+    assert "1 of 3 image generation requests failed" in job["error"]
+    assert "one shard failed" in job["error"]
+    assert len(job["images"]) == 2
+    assert len(calls) == 3
+    assert all(payload.n == 1 for payload in calls)
+    assert all(
+        storage.get_gallery_entry(image["image_id"]).n == 3
+        for image in job["images"]
+    )
+
+    gallery = client.get("/api/gallery")
+    assert gallery.status_code == 200
+    assert gallery.json()["total"] == 2
+
+
+def test_multi_image_job_reports_upstream_error_when_all_children_fail(client, monkeypatch):
+    calls = []
+
+    async def failing_generation_api(
+        api_url,
+        api_key,
+        api_path,
+        payload,
+        api_preset_name=None,
+        progress=None,
+        socks5_proxy=None,
+    ):
+        calls.append(payload)
+        raise backend_main.proxy.UpstreamApiError("quota exhausted")
+
+    monkeypatch.setattr(
+        backend_main.proxy,
+        "call_image_generation_api",
+        failing_generation_api,
+    )
+
+    resp = client.post(
+        "/api/generate",
+        json={
+            "prompt": "fully flaky batch",
+            "size": "1024x1024",
+            "model": "gpt-image-2",
+            "n": 3,
+            "quality": "auto",
+            "output_format": "png",
+        },
+    )
+    assert resp.status_code == 202
+
+    job = _wait_for_job(client, resp.json()["job_id"])
+    assert job["status"] == "upstream_error"
+    assert job["stage"] == "generation_failed"
+    assert job["images"] == []
+    assert "3 of 3 image generation requests failed" in job["error"]
+    assert "quota exhausted" in job["error"]
+    assert len(calls) == 3
+    assert all(payload.n == 1 for payload in calls)
+
+    gallery = client.get("/api/gallery")
+    assert gallery.status_code == 200
+    assert gallery.json()["total"] == 0
 
 
 def test_upstream_errors_are_reported_as_detailed_job_status(client, monkeypatch):
@@ -2721,6 +2905,81 @@ def test_generate_queue_capacity_and_concurrency_limit(tmp_path, monkeypatch):
         assert _wait_for_job(client, second.json()["job_id"])["status"] == "success"
 
     assert max_active_calls == 1
+
+
+def test_batch_generate_counts_as_one_public_queue_slot(tmp_path, monkeypatch):
+    _configure_runtime(tmp_path)
+    config.MAX_ACTIVE_GENERATE_JOBS = 1
+    config.MAX_QUEUED_GENERATE_JOBS = 1
+    calls = []
+    calls_lock = threading.Lock()
+    batch_started = threading.Event()
+    release_event = threading.Event()
+
+    async def blocking_generation_api(
+        api_url,
+        api_key,
+        api_path,
+        payload,
+        api_preset_name=None,
+        progress=None,
+        socks5_proxy=None,
+    ):
+        with calls_lock:
+            calls.append(payload)
+            batch_calls = [call for call in calls if call.prompt == "batch"]
+            if len(batch_calls) == 3:
+                batch_started.set()
+        if payload.prompt == "batch":
+            await asyncio.to_thread(release_event.wait)
+        return [
+            await _add_generated_gallery_entry(
+                payload,
+                api_path,
+                api_preset_name,
+            )
+        ]
+
+    monkeypatch.setattr(backend_main.proxy, "call_image_generation_api", blocking_generation_api)
+
+    with TestClient(backend_main.app) as client:
+        first = client.post(
+            "/api/generate",
+            json={"prompt": "batch", "model": "gpt-image-2", "n": 3},
+        )
+        assert first.status_code == 202
+        try:
+            assert batch_started.wait(2)
+            second = client.post(
+                "/api/generate",
+                json={"prompt": "second", "model": "gpt-image-2"},
+            )
+            third = client.post(
+                "/api/generate",
+                json={"prompt": "third", "model": "gpt-image-2"},
+            )
+
+            assert second.status_code == 202
+            assert third.status_code == 429
+            assert third.json()["detail"] == "Generation job queue is full"
+
+            active_jobs = client.get("/api/generate/jobs")
+            assert active_jobs.status_code == 200
+            assert len(active_jobs.json()) == 2
+            assert {job["job_id"] for job in active_jobs.json()} == {
+                first.json()["job_id"],
+                second.json()["job_id"],
+            }
+        finally:
+            release_event.set()
+
+        assert _wait_for_job(client, first.json()["job_id"])["status"] == "success"
+        assert _wait_for_job(client, second.json()["job_id"])["status"] == "success"
+
+    with calls_lock:
+        batch_calls = [call for call in calls if call.prompt == "batch"]
+    assert len(batch_calls) == 3
+    assert all(payload.n == 1 for payload in batch_calls)
 
 
 def test_edit_jobs_share_queue_capacity(tmp_path, monkeypatch):
